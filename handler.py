@@ -63,7 +63,7 @@ def handler(event):
             cwd="/app/PanoWan",
             capture_output=True,
             text=True,
-            timeout=600
+            timeout=1800  # 30 min timeout
         )
 
         print(f"Return code: {result.returncode}", flush=True)
