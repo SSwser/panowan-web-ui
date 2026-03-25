@@ -1,4 +1,4 @@
-°# PanoWan Serverless Worker for RunPod
+# PanoWan Serverless Worker for RunPod
 # Generates 360° panoramic videos from text prompts
 
 FROM runpod/base:0.6.2-cuda12.2.0
