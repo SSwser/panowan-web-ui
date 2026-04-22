@@ -3,9 +3,13 @@
 # 用法: bash scripts/doctor.sh [--autofix]  或  make doctor
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVICE_URL="${SERVICE_URL:-http://localhost:8000}"
 AUTOFIX="${1:-}"
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+panowan_env_host
+panowan_env_tool_defaults
+
+LORA_CHECKPOINT_FILE="${LORA_CHECKPOINT_PATH}"
 
 PASS="✓"
 FAIL="✗"
@@ -17,6 +21,40 @@ NVIDIA_GPU_FAILED=false
 ok()   { echo "  $PASS $*"; }
 fail() { echo "  $FAIL $*"; ISSUES=$((ISSUES + 1)); }
 warn() { echo "  $WARN $*"; WARNINGS=$((WARNINGS + 1)); }
+
+docker_gpu_access_ok() {
+  docker run --rm --gpus all --entrypoint nvidia-smi \
+    nvidia/cuda:12.2.0-base-ubuntu22.04 \
+    --query-gpu=name --format=csv,noheader &>/dev/null 2>&1
+}
+
+maybe_fix_nvidia_runtime() {
+  if [[ "$AUTOFIX" == "--autofix" ]]; then
+    autofix_nvidia || return 1
+  elif [[ -t 0 ]]; then
+    echo ""
+    read -p "  是否立即尝试自动修复 NVIDIA Container Toolkit？(需要 sudo) [y/N] " -r
+    echo ""
+    [[ $REPLY =~ ^[Yy]$ ]] || return 1
+    autofix_nvidia || return 1
+  else
+    echo ""
+    echo "  提示: 非交互模式下可运行 'bash scripts/doctor.sh --autofix' 自动修复。"
+    return 1
+  fi
+
+  echo ""
+  echo "  重新测试 GPU 访问…"
+  if docker_gpu_access_ok; then
+    ISSUES=$((ISSUES - 1))
+    NVIDIA_GPU_FAILED=false
+    ok "GPU 访问已修复！"
+    return 0
+  fi
+
+  echo "  $FAIL GPU 仍无法访问，可能需要手动处理"
+  return 1
+}
 
 autofix_nvidia() {
   echo ""
@@ -117,9 +155,7 @@ else
 fi
 
 echo "  测试 Docker 容器内 GPU 访问（可能需要几秒）…"
-if docker run --rm --gpus all --entrypoint nvidia-smi \
-    nvidia/cuda:12.2.0-base-ubuntu22.04 \
-    --query-gpu=name --format=csv,noheader &>/dev/null 2>&1; then
+if docker_gpu_access_ok; then
   ok "Docker --gpus all 可访问 GPU"
 else
   fail "Docker 容器内无法访问 GPU — 请检查:"
@@ -127,56 +163,35 @@ else
   echo "       • /etc/docker/daemon.json 是否配置了 nvidia runtime"
   echo "       • WSL2 用户: 参见 https://docs.nvidia.com/cuda/wsl-user-guide/"
   NVIDIA_GPU_FAILED=true
-  
-  if [[ "$AUTOFIX" == "--autofix" ]]; then
-    echo ""
-    if autofix_nvidia; then
-      echo ""
-      echo "  重新测试 GPU 访问…"
-      if docker run --rm --gpus all --entrypoint nvidia-smi \
-          nvidia/cuda:12.2.0-base-ubuntu22.04 \
-          --query-gpu=name --format=csv,noheader &>/dev/null 2>&1; then
-        ISSUES=$((ISSUES - 1))
-        NVIDIA_GPU_FAILED=false
-        ok "GPU 访问已修复！"
-      else
-        echo "  $FAIL GPU 仍无法访问，可能需要手动处理"
-      fi
-    fi
-  fi
+  maybe_fix_nvidia_runtime || true
 fi
 
 # ── 3. 模型文件 ──────────────────────────────────────────────────────────────
 echo ""
 echo "[3/5] 模型文件"
 
-MODEL_ROOT="$REPO_ROOT/data/models/Wan-AI/Wan2.1-T2V-1.3B"
-DIFFUSION_FILE="$MODEL_ROOT/diffusion_pytorch_model.safetensors"
-T5_FILE="$MODEL_ROOT/google/umt5-xxl/models_t5_umt5-xxl-enc-bf16.pth"
-LORA_FILE="$MODEL_ROOT/lora/wan_panowan.safetensors"
-
-if [[ -f "$DIFFUSION_FILE" ]]; then
-  SIZE=$(du -sh "$DIFFUSION_FILE" 2>/dev/null | cut -f1)
+if [[ -f "$WAN_DIFFUSION_FILE" ]]; then
+  SIZE=$(du -sh "$WAN_DIFFUSION_FILE" 2>/dev/null | cut -f1)
   ok "diffusion_pytorch_model.safetensors ($SIZE)"
 else
-  fail "缺少: $DIFFUSION_FILE"
-  echo "       运行 make prefetch-models 下载"
+  fail "缺少: $WAN_DIFFUSION_FILE"
+  echo "       运行 make download-models 下载"
 fi
 
-if [[ -f "$T5_FILE" ]]; then
-  SIZE=$(du -sh "$T5_FILE" 2>/dev/null | cut -f1)
+if [[ -f "$WAN_T5_FILE" ]]; then
+  SIZE=$(du -sh "$WAN_T5_FILE" 2>/dev/null | cut -f1)
   ok "models_t5_umt5-xxl-enc-bf16.pth ($SIZE)"
 else
-  fail "缺少: $T5_FILE"
-  echo "       运行 make prefetch-models 下载"
+  fail "缺少: $WAN_T5_FILE"
+  echo "       运行 make download-models 下载"
 fi
 
-if [[ -f "$LORA_FILE" ]]; then
-  SIZE=$(du -sh "$LORA_FILE" 2>/dev/null | cut -f1)
-  ok "wan_panowan.safetensors (LoRA) ($SIZE)"
+if [[ -f "$LORA_CHECKPOINT_FILE" ]]; then
+  SIZE=$(du -sh "$LORA_CHECKPOINT_FILE" 2>/dev/null | cut -f1)
+  ok "latest-lora.ckpt ($SIZE)"
 else
-  fail "缺少: $LORA_FILE"
-  echo "       运行 make prefetch-models 下载"
+  fail "缺少: $LORA_CHECKPOINT_FILE"
+  echo "       运行 make download-models 下载"
 fi
 
 # ── 4. 环境变量 ──────────────────────────────────────────────────────────────
@@ -235,25 +250,5 @@ elif [[ $ISSUES -eq 0 ]]; then
   echo "  $WARN $WARNINGS 个警告，无严重问题。"
 else
   echo "  $FAIL $ISSUES 个错误，$WARNINGS 个警告。"
-  
-  # 交互式询问是否自动修复 NVIDIA
-  if [[ "$NVIDIA_GPU_FAILED" == "true" && "$AUTOFIX" != "--autofix" ]]; then
-    echo ""
-    read -p "  是否立即尝试自动修复 NVIDIA Container Toolkit？(需要 sudo) [y/N] " -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-      if autofix_nvidia; then
-        echo ""
-        echo "  重新测试 GPU 访问…"
-        if docker run --rm --gpus all --entrypoint nvidia-smi \
-            nvidia/cuda:12.2.0-base-ubuntu22.04 \
-            --query-gpu=name --format=csv,noheader &>/dev/null 2>&1; then
-          echo "  $PASS GPU 访问已修复！"
-        else
-          echo "  $FAIL GPU 仍无法访问，可能需要手动处理"
-        fi
-      fi
-    fi
-  fi
 fi
 echo ""

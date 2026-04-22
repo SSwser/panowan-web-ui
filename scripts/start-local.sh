@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PANOWAN_DIR="${PANOWAN_DIR:-/app/PanoWan}"
-WAN_MODEL_PATH="${WAN_MODEL_PATH:-./models/Wan-AI/Wan2.1-T2V-1.3B}"
-LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-./models/PanoWan/latest-lora.ckpt}"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
+panowan_env_runtime
 
 cd "${PANOWAN_DIR}"
 
-if [[ ! -d "${WAN_MODEL_PATH}" ]] || [[ ! -f "${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth" ]]; then
+if [[ ! -f "${WAN_DIFFUSION_FILE}" ]] || [[ ! -f "${WAN_T5_FILE}" ]]; then
     echo "Downloading Wan model weights into ${WAN_MODEL_PATH}..."
     export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
     mkdir -p "${WAN_MODEL_PATH}"
@@ -18,9 +17,8 @@ if [[ ! -d "${WAN_MODEL_PATH}" ]] || [[ ! -f "${WAN_MODEL_PATH}/models_t5_umt5-x
 fi
 
 lora_dir="$(dirname "${LORA_CHECKPOINT_PATH}")"
-lora_file="${LORA_CHECKPOINT_PATH#./}"
 
-if [[ ! -f "${lora_file}" ]]; then
+if [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
     echo "Downloading PanoWan LoRA weights into ${lora_dir}..."
     mkdir -p "${lora_dir}"
     lora_downloaded=false
