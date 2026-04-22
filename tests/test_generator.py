@@ -1,9 +1,9 @@
-import unittest
 import os
+import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.generator import extract_prompt, generate_video
+from app.generator import extract_prompt, generate_video, resolve_inference_params
 from app.settings import settings
 
 
@@ -23,6 +23,15 @@ class ExtractPromptTests(unittest.TestCase):
 
 
 class GenerateVideoTests(unittest.TestCase):
+    def test_resolves_inference_params_from_preset(self) -> None:
+        params = resolve_inference_params({"quality": "draft"})
+
+        self.assertEqual(params["num_inference_steps"], 20)
+        self.assertEqual(params["width"], 448)
+        self.assertEqual(params["height"], 224)
+        self.assertEqual(params["seed"], 0)
+        self.assertEqual(params["negative_prompt"], "")
+
     @patch("app.generator.os.makedirs")
     @patch("app.generator.os.path.exists", return_value=True)
     @patch("app.generator.os.path.getsize", return_value=11)
@@ -58,6 +67,14 @@ class GenerateVideoTests(unittest.TestCase):
                 os.path.join(settings.output_dir, "output_job-1.mp4"),
                 "--prompt",
                 "mountain sunset",
+                "--num-inference-steps",
+                str(settings.default_num_inference_steps),
+                "--width",
+                str(settings.default_width),
+                "--height",
+                str(settings.default_height),
+                "--seed",
+                "0",
             ],
             cwd=settings.panowan_dir,
             capture_output=True,
