@@ -41,7 +41,8 @@ def generate_video(payload: dict) -> dict:
     print(f"=== Job received: {job_id} ===", flush=True)
     print(f"Prompt: {prompt[:100]}", flush=True)
 
-    output_path = f"/tmp/output_{job_id}.mp4"
+    os.makedirs(settings.output_dir, exist_ok=True)
+    output_path = os.path.join(settings.output_dir, f"output_{job_id}.mp4")
     cmd = [
         "uv",
         "run",

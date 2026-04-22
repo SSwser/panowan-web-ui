@@ -1,4 +1,5 @@
 import unittest
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ class ExtractPromptTests(unittest.TestCase):
 
 
 class GenerateVideoTests(unittest.TestCase):
+    @patch("app.generator.os.makedirs")
     @patch("app.generator.os.path.exists", return_value=True)
     @patch("app.generator.os.path.getsize", return_value=11)
     @patch("app.generator.subprocess.run")
@@ -30,6 +32,7 @@ class GenerateVideoTests(unittest.TestCase):
         mock_run,
         mock_getsize,
         mock_exists,
+        mock_makedirs,
     ) -> None:
         mock_run.return_value = SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
@@ -38,7 +41,10 @@ class GenerateVideoTests(unittest.TestCase):
         self.assertEqual(result["id"], "job-1")
         self.assertEqual(result["prompt"], "mountain sunset")
         self.assertEqual(result["format"], "mp4")
-        self.assertEqual(result["output_path"], "/tmp/output_job-1.mp4")
+        self.assertEqual(
+            result["output_path"],
+            os.path.join(settings.output_dir, "output_job-1.mp4"),
+        )
         mock_run.assert_called_once_with(
             [
                 "uv",
@@ -49,7 +55,7 @@ class GenerateVideoTests(unittest.TestCase):
                 "--lora-checkpoint-path",
                 settings.lora_checkpoint_path,
                 "--output-path",
-                "/tmp/output_job-1.mp4",
+                os.path.join(settings.output_dir, "output_job-1.mp4"),
                 "--prompt",
                 "mountain sunset",
             ],
@@ -58,5 +64,8 @@ class GenerateVideoTests(unittest.TestCase):
             text=True,
             timeout=settings.generation_timeout_seconds,
         )
-        mock_getsize.assert_called_once_with("/tmp/output_job-1.mp4")
+        mock_getsize.assert_called_once_with(
+            os.path.join(settings.output_dir, "output_job-1.mp4")
+        )
+        mock_makedirs.assert_called_once_with(settings.output_dir, exist_ok=True)
         self.assertTrue(mock_exists.called)

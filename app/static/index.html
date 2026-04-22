@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PanoWan — 任务管理</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6efe4;
+        --panel: rgba(255, 250, 242, 0.9);
+        --panel-strong: #fff7ed;
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --accent: #be5b2d;
+        --accent-soft: rgba(190, 91, 45, 0.12);
+        --success: #1f7a4d;
+        --success-soft: rgba(31, 122, 77, 0.10);
+        --error: #a11d33;
+        --error-soft: rgba(161, 29, 51, 0.10);
+        --queued-soft: rgba(190, 91, 45, 0.10);
+        --border: rgba(31, 41, 55, 0.12);
+        --shadow: 0 24px 60px rgba(65, 37, 20, 0.14);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(190, 91, 45, 0.16), transparent 32%),
+          radial-gradient(circle at bottom right, rgba(31, 122, 77, 0.12), transparent 28%),
+          linear-gradient(160deg, #f7efe5 0%, #f3e7d4 44%, #efe6dc 100%);
+        padding: 24px;
+      }
+
+      main {
+        width: min(1000px, 100%);
+        margin: 0 auto;
+        display: grid;
+        gap: 18px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        overflow: hidden;
+        backdrop-filter: blur(20px);
+        box-shadow: var(--shadow);
+      }
+
+      .hero {
+        padding: 28px 32px 18px;
+        background: linear-gradient(135deg, rgba(190, 91, 45, 0.12), rgba(31, 122, 77, 0.08));
+      }
+
+      .hero h1 {
+        margin: 0 0 8px;
+        font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+        line-height: 1;
+        letter-spacing: -0.04em;
+      }
+
+      .hero p { margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.6; }
+
+      .submit-area {
+        padding: 22px 32px 28px;
+        display: grid;
+        gap: 14px;
+      }
+
+      label { display: block; font-size: 0.88rem; font-weight: 700; margin-bottom: 8px; }
+
+      textarea, input {
+        width: 100%;
+        border: 1px solid rgba(31, 41, 55, 0.18);
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.85);
+        color: var(--ink);
+        padding: 12px 14px;
+        font: inherit;
+      }
+
+      textarea { min-height: 120px; resize: vertical; }
+
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 20px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 140ms ease, opacity 140ms ease;
+        background: var(--accent);
+        color: white;
+        box-shadow: 0 10px 22px rgba(190, 91, 45, 0.22);
+      }
+
+      button:disabled { opacity: 0.55; cursor: wait; }
+      button:hover:not(:disabled) { transform: translateY(-1px); }
+
+      button.secondary {
+        background: var(--accent-soft);
+        color: var(--accent);
+        box-shadow: none;
+      }
+
+      .submit-status {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      /* --- history section --- */
+      .history-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 32px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .history-header h2 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .history-header .auto-badge {
+        font-size: 0.78rem;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .auto-badge .dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: var(--success);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; }
+      }
+
+      .dot.idle { background: var(--muted); animation: none; }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+      }
+
+      thead th {
+        text-align: left;
+        padding: 8px 14px;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--muted);
+        background: rgba(31, 41, 55, 0.035);
+        font-weight: 700;
+      }
+
+      tbody tr {
+        border-top: 1px solid var(--border);
+        transition: background 120ms;
+      }
+
+      tbody tr:hover { background: rgba(190, 91, 45, 0.04); }
+
+      td { padding: 10px 14px; vertical-align: middle; }
+
+      .col-id { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 0.82rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .col-prompt { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+      .col-time { white-space: nowrap; color: var(--muted); font-size: 0.82rem; }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 0.78rem;
+        font-weight: 700;
+      }
+
+      .badge::before {
+        content: "";
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .badge-queued  { color: var(--accent);  background: var(--queued-soft); }
+      .badge-running { color: var(--accent);  background: var(--queued-soft); }
+      .badge-completed { color: var(--success); background: var(--success-soft); }
+      .badge-failed  { color: var(--error);   background: var(--error-soft); }
+      .badge-unknown { color: var(--muted);   background: rgba(31,41,55,0.07); }
+
+      .download-btn {
+        display: inline-block;
+        text-decoration: none;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-radius: 999px;
+        padding: 4px 12px;
+        transition: transform 120ms;
+      }
+
+      .download-btn:hover { transform: translateY(-1px); }
+
+      .error-text { color: var(--error); font-size: 0.82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .empty-row td { text-align: center; color: var(--muted); padding: 28px; }
+
+      .table-wrap { overflow-x: auto; }
+
+      @media (max-width: 720px) {
+        .hero, .submit-area, .history-header { padding-left: 18px; padding-right: 18px; }
+        .col-prompt, .col-time { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <!-- Submit panel -->
+      <div class="panel">
+        <section class="hero">
+          <h1>PanoWan 视频生成</h1>
+          <p>提交文本描述，异步生成全景视频。历史任务会自动刷新，完成后可直接下载。</p>
+        </section>
+        <div class="submit-area">
+          <div>
+            <label for="prompt">Prompt</label>
+            <textarea id="prompt">A cinematic alpine valley at sunset with drifting clouds and wide panoramic motion.</textarea>
+          </div>
+          <div class="row">
+            <button id="submit-btn" type="button">提交任务</button>
+            <span id="submit-status" class="submit-status"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- History panel -->
+      <div class="panel">
+        <div class="history-header">
+          <h2>历史任务</h2>
+          <span class="auto-badge">
+            <span id="poll-dot" class="dot"></span>
+            <span id="poll-label">自动刷新中</span>
+          </span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>状态</th>
+                <th class="col-prompt">Prompt</th>
+                <th class="col-time">提交时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="job-table-body">
+              <tr class="empty-row"><td colspan="5">加载中…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const submitBtn = document.getElementById("submit-btn");
+      const promptInput = document.getElementById("prompt");
+      const submitStatus = document.getElementById("submit-status");
+      const tbody = document.getElementById("job-table-body");
+      const pollDot = document.getElementById("poll-dot");
+      const pollLabel = document.getElementById("poll-label");
+
+      let pollTimer = null;
+      let activeJobs = new Set();
+
+      // ---- utilities ----
+
+      function formatTime(iso) {
+        if (!iso) return "-";
+        try {
+          const d = new Date(iso);
+          return d.toLocaleString("zh-CN", { hour12: false });
+        } catch {
+          return iso;
+        }
+      }
+
+      function statusBadge(status) {
+        const cls = ["queued","running","completed","failed"].includes(status) ? status : "unknown";
+        const label = { queued: "排队中", running: "生成中", completed: "已完成", failed: "失败" }[cls] || status;
+        return `<span class="badge badge-${cls}">${label}</span>`;
+      }
+
+      function actionCell(job) {
+        if (job.status === "completed") {
+          const url = job.download_url || `/jobs/${job.job_id}/download`;
+          return `<a class="download-btn" href="${url}" download="${job.job_id}.mp4">下载 MP4</a>`;
+        }
+        if (job.status === "failed" && job.error) {
+          return `<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`;
+        }
+        return "-";
+      }
+
+      function escapeHtml(str) {
+        return String(str).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+      }
+
+      function renderTable(jobs) {
+        if (!jobs || jobs.length === 0) {
+          tbody.innerHTML = `<tr class="empty-row"><td colspan="5">暂无任务，提交一个试试吧。</td></tr>`;
+          return;
+        }
+
+        const rows = jobs.map(job => `
+          <tr>
+            <td class="col-id" title="${escapeHtml(job.job_id)}">${escapeHtml(job.job_id)}</td>
+            <td>${statusBadge(job.status)}</td>
+            <td class="col-prompt" title="${escapeHtml(job.prompt || '')}">${escapeHtml(job.prompt || "-")}</td>
+            <td class="col-time">${formatTime(job.created_at)}</td>
+            <td>${actionCell(job)}</td>
+          </tr>
+        `).join("");
+        tbody.innerHTML = rows;
+      }
+
+      // ---- polling ----
+
+      function hasActiveJobs(jobs) {
+        return jobs.some(j => j.status === "queued" || j.status === "running");
+      }
+
+      function setPollingIndicator(active) {
+        pollDot.className = "dot" + (active ? "" : " idle");
+        pollLabel.textContent = active ? "自动刷新中" : "无活跃任务，已暂停刷新";
+      }
+
+      async function fetchJobs() {
+        try {
+          const res = await fetch("/jobs");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.json();
+        } catch (err) {
+          console.warn("fetchJobs error:", err);
+          return null;
+        }
+      }
+
+      async function refreshJobs() {
+        const jobs = await fetchJobs();
+        if (jobs !== null) {
+          renderTable(jobs);
+          const busy = hasActiveJobs(jobs);
+          setPollingIndicator(busy);
+          scheduleRefresh(busy ? 3000 : 10000);
+        } else {
+          scheduleRefresh(5000);
+        }
+      }
+
+      function scheduleRefresh(delay) {
+        if (pollTimer !== null) clearTimeout(pollTimer);
+        pollTimer = setTimeout(refreshJobs, delay);
+      }
+
+      // ---- submit ----
+
+      submitBtn.addEventListener("click", async () => {
+        const prompt = promptInput.value.trim();
+        if (!prompt) { submitStatus.textContent = "请填写 Prompt"; return; }
+
+        submitBtn.disabled = true;
+        submitStatus.textContent = "提交中…";
+
+        try {
+          const res = await fetch("/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+          });
+          const payload = await res.json();
+
+          if (!res.ok) {
+            submitStatus.textContent = `提交失败: ${payload.detail || res.status}`;
+            return;
+          }
+
+          submitStatus.textContent = `✓ 任务 ${payload.job_id} 已加入队列`;
+          // fast refresh to show the new job immediately
+          if (pollTimer !== null) clearTimeout(pollTimer);
+          pollTimer = setTimeout(refreshJobs, 400);
+        } catch (err) {
+          submitStatus.textContent = `网络错误: ${err}`;
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+
+      // ---- init ----
+      refreshJobs();
+    </script>
+  </body>
+</html>
