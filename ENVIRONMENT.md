@@ -81,7 +81,7 @@ make doctor
 
 ```bash
 # HuggingFace 访问令牌（提高速率限制）
-HF_TOKEN=hf_xxx
+HF_TOKEN=
 
 # HuggingFace 镜像站点（中国用户推荐）
 HF_ENDPOINT=https://hf-mirror.com
