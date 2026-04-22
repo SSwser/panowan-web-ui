@@ -1,6 +1,7 @@
 import os
 import subprocess
 import uuid
+from typing import Optional
 
 from .settings import settings
 
@@ -34,12 +35,51 @@ def extract_prompt(payload: dict) -> str:
     return settings.default_prompt
 
 
+_QUALITY_PRESETS = {
+    "draft": {"num_inference_steps": 20, "width": 448, "height": 224},
+    "standard": {"num_inference_steps": 50, "width": 896, "height": 448},
+}
+
+
+def _payload_int(payload: dict, key: str) -> Optional[int]:
+    value = payload.get(key)
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def resolve_inference_params(payload: dict) -> dict:
+    """Resolve inference parameters from payload, applying quality preset if specified."""
+    preset_name = payload.get("quality")
+    preset = _QUALITY_PRESETS.get(preset_name, {})
+
+    return {
+        "num_inference_steps": _payload_int(payload, "num_inference_steps")
+        or preset.get("num_inference_steps")
+        or settings.default_num_inference_steps,
+        "width": _payload_int(payload, "width")
+        or preset.get("width")
+        or settings.default_width,
+        "height": _payload_int(payload, "height")
+        or preset.get("height")
+        or settings.default_height,
+        "seed": _payload_int(payload, "seed") or 0,
+        "negative_prompt": payload.get("negative_prompt") or "",
+    }
+
+
 def generate_video(payload: dict) -> dict:
     job_id = str(payload.get("id") or uuid.uuid4())
     prompt = extract_prompt(payload)
+    params = resolve_inference_params(payload)
 
     print(f"=== Job received: {job_id} ===", flush=True)
     print(f"Prompt: {prompt[:100]}", flush=True)
+    print(
+        f"Params: steps={params['num_inference_steps']} "
+        f"{params['width']}x{params['height']} seed={params['seed']}",
+        flush=True,
+    )
 
     os.makedirs(settings.output_dir, exist_ok=True)
     output_path = os.path.join(settings.output_dir, f"output_{job_id}.mp4")
@@ -55,7 +95,17 @@ def generate_video(payload: dict) -> dict:
         output_path,
         "--prompt",
         prompt,
+        "--num-inference-steps",
+        str(params["num_inference_steps"]),
+        "--width",
+        str(params["width"]),
+        "--height",
+        str(params["height"]),
+        "--seed",
+        str(params["seed"]),
     ]
+    if params["negative_prompt"]:
+        cmd += ["--negative-prompt", params["negative_prompt"]]
 
     print(f"Running: {' '.join(cmd)}", flush=True)
 

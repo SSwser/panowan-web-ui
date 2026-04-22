@@ -9,7 +9,12 @@ from typing import Any
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from .generator import extract_prompt, generate_video, log_startup_diagnostics
+from .generator import (
+    extract_prompt,
+    generate_video,
+    log_startup_diagnostics,
+    resolve_inference_params,
+)
 from .settings import settings
 
 
@@ -46,6 +51,7 @@ def _normalize_job_record(job_id: str, record: dict[str, Any]) -> dict[str, Any]
     normalized["job_id"] = str(normalized.get("job_id") or job_id)
     normalized["download_url"] = _job_download_url(normalized["job_id"])
     normalized.setdefault("prompt", settings.default_prompt)
+    normalized.setdefault("params", {})
     normalized.setdefault("output_path", "")
     normalized.setdefault("created_at", _now_iso())
     normalized.setdefault("started_at", None)
@@ -90,11 +96,14 @@ def _restore_jobs_from_disk() -> None:
         _persist_jobs_unlocked()
 
 
-def _create_job_record(job_id: str, prompt: str, output_path: str) -> dict[str, Any]:
+def _create_job_record(
+    job_id: str, prompt: str, output_path: str, params: dict[str, Any]
+) -> dict[str, Any]:
     record = {
         "job_id": job_id,
         "status": "queued",
         "prompt": prompt,
+        "params": params,
         "output_path": output_path,
         "download_url": _job_download_url(job_id),
         "created_at": _now_iso(),
@@ -191,9 +200,10 @@ def generate(payload: dict, background_tasks: BackgroundTasks) -> dict:
     output_path = os.path.join(settings.output_dir, f"output_{job_id}.mp4")
     job_payload = dict(payload)
     job_payload["id"] = job_id
+    params = resolve_inference_params(job_payload)
 
     try:
-        _create_job_record(job_id, prompt, output_path)
+        _create_job_record(job_id, prompt, output_path, params)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
