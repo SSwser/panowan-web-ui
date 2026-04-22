@@ -72,8 +72,8 @@ make doctor
 运行 `make download-models` 下载必要模型（需要网络连接和足够磁盘空间）：
 
 - `data/models/Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors` (~4 GB)
-- `data/models/Wan-AI/Wan2.1-T2V-1.3B/google/umt5-xxl/models_t5_umt5-xxl-enc-bf16.pth` (~6 GB)
-- `data/models/Wan-AI/Wan2.1-T2V-1.3B/lora/wan_panowan.safetensors` (~0.1 GB)
+- `data/models/Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth` (~6 GB)
+- `data/models/PanoWan/latest-lora.ckpt` (~0.1 GB)
 
 ### 环境变量（`.env`）
 

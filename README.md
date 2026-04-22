@@ -35,7 +35,6 @@ This project now runs as a local HTTP service inside Docker and no longer depend
 ## API
 
 - `GET /`: web UI (index.html) — job management dashboard
-- `GET /api`: API info
 - `GET /health`: health check
 - `POST /generate`: submit a generation job and return a job id immediately
 - `GET /jobs`: list all jobs
