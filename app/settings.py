@@ -22,6 +22,19 @@ class Settings:
         return os.path.join(self.panowan_dir, self.wan_model_path.lstrip("./"))
 
     @property
+    def wan_diffusion_absolute_path(self) -> str:
+        return os.path.join(
+            self.wan_model_absolute_path, "diffusion_pytorch_model.safetensors"
+        )
+
+    @property
+    def wan_t5_absolute_path(self) -> str:
+        return os.path.join(
+            self.wan_model_absolute_path,
+            "models_t5_umt5-xxl-enc-bf16.pth",
+        )
+
+    @property
     def lora_absolute_path(self) -> str:
         return os.path.join(self.panowan_dir, self.lora_checkpoint_path.lstrip("./"))
 

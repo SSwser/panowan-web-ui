@@ -35,12 +35,12 @@ class ApiTests(unittest.TestCase):
     def test_healthcheck_reports_path_status(self) -> None:
         path_exists = {
             api.settings.panowan_dir: True,
+            api.settings.wan_diffusion_absolute_path: True,
+            api.settings.wan_t5_absolute_path: False,
             api.settings.lora_absolute_path: False,
         }
 
-        with patch("app.api.os.path.exists", side_effect=path_exists.get), patch(
-            "app.api._path_has_content", return_value=False
-        ):
+        with patch("app.api.os.path.exists", side_effect=path_exists.get):
             result = api.healthcheck()
 
         self.assertEqual(
@@ -56,9 +56,7 @@ class ApiTests(unittest.TestCase):
         )
 
     def test_healthcheck_reports_ready_when_models_exist(self) -> None:
-        with patch("app.api.os.path.exists", return_value=True), patch(
-            "app.api._path_has_content", return_value=True
-        ):
+        with patch("app.api.os.path.exists", return_value=True):
             result = api.healthcheck()
 
         self.assertEqual(result["status"], "ready")
@@ -157,14 +155,6 @@ class ApiTests(unittest.TestCase):
         self.assertIsInstance(response, FileResponse)
         self.assertEqual(response.media_type, "text/html")
         self.assertTrue(response.path.endswith("index.html"))
-
-    def test_api_info_returns_json(self) -> None:
-        result = api.api_info()
-
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result["service"], "panowan-local")
-        self.assertEqual(result["status"], "ok")
-        self.assertIn("generate_endpoint", result)
 
     def test_list_jobs_returns_sorted_jobs(self) -> None:
         with patch.dict(

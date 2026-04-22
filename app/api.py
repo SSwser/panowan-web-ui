@@ -24,12 +24,6 @@ _jobs_lock = threading.Lock()
 _gpu_slot = threading.Semaphore(1)
 
 
-def _path_has_content(path: str) -> bool:
-    if os.path.isdir(path):
-        return any(os.scandir(path))
-    return os.path.exists(path)
-
-
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -167,24 +161,16 @@ def on_startup() -> None:
 
 @app.get("/")
 def root() -> FileResponse:
-    """Serve the web UI (index.html by default)."""
     index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
     return FileResponse(index_path, media_type="text/html")
-
-
-@app.get("/api")
-def api_info() -> dict:
-    return {
-        "service": "panowan-local",
-        "status": "ok",
-        "generate_endpoint": "/generate",
-    }
 
 
 @app.get("/health")
 def healthcheck() -> dict:
     panowan_dir_exists = os.path.exists(settings.panowan_dir)
-    wan_model_ready = _path_has_content(settings.wan_model_absolute_path)
+    wan_model_ready = os.path.exists(
+        settings.wan_diffusion_absolute_path
+    ) and os.path.exists(settings.wan_t5_absolute_path)
     lora_exists = os.path.exists(settings.lora_absolute_path)
     model_ready = wan_model_ready and lora_exists
 
@@ -223,7 +209,7 @@ def generate(payload: dict, background_tasks: BackgroundTasks) -> dict:
 
 
 @app.get("/jobs")
-def list_jobs() -> list:
+def list_jobs() -> list[dict[str, Any]]:
     with _jobs_lock:
         jobs = list(_jobs.values())
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
