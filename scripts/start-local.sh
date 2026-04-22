@@ -7,9 +7,14 @@ LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-./models/PanoWan/latest-lora.ckpt}
 
 cd "${PANOWAN_DIR}"
 
-if [[ ! -d "${WAN_MODEL_PATH}" ]] || [[ -z "$(find "${WAN_MODEL_PATH}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+if [[ ! -d "${WAN_MODEL_PATH}" ]] || [[ ! -f "${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth" ]]; then
     echo "Downloading Wan model weights into ${WAN_MODEL_PATH}..."
-    HF_HUB_ENABLE_HF_TRANSFER=0 bash ./scripts/download-wan.sh "${WAN_MODEL_PATH}"
+    export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
+    mkdir -p "${WAN_MODEL_PATH}"
+    uvx --from="huggingface_hub[cli]" hf download \
+        Wan-AI/Wan2.1-T2V-1.3B \
+        --local-dir "${WAN_MODEL_PATH}" \
+        --max-workers "${HF_MAX_WORKERS:-8}"
 fi
 
 lora_dir="$(dirname "${LORA_CHECKPOINT_PATH}")"

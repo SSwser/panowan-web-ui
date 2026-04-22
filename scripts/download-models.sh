@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_ROOT="${MODEL_ROOT:-data/models}"
+MODEL_ROOT="$(realpath "${MODEL_ROOT:-data/models}")"
 PANOWAN_SRC_DIR="${PANOWAN_SRC_DIR:-.cache/PanoWan}"
 PANOWAN_REPO_URL="${PANOWAN_REPO_URL:-https://github.com/VariantConst/PanoWan.git}"
 WAN_MODEL_PATH="${WAN_MODEL_PATH:-${MODEL_ROOT}/Wan-AI/Wan2.1-T2V-1.3B}"
@@ -14,10 +14,15 @@ fi
 
 cd "${PANOWAN_SRC_DIR}"
 
-if [[ ! -d "${WAN_MODEL_PATH}" ]] || [[ -z "$(find "${WAN_MODEL_PATH}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-    mkdir -p "$(dirname "${WAN_MODEL_PATH}")"
+if [[ ! -f "${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors" ]] || \
+   [[ ! -f "${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth" ]]; then
+    mkdir -p "${WAN_MODEL_PATH}"
     echo "Downloading Wan model weights into ${WAN_MODEL_PATH}..."
-    HF_HUB_ENABLE_HF_TRANSFER=0 bash ./scripts/download-wan.sh "${WAN_MODEL_PATH}"
+    export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
+    uvx --from="huggingface_hub[cli]" hf download \
+        Wan-AI/Wan2.1-T2V-1.3B \
+        --local-dir "${WAN_MODEL_PATH}" \
+        --max-workers "${HF_MAX_WORKERS:-8}"
 fi
 
 if [[ ! -f "${LORA_DIR}/latest-lora.ckpt" ]]; then

@@ -1,5 +1,6 @@
 PORT ?= 8000
 OUTPUT_FILE ?= output.mp4
+POLL_INTERVAL ?= 5
 COMPOSE ?= docker compose
 SERVICE_URL ?= http://localhost:$(PORT)
 REQUEST_FILE ?= requests/generate-request.sample.json
@@ -10,7 +11,7 @@ include .env
 export
 endif
 
-.PHONY: env test build up down logs health generate request-template prefetch-models
+.PHONY: env test build up down logs health generate download-models doctor
 
 env:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -33,28 +34,33 @@ logs:
 health:
 	curl -fsS $(SERVICE_URL)/health
 
-request-template:
-	@if [ -z "$(PROMPT)" ]; then \
-		echo "PROMPT is required, e.g. make request-template PROMPT='A cinematic alpine valley at sunset'"; \
-		exit 1; \
-	fi
-	@mkdir -p $(dir $(REQUEST_FILE))
-	@python3 -c 'import json, pathlib, sys; path = pathlib.Path(sys.argv[1]); path.write_text(json.dumps({"prompt": sys.argv[2]}, indent=2) + "\n", encoding="utf-8")' "$(REQUEST_FILE)" "$(PROMPT)"
-	@echo "Wrote $(REQUEST_FILE)"
+download-models:
+	bash scripts/download-models.sh
 
-prefetch-models:
-	bash scripts/prefetch-models.sh
+doctor:
+	bash scripts/doctor.sh
 
 generate:
-	@if [ -n "$(PROMPT)" ]; then \
-		python3 -c 'import json,sys; print(json.dumps({"prompt": sys.argv[1]}))' "$(PROMPT)" | \
-		curl -fsS -X POST $(SERVICE_URL)/generate \
-			-H "Content-Type: application/json" \
-			-o $(OUTPUT_FILE) \
-			--data @-; \
+	@set -e; \
+	if [ -n "$(PROMPT)" ]; then \
+		response=$$(python3 -c 'import json,sys,urllib.request; req = urllib.request.Request(sys.argv[1] + "/generate", data=json.dumps({"prompt": sys.argv[2]}).encode(), headers={"Content-Type": "application/json"}, method="POST"); print(urllib.request.urlopen(req).read().decode())' "$(SERVICE_URL)" "$(PROMPT)"); \
 	else \
-		curl -fsS -X POST $(SERVICE_URL)/generate \
-			-H "Content-Type: application/json" \
-			-o $(OUTPUT_FILE) \
-			--data @$(REQUEST_FILE); \
-	fi
+		response=$$(python3 -c 'import pathlib,sys,urllib.request; payload = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"); req = urllib.request.Request(sys.argv[1] + "/generate", data=payload.encode(), headers={"Content-Type": "application/json"}, method="POST"); print(urllib.request.urlopen(req).read().decode())' "$(SERVICE_URL)" "$(REQUEST_FILE)"); \
+	fi; \
+	echo "$$response"; \
+	job_id=$$(printf '%s' "$$response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])'); \
+	while true; do \
+		status_json=$$(curl -fsS $(SERVICE_URL)/jobs/$$job_id); \
+		echo "$$status_json"; \
+		status=$$(printf '%s' "$$status_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])'); \
+		if [ "$$status" = "completed" ]; then \
+			curl -fsS $(SERVICE_URL)/jobs/$$job_id/download -o $(OUTPUT_FILE); \
+			echo "Saved $(OUTPUT_FILE)"; \
+			break; \
+		fi; \
+		if [ "$$status" = "failed" ]; then \
+			echo "Job $$job_id failed" >&2; \
+			exit 1; \
+		fi; \
+		sleep $(POLL_INTERVAL); \
+	done
