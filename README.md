@@ -34,8 +34,13 @@ This project now runs as a local HTTP service inside Docker and no longer depend
 
 ## API
 
+- `GET /`: web UI (index.html) — job management dashboard
+- `GET /api`: API info
 - `GET /health`: health check
-- `POST /generate`: generate a panoramic MP4 and return it as an `mp4` file stream
+- `POST /generate`: submit a generation job and return a job id immediately
+- `GET /jobs`: list all jobs
+- `GET /jobs/{job_id}`: inspect job status
+- `GET /jobs/{job_id}/download`: download the finished MP4
 
 `GET /health` returns both service and model readiness, for example:
 
@@ -80,6 +85,7 @@ docker compose up --build
 ```
 
 The image build now installs code and dependencies only. Model weights are fetched on first container start and then reused from `data/models/`.
+Compose also mounts `data/runtime/` into the container so generated MP4 files and `jobs.json` survive container restarts.
 
 ## Local Dev Flow
 
@@ -98,7 +104,7 @@ python3 -m unittest discover -s tests
 If you want to overlap model downloads with the Docker image pull, start them in a second terminal right away:
 
 ```bash
-make prefetch-models
+make download-models
 ```
 
 That writes the weights into `data/models/` and can run while `docker build` or `docker pull` is still in progress.
@@ -128,8 +134,20 @@ curl http://localhost:8000/health
 ```bash
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
-  -o output.mp4 \
   --data @requests/generate-request.sample.json
+```
+
+Then poll the job and download the result when it is ready:
+
+```bash
+curl http://localhost:8000/jobs/<job_id>
+curl -o output.mp4 http://localhost:8000/jobs/<job_id>/download
+```
+
+Or open the web UI in a browser to manage jobs interactively:
+
+```bash
+xdg-open http://localhost:8000
 ```
 
 7. Inspect logs if needed:
@@ -149,12 +167,10 @@ You can also run the same flow with `make`:
 ```bash
 make env
 make test
-make prefetch-models
-make request-template PROMPT="A cinematic alpine valley at sunset" REQUEST_FILE=requests/custom.json
+make download-models
 make build
 make up
 make health
-make generate OUTPUT_FILE=output.mp4
 make generate PROMPT="A cinematic alpine valley at sunset" OUTPUT_FILE=custom.mp4
 make logs
 make down
@@ -188,19 +204,12 @@ Health check:
 curl http://localhost:8000/health
 ```
 
-Create a request template:
-
-```bash
-make request-template PROMPT="A cinematic alpine valley at sunset" REQUEST_FILE=requests/custom.json
-```
-
-Generate a video:
+Submit a generation job:
 
 ```bash
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
-  -o output.mp4 \
   --data @requests/generate-request.sample.json
 ```
 
-The response body is the generated MP4 file, and the response header includes `X-Job-Id`.
+The default output directory for generated files is `/app/runtime/outputs`, and job state is persisted to `/app/runtime/jobs.json`. You can override them with `OUTPUT_DIR` and `JOB_STORE_PATH`.
