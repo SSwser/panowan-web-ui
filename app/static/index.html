@@ -23,6 +23,38 @@
         --shadow: 0 24px 60px rgba(65, 37, 20, 0.14);
       }
 
+      /* ── dialog / preview ── */
+      dialog {
+        border: none;
+        border-radius: 20px;
+        padding: 0;
+        max-width: min(860px, 95vw);
+        width: 100%;
+        box-shadow: 0 32px 80px rgba(0,0,0,0.35);
+        background: #1a1a1a;
+        color: #f0ece6;
+      }
+      dialog::backdrop { background: rgba(0,0,0,0.65); backdrop-filter: blur(4px); }
+      .dialog-inner { display: flex; flex-direction: column; }
+      .dialog-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 18px 10px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      .dialog-header h3 { margin: 0; font-size: 0.9rem; font-weight: 700; color: #e0d8cc; }
+      .dialog-close {
+        background: rgba(255,255,255,0.1); border: none; border-radius: 999px;
+        color: #ccc; cursor: pointer; font-size: 1.1rem; line-height: 1;
+        padding: 4px 10px; transition: background 120ms;
+      }
+      .dialog-close:hover { background: rgba(255,255,255,0.18); }
+      .dialog-video { width: 100%; display: block; aspect-ratio: 2/1; background: #000; }
+      .dialog-meta {
+        padding: 12px 18px; font-size: 0.8rem; color: #8a8070; line-height: 1.6;
+        border-top: 1px solid rgba(255,255,255,0.08);
+      }
+      .dialog-meta strong { color: #cfc8be; }
+
       * { box-sizing: border-box; }
 
       body {
@@ -73,19 +105,62 @@
         gap: 14px;
       }
 
-      label { display: block; font-size: 0.88rem; font-weight: 700; margin-bottom: 8px; }
+      label { display: block; font-size: 0.88rem; font-weight: 700; margin-bottom: 6px; }
 
-      textarea, input {
+      textarea, input[type=text], input[type=number], select {
         width: 100%;
         border: 1px solid rgba(31, 41, 55, 0.18);
         border-radius: 14px;
         background: rgba(255, 255, 255, 0.85);
         color: var(--ink);
-        padding: 12px 14px;
+        padding: 10px 14px;
         font: inherit;
       }
 
-      textarea { min-height: 120px; resize: vertical; }
+      textarea { min-height: 100px; resize: vertical; }
+
+      /* ── quality row ── */
+      .quality-row {
+        display: flex; gap: 8px; flex-wrap: wrap;
+      }
+      .quality-btn {
+        flex: 1; min-width: 90px; text-align: center;
+        border: 1.5px solid var(--border);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.7);
+        padding: 8px 4px;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: var(--muted);
+        transition: border-color 140ms, color 140ms, background 140ms;
+      }
+      .quality-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .quality-btn.active {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .quality-btn small { display: block; font-weight: 400; font-size: 0.72rem; margin-top: 2px; }
+
+      /* ── params grid ── */
+      .params-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+      }
+      .params-grid label { margin-bottom: 4px; }
+
+      /* ── advanced toggle ── */
+      .adv-toggle {
+        background: none; border: none; padding: 0;
+        font: inherit; font-size: 0.83rem; color: var(--muted);
+        cursor: pointer; text-decoration: underline dotted;
+        text-align: left;
+      }
+      .adv-section { display: none; }
+      .adv-section.open { display: block; }
 
       .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 
@@ -179,9 +254,10 @@
 
       td { padding: 10px 14px; vertical-align: middle; }
 
-      .col-id { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 0.82rem; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .col-prompt { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-      .col-time { white-space: nowrap; color: var(--muted); font-size: 0.82rem; }
+      .col-id { font-family: "Cascadia Code", "JetBrains Mono", monospace; font-size: 0.82rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .col-prompt { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+      .col-params { white-space: nowrap; color: var(--muted); font-size: 0.8rem; font-family: "Cascadia Code", "JetBrains Mono", monospace; }
+      .col-time { white-space: nowrap; font-size: 0.82rem; color: var(--muted); }
 
       .badge {
         display: inline-flex;
@@ -191,6 +267,7 @@
         padding: 4px 10px;
         font-size: 0.78rem;
         font-weight: 700;
+        white-space: nowrap;
       }
 
       .badge::before {
@@ -206,19 +283,31 @@
       .badge-failed  { color: var(--error);   background: var(--error-soft); }
       .badge-unknown { color: var(--muted);   background: rgba(31,41,55,0.07); }
 
-      .download-btn {
+      .download-btn, .preview-btn {
         display: inline-block;
         text-decoration: none;
         font-size: 0.82rem;
         font-weight: 700;
-        color: var(--accent);
-        background: var(--accent-soft);
         border-radius: 999px;
         padding: 4px 12px;
         transition: transform 120ms;
+        cursor: pointer;
+        border: none;
+        font-family: inherit;
       }
 
-      .download-btn:hover { transform: translateY(-1px); }
+      .download-btn {
+        color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .preview-btn {
+        color: var(--success);
+        background: var(--success-soft);
+        margin-right: 6px;
+      }
+
+      .download-btn:hover, .preview-btn:hover { transform: translateY(-1px); }
 
       .error-text { color: var(--error); font-size: 0.82rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -228,23 +317,96 @@
 
       @media (max-width: 720px) {
         .hero, .submit-area, .history-header { padding-left: 18px; padding-right: 18px; }
-        .col-prompt, .col-time { display: none; }
+        .col-prompt, .col-time, .col-params { display: none; }
       }
     </style>
   </head>
   <body>
+    <!-- Video preview dialog -->
+    <dialog id="preview-dialog">
+      <div class="dialog-inner">
+        <div class="dialog-header">
+          <h3 id="dialog-title">视频预览</h3>
+          <button class="dialog-close" id="dialog-close-btn">✕</button>
+        </div>
+        <video class="dialog-video" id="dialog-video" controls loop></video>
+        <div class="dialog-meta" id="dialog-meta"></div>
+      </div>
+    </dialog>
+
     <main>
       <!-- Submit panel -->
       <div class="panel">
         <section class="hero">
           <h1>PanoWan 视频生成</h1>
-          <p>提交文本描述，异步生成全景视频。历史任务会自动刷新，完成后可直接下载。</p>
+          <p>提交文本描述，异步生成全景视频。历史任务会自动刷新，完成后可预览或下载。</p>
         </section>
         <div class="submit-area">
           <div>
             <label for="prompt">Prompt</label>
             <textarea id="prompt">A cinematic alpine valley at sunset with drifting clouds and wide panoramic motion.</textarea>
           </div>
+
+          <div>
+            <label>质量预设</label>
+            <div class="quality-row">
+              <button type="button" class="quality-btn" data-quality="draft">
+                草稿
+                <small>20步 · 448×224</small>
+              </button>
+              <button type="button" class="quality-btn active" data-quality="standard">
+                标准
+                <small>50步 · 896×448</small>
+              </button>
+              <button type="button" class="quality-btn" data-quality="custom">
+                自定义
+                <small>手动设置</small>
+              </button>
+            </div>
+          </div>
+
+          <div id="custom-params" style="display:none">
+            <div class="params-grid">
+              <div>
+                <label for="num-steps">推理步数</label>
+                <input type="number" id="num-steps" min="1" max="150" value="50">
+              </div>
+              <div>
+                <label for="resolution">分辨率</label>
+                <select id="resolution">
+                  <option value="448x224">448×224　草稿</option>
+                  <option value="640x320">640×320　小</option>
+                  <option value="896x448" selected>896×448　标准</option>
+                  <option value="1280x640">1280×640　高清 ⚠</option>
+                  <option value="custom">自定义…</option>
+                </select>
+              </div>
+              <div>
+                <label for="seed">随机种子</label>
+                <input type="number" id="seed" min="0" value="0">
+              </div>
+            </div>
+            <div id="custom-res" style="display:none; margin-top:10px">
+              <div class="params-grid">
+                <div>
+                  <label for="custom-width">宽度（px，16 的倍数）</label>
+                  <input type="number" id="custom-width" min="64" step="16" value="896">
+                </div>
+                <div>
+                  <label for="custom-height">高度（px，建议 = 宽 ÷ 2）</label>
+                  <input type="number" id="custom-height" min="32" step="16" value="448">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <button type="button" class="adv-toggle" id="adv-toggle">▸ 负向提示词</button>
+            <div class="adv-section" id="adv-section">
+              <textarea id="negative-prompt" style="min-height:72px; margin-top:8px" placeholder="overly colorful, overexposed, static..."></textarea>
+            </div>
+          </div>
+
           <div class="row">
             <button id="submit-btn" type="button">提交任务</button>
             <span id="submit-status" class="submit-status"></span>
@@ -268,12 +430,14 @@
                 <th>Job ID</th>
                 <th>状态</th>
                 <th class="col-prompt">Prompt</th>
+                <th class="col-params">参数</th>
                 <th class="col-time">提交时间</th>
+                <th class="col-time">耗时</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody id="job-table-body">
-              <tr class="empty-row"><td colspan="5">加载中…</td></tr>
+              <tr class="empty-row"><td colspan="7">加载中…</td></tr>
             </tbody>
           </table>
         </div>
@@ -287,20 +451,113 @@
       const tbody = document.getElementById("job-table-body");
       const pollDot = document.getElementById("poll-dot");
       const pollLabel = document.getElementById("poll-label");
+      const previewDialog = document.getElementById("preview-dialog");
+      const dialogVideo = document.getElementById("dialog-video");
+      const dialogTitle = document.getElementById("dialog-title");
+      const dialogMeta = document.getElementById("dialog-meta");
+      const customParams = document.getElementById("custom-params");
+      const customResolution = document.getElementById("custom-res");
+      const resolutionSelect = document.getElementById("resolution");
 
       let pollTimer = null;
-      let activeJobs = new Set();
+      let selectedQuality = "standard";
 
-      // ---- utilities ----
+      document.querySelectorAll(".quality-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".quality-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          selectedQuality = btn.dataset.quality;
+          customParams.style.display = selectedQuality === "custom" ? "" : "none";
+        });
+      });
 
+      // ── resolution selector ──
+      resolutionSelect.addEventListener("change", () => {
+        customResolution.style.display =
+          resolutionSelect.value === "custom" ? "" : "none";
+      });
+
+      // ── advanced toggle ──
+      document.getElementById("adv-toggle").addEventListener("click", function() {
+        const sec = document.getElementById("adv-section");
+        const open = sec.classList.toggle("open");
+        this.textContent = (open ? "▾" : "▸") + " 负向提示词";
+      });
+
+      // ── dialog ──
+      function resetPreview() {
+        previewDialog.close();
+        dialogVideo.pause();
+        dialogVideo.src = "";
+      }
+
+      document.getElementById("dialog-close-btn").addEventListener("click", resetPreview);
+      previewDialog.addEventListener("click", e => {
+        if (e.target === previewDialog) {
+          resetPreview();
+        }
+      });
+
+      function formatDuration(seconds, suffix = "") {
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        const base = minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
+        return suffix ? `${base} ${suffix}` : base;
+      }
+
+      function openPreview(job) {
+        const url = job.download_url || `/jobs/${job.job_id}/download`;
+        dialogVideo.src = url;
+        dialogTitle.textContent = `预览 — ${job.job_id.slice(0, 8)}…`;
+        const p = job.params || {};
+        const parts = [];
+        if (p.num_inference_steps) parts.push(`${p.num_inference_steps} 步`);
+        if (p.width && p.height) parts.push(`${p.width}×${p.height}`);
+        if (p.seed !== undefined && p.seed !== null) parts.push(`seed ${p.seed}`);
+        let duration = "";
+        if (job.created_at && job.finished_at) {
+          const secs = Math.round((new Date(job.finished_at) - new Date(job.created_at)) / 1000);
+          duration = formatDuration(secs);
+        }
+        dialogMeta.innerHTML =
+          `<strong>Prompt:</strong> ${escapeHtml(job.prompt || "")}<br>` +
+          (parts.length ? `<strong>参数:</strong> ${parts.join(" · ")}` : "") +
+          (duration ? ` &nbsp;·&nbsp; <strong>耗时:</strong> ${duration}` : "");
+        previewDialog.showModal();
+      }
+
+      // ── utilities ──
       function formatTime(iso) {
         if (!iso) return "-";
         try {
           const d = new Date(iso);
-          return d.toLocaleString("zh-CN", { hour12: false });
+          const now = new Date();
+          const sameDay = d.toDateString() === now.toDateString();
+          const time = d.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
+          if (sameDay) return time;
+          return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) + " " + time;
         } catch {
           return iso;
         }
+      }
+
+      function createdAtCell(job) {
+        return formatTime(job.created_at);
+      }
+
+      function durationCell(job) {
+        if (!job.created_at) return "-";
+
+        const createdTime = new Date(job.created_at);
+        const endTime = job.finished_at ? new Date(job.finished_at) : new Date();
+        const secs = Math.round((endTime - createdTime) / 1000);
+
+        if (job.status === "completed" || job.status === "failed") {
+          return formatDuration(secs);
+        } else if (job.status === "running") {
+          return formatDuration(secs, "运行中");
+        }
+        return "-";
       }
 
       function statusBadge(status) {
@@ -309,10 +566,21 @@
         return `<span class="badge badge-${cls}">${label}</span>`;
       }
 
+      function paramsCell(job) {
+        const p = job.params || {};
+        if (!p.num_inference_steps && !p.width) return `<span class="col-params" style="color:var(--border)">—</span>`;
+        const parts = [];
+        if (p.num_inference_steps) parts.push(`${p.num_inference_steps}步`);
+        if (p.width && p.height) parts.push(`${p.width}×${p.height}`);
+        if (p.seed !== undefined && p.seed !== null) parts.push(`seed ${p.seed}`);
+        return `<span class="col-params">${parts.join(" ")}</span>`;
+      }
+
       function actionCell(job) {
         if (job.status === "completed") {
           const url = job.download_url || `/jobs/${job.job_id}/download`;
-          return `<a class="download-btn" href="${url}" download="${job.job_id}.mp4">下载 MP4</a>`;
+          return `<button class="preview-btn" data-job-id="${escapeHtml(job.job_id)}">预览</button>` +
+                 `<a class="download-btn" href="${url}" download="${escapeHtml(job.job_id)}.mp4">下载</a>`;
         }
         if (job.status === "failed" && job.error) {
           return `<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`;
@@ -324,9 +592,21 @@
         return String(str).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
       }
 
+      let _jobCache = {};
+      tbody.addEventListener("click", event => {
+        const previewButton = event.target.closest(".preview-btn");
+        if (!previewButton) return;
+
+        const job = _jobCache[previewButton.dataset.jobId];
+        if (job) openPreview(job);
+      });
+
       function renderTable(jobs) {
+        _jobCache = {};
+        jobs.forEach(j => { _jobCache[j.job_id] = j; });
+
         if (!jobs || jobs.length === 0) {
-          tbody.innerHTML = `<tr class="empty-row"><td colspan="5">暂无任务，提交一个试试吧。</td></tr>`;
+          tbody.innerHTML = `<tr class="empty-row"><td colspan="7">暂无任务，提交一个试试吧。</td></tr>`;
           return;
         }
 
@@ -335,15 +615,16 @@
             <td class="col-id" title="${escapeHtml(job.job_id)}">${escapeHtml(job.job_id)}</td>
             <td>${statusBadge(job.status)}</td>
             <td class="col-prompt" title="${escapeHtml(job.prompt || '')}">${escapeHtml(job.prompt || "-")}</td>
-            <td class="col-time">${formatTime(job.created_at)}</td>
+            <td>${paramsCell(job)}</td>
+            <td class="col-time">${createdAtCell(job)}</td>
+            <td class="col-time">${durationCell(job)}</td>
             <td>${actionCell(job)}</td>
           </tr>
         `).join("");
         tbody.innerHTML = rows;
       }
 
-      // ---- polling ----
-
+      // ── polling ──
       function hasActiveJobs(jobs) {
         return jobs.some(j => j.status === "queued" || j.status === "running");
       }
@@ -381,8 +662,7 @@
         pollTimer = setTimeout(refreshJobs, delay);
       }
 
-      // ---- submit ----
-
+      // ── submit ──
       submitBtn.addEventListener("click", async () => {
         const prompt = promptInput.value.trim();
         if (!prompt) { submitStatus.textContent = "请填写 Prompt"; return; }
@@ -390,11 +670,37 @@
         submitBtn.disabled = true;
         submitStatus.textContent = "提交中…";
 
+        const body = { prompt };
+
+        if (selectedQuality === "custom") {
+          const steps = parseInt(document.getElementById("num-steps").value);
+          const seed = parseInt(document.getElementById("seed").value);
+          if (steps > 0) body.num_inference_steps = steps;
+          body.seed = seed;
+
+          const resVal = resolutionSelect.value;
+          if (resVal === "custom") {
+            const w = parseInt(document.getElementById("custom-width").value);
+            const h = parseInt(document.getElementById("custom-height").value);
+            if (w > 0) body.width = w;
+            if (h > 0) body.height = h;
+          } else {
+            const [w, h] = resVal.split("x").map(Number);
+            body.width = w;
+            body.height = h;
+          }
+        } else {
+          body.quality = selectedQuality;
+        }
+
+        const negPrompt = document.getElementById("negative-prompt").value.trim();
+        if (negPrompt) body.negative_prompt = negPrompt;
+
         try {
           const res = await fetch("/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify(body),
           });
           const payload = await res.json();
 
@@ -404,7 +710,6 @@
           }
 
           submitStatus.textContent = `✓ 任务 ${payload.job_id} 已加入队列`;
-          // fast refresh to show the new job immediately
           if (pollTimer !== null) clearTimeout(pollTimer);
           pollTimer = setTimeout(refreshJobs, 400);
         } catch (err) {
@@ -414,7 +719,7 @@
         }
       });
 
-      // ---- init ----
+      // ── init ──
       refreshJobs();
     </script>
   </body>
