@@ -1,15 +1,11 @@
 COMPOSE ?= docker compose
 SERVICE_URL ?= http://localhost:8000
-REQUEST_FILE ?= requests/generate-request.sample.json
-OUTPUT_FILE ?= output.mp4
-POLL_INTERVAL ?= 5
-PYTHON ?= python3
 
 ifneq (,$(wildcard .env))
 include .env
 endif
 
-.PHONY: env test build up down logs health generate download-models doctor
+.PHONY: env test build up down logs health download-models doctor
 
 env:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -37,6 +33,3 @@ download-models:
 
 doctor:
 	bash scripts/doctor.sh
-
-generate:
-	PROMPT="$(PROMPT)" SERVICE_URL="$(SERVICE_URL)" REQUEST_FILE="$(REQUEST_FILE)" OUTPUT_FILE="$(OUTPUT_FILE)" POLL_INTERVAL="$(POLL_INTERVAL)" PYTHON="$(PYTHON)" bash scripts/generate.sh

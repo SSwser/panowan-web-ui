@@ -14,6 +14,9 @@ class Settings:
     job_store_path: str
     default_prompt: str
     generation_timeout_seconds: int
+    default_num_inference_steps: int
+    default_width: int
+    default_height: int
     host: str
     port: int
 
@@ -62,6 +65,11 @@ def load_settings() -> Settings:
         generation_timeout_seconds=int(
             os.getenv("GENERATION_TIMEOUT_SECONDS", "1800")
         ),
+        default_num_inference_steps=int(
+            os.getenv("DEFAULT_NUM_INFERENCE_STEPS", "50")
+        ),
+        default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
+        default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
     )
