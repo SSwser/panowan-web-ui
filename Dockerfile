@@ -1,7 +1,7 @@
 # PanoWan local Docker service
 # Generates 360 panoramic videos from text prompts over HTTP
 
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -10,7 +10,9 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
     git \
     python3 \
     python3-pip \
@@ -22,8 +24,10 @@ RUN git clone https://github.com/VariantConst/PanoWan.git
 
 # Install uv and PanoWan dependencies
 WORKDIR /app/PanoWan
-RUN python3 -m pip install --no-cache-dir --upgrade pip && \
-    python3 -m pip install --no-cache-dir uv fastapi "uvicorn[standard]" && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/uv \
+    python3 -m pip install --upgrade pip && \
+    python3 -m pip install uv fastapi "uvicorn[standard]" && \
     bash ./scripts/install-uv.sh && \
     export PATH="$HOME/.local/bin:$PATH" && \
     uv sync

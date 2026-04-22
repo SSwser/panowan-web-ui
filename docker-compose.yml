@@ -9,7 +9,15 @@ services:
       HOST: 0.0.0.0
       PORT: ${PORT:-8000}
       GENERATION_TIMEOUT_SECONDS: ${GENERATION_TIMEOUT_SECONDS:-1800}
+      OUTPUT_DIR: ${OUTPUT_DIR:-/app/runtime/outputs}
+      JOB_STORE_PATH: ${JOB_STORE_PATH:-/app/runtime/jobs.json}
+      HF_HUB_ENABLE_HF_TRANSFER: ${HF_HUB_ENABLE_HF_TRANSFER:-0}
+      HF_HUB_DOWNLOAD_TIMEOUT: ${HF_HUB_DOWNLOAD_TIMEOUT:-10}
+      HF_MAX_WORKERS: ${HF_MAX_WORKERS:-8}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_ENDPOINT: ${HF_ENDPOINT:-}
     volumes:
       - ./data/models:/app/PanoWan/models
+      - ./data/runtime:/app/runtime
     gpus: all
     restart: unless-stopped
