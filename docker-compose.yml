@@ -7,15 +7,22 @@ services:
       - "${PORT:-8000}:8000"
     environment:
       HOST: 0.0.0.0
-      PORT: ${PORT:-8000}
-      GENERATION_TIMEOUT_SECONDS: ${GENERATION_TIMEOUT_SECONDS:-1800}
-      OUTPUT_DIR: ${OUTPUT_DIR:-/app/runtime/outputs}
-      JOB_STORE_PATH: ${JOB_STORE_PATH:-/app/runtime/jobs.json}
-      HF_HUB_ENABLE_HF_TRANSFER: ${HF_HUB_ENABLE_HF_TRANSFER:-0}
-      HF_HUB_DOWNLOAD_TIMEOUT: ${HF_HUB_DOWNLOAD_TIMEOUT:-10}
-      HF_MAX_WORKERS: ${HF_MAX_WORKERS:-8}
-      HF_TOKEN: ${HF_TOKEN:-}
-      HF_ENDPOINT: ${HF_ENDPOINT:-}
+      PORT:
+      GENERATION_TIMEOUT_SECONDS:
+      OUTPUT_DIR:
+      JOB_STORE_PATH:
+      HF_HUB_ENABLE_HF_TRANSFER:
+      HF_HUB_DOWNLOAD_TIMEOUT:
+      HF_MAX_WORKERS:
+      HF_TOKEN:
+      HF_ENDPOINT:
+      DEFAULT_NUM_INFERENCE_STEPS:
+      DEFAULT_WIDTH:
+      DEFAULT_HEIGHT:
+      PYTORCH_ALLOC_CONF:
+      VMTOUCH_MODELS:
+      TORCH_CUDNN_V8_API_ENABLED: 1
+      CUDA_MODULE_LOADING: LAZY
     volumes:
       - ./data/models:/app/PanoWan/models
       - ./data/runtime:/app/runtime

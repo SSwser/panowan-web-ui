@@ -37,5 +37,18 @@ if [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
     fi
 fi
 
+# Optional pagecache warm-up: set VMTOUCH_MODELS=1 in .env to enable.
+# Pre-loads model weights into the OS page cache so the first inference
+# doesn't pay the disk-read cost. Runs in the background to avoid delaying
+# service startup.
+if [[ "${VMTOUCH_MODELS:-0}" == "1" ]]; then
+    if command -v vmtouch &>/dev/null; then
+        echo "Warming pagecache for model files (background)..."
+        vmtouch -t "${WAN_MODEL_PATH}" "${lora_dir}" &>/dev/null &
+    else
+        echo "WARNING: VMTOUCH_MODELS=1 but vmtouch is not installed, skipping."
+    fi
+fi
+
 cd /app
 exec python3 -m app.main
