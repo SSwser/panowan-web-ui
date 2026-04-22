@@ -1,0 +1,1 @@
+"""PanoWan local service package."""

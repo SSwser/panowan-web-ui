@@ -1,0 +1,15 @@
+services:
+  panowan:
+    build:
+      context: .
+    image: panowan-local
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${PORT:-8000}
+      GENERATION_TIMEOUT_SECONDS: ${GENERATION_TIMEOUT_SECONDS:-1800}
+    volumes:
+      - ./data/models:/app/PanoWan/models
+    gpus: all
+    restart: unless-stopped
