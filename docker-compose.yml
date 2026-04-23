@@ -2,7 +2,7 @@ services:
   panowan:
     build:
       context: .
-    image: panowan
+    image: panowan:${TAG:-latest}
     ports:
       - "${PORT:-8000}:8000"
     env_file:

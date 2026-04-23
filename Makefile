@@ -13,25 +13,23 @@ DOCKER ?= bash scripts/docker-proxy.sh
 
 COMPOSE ?= $(DOCKER) compose -f $(COMPOSE_FILE)
 SERVICE_URL ?= http://localhost:8000
+TAG ?= latest
+export TAG
 
 ifneq (,$(wildcard .env))
 include .env
 endif
 
-define normalize_bind_path
+NORMALIZE_BIND_PATH ?= bash scripts/lib/path.sh
+
+define normalize_bind_var
 ifneq ($(strip $($(1))),)
-ifneq ($(filter /% ./% ../%,$($(1))),)
-export $(1) := $($(1))
-else ifneq ($(findstring :,$($(1))),)
-export $(1) := $($(1))
-else
-export $(1) := ./$(strip $($(1)))
-endif
+export $(1) := $(shell $(NORMALIZE_BIND_PATH) "$($(1))")
 endif
 endef
 
-$(eval $(call normalize_bind_path,PANOWAN_SRC_DIR))
-$(eval $(call normalize_bind_path,MODEL_ROOT))
+$(eval $(call normalize_bind_var,PANOWAN_SRC_DIR))
+$(eval $(call normalize_bind_var,MODEL_ROOT))
 
 .PHONY: init submodule env test build up down logs health doctor download-models docker-env
 
@@ -70,4 +68,5 @@ download-models:
 docker-env:
 	@echo "DOCKER=$(DOCKER)"
 	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
+	@echo "TAG=$(TAG)"
 	@$(DOCKER) version --format '{{.Server.Version}}' 2>/dev/null || echo "docker daemon unavailable"
