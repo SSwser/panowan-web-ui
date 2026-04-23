@@ -28,7 +28,7 @@ WORKDIR /app/PanoWan
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/uv \
     python3 -m pip install --upgrade pip && \
-    python3 -m pip install uv fastapi "uvicorn[standard]" && \
+    python3 -m pip install uv fastapi "uvicorn[standard]" sse-starlette && \
     bash ./scripts/install-uv.sh && \
     export PATH="$HOME/.local/bin:$PATH" && \
     uv sync
@@ -39,6 +39,9 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /app
 COPY app /app/app
 COPY scripts /app/scripts
+
+# Create upscale model directory
+RUN mkdir -p /app/data/models/upscale
 
 EXPOSE 8000
 

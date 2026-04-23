@@ -23,8 +23,12 @@ services:
       VMTOUCH_MODELS:
       TORCH_CUDNN_V8_API_ENABLED: 1
       CUDA_MODULE_LOADING: LAZY
+      UPSCALE_MODEL_DIR:
+      UPSCALE_OUTPUT_DIR:
+      UPSCALE_TIMEOUT_SECONDS:
     volumes:
       - ./data/models:/app/PanoWan/models
+      - ./data/models/upscale:/app/data/models/upscale
       - ./data/runtime:/app/runtime
     gpus: all
     restart: unless-stopped
