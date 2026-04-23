@@ -10,7 +10,7 @@ cd "${PANOWAN_DIR}"
 if [[ "${DEV_MODE:-0}" == "1" ]]; then
     if [[ ! -f "pyproject.toml" ]]; then
         echo "ERROR: PanoWan source not found at ${PANOWAN_DIR}." >&2
-        echo "Set PANOWAN_SRC_DIR in .env (default: third_party/PanoWan), then ensure pyproject.toml exists there." >&2
+        echo "Ensure third_party/PanoWan submodule is initialized (make init), then ensure pyproject.toml exists there." >&2
         exit 1
     fi
     echo "[dev] Using shared uv cache at ${UV_CACHE_DIR:-/root/.cache/uv}"

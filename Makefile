@@ -5,9 +5,6 @@ COMPOSE_FILE := docker-compose-dev.yml
 endif
 
 UP_FLAGS ?=
-ifeq ($(DEV),1)
-UP_FLAGS += --no-build
-endif
 
 DOCKER ?= bash scripts/docker-proxy.sh
 
