@@ -2,29 +2,18 @@ services:
   panowan:
     build:
       context: .
-    image: panowan-local
+    image: panowan:${TAG:-latest}
     ports:
       - "${PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
     environment:
       HOST: 0.0.0.0
-      PORT:
-      GENERATION_TIMEOUT_SECONDS:
-      OUTPUT_DIR:
-      JOB_STORE_PATH:
-      HF_HUB_ENABLE_HF_TRANSFER:
-      HF_HUB_DOWNLOAD_TIMEOUT:
-      HF_MAX_WORKERS:
-      HF_TOKEN:
-      HF_ENDPOINT:
-      DEFAULT_NUM_INFERENCE_STEPS:
-      DEFAULT_WIDTH:
-      DEFAULT_HEIGHT:
-      PYTORCH_ALLOC_CONF:
-      VMTOUCH_MODELS:
-      TORCH_CUDNN_V8_API_ENABLED: 1
+      TORCH_CUDNN_V8_API_ENABLED: "1"
       CUDA_MODULE_LOADING: LAZY
     volumes:
-      - ./data/models:/app/PanoWan/models
+      - ${MODEL_ROOT:-./data/models}:/app/PanoWan/models
       - ./data/runtime:/app/runtime
     gpus: all
     restart: unless-stopped

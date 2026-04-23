@@ -6,7 +6,25 @@ panowan_env_runtime
 
 cd "${PANOWAN_DIR}"
 
-if [[ ! -f "${WAN_DIFFUSION_FILE}" ]] || [[ ! -f "${WAN_T5_FILE}" ]]; then
+# ── Dev mode: validate mounted source and sync Python environment ─────────────
+if [[ "${DEV_MODE:-0}" == "1" ]]; then
+    if [[ ! -f "pyproject.toml" ]]; then
+        echo "ERROR: PanoWan source not found at ${PANOWAN_DIR}." >&2
+        echo "Ensure third_party/PanoWan submodule is initialized (make init), then ensure pyproject.toml exists there." >&2
+        exit 1
+    fi
+    echo "[dev] Using shared uv cache at ${UV_CACHE_DIR:-/root/.cache/uv}"
+    echo "[dev] Syncing PanoWan dependencies (uv sync --locked)..."
+    uv sync --locked
+fi
+
+skip_model_download=false
+if [[ "${DEV_MODE:-0}" == "1" ]] && [[ "${DEV_SKIP_DOWNLOAD_MODELS:-0}" == "1" ]]; then
+    skip_model_download=true
+    echo "[dev] DEV_SKIP_DOWNLOAD_MODELS=1, skipping model and LoRA downloads."
+fi
+
+if [[ "${skip_model_download}" != true ]] && ([[ ! -f "${WAN_DIFFUSION_FILE}" ]] || [[ ! -f "${WAN_T5_FILE}" ]]); then
     echo "Downloading Wan model weights into ${WAN_MODEL_PATH}..."
     export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
     mkdir -p "${WAN_MODEL_PATH}"
@@ -18,7 +36,7 @@ fi
 
 lora_dir="$(dirname "${LORA_CHECKPOINT_PATH}")"
 
-if [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
+if [[ "${skip_model_download}" != true ]] && [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
     echo "Downloading PanoWan LoRA weights into ${lora_dir}..."
     mkdir -p "${lora_dir}"
     lora_downloaded=false

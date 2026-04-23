@@ -63,7 +63,7 @@
 ```bash
 git clone https://github.com/SSwser/panowan-web-ui.git
 cd panowan-web-ui
-make env          # 从模板生成 .env
+make init         # 生成 .env + 初始化 submodule (third_party/PanoWan)
 ```
 
 编辑 `.env`，按需配置（中国用户建议设置 HuggingFace 镜像）：
@@ -103,9 +103,18 @@ make download-models
 
 ### 4. 构建并启动服务
 
+默认是生产模式（prod）：
+
 ```bash
 make build    # 构建 Docker 镜像
 make up       # 后台启动
+```
+
+开发模式（dev）使用 `DEV=1`：
+
+```bash
+make build
+make up DEV=1
 ```
 
 ### 5. 验证健康状态
@@ -142,12 +151,15 @@ curl http://localhost:8000/health
 ## API 参考
 
 ### `GET /health`
+
 服务与模型就绪状态。
 
 ### `POST /generate`
+
 提交生成任务，立即返回任务 ID。
 
 **请求体（简洁格式）：**
+
 ```json
 {
   "prompt": "A cinematic alpine valley at sunset with drifting clouds",
@@ -160,6 +172,7 @@ curl http://localhost:8000/health
 ```
 
 **请求体（兼容格式，`input` 包装）：**
+
 ```json
 {
   "input": {
@@ -180,6 +193,7 @@ curl http://localhost:8000/health
 | `seed` | int | 0 | 随机种子，相同种子可复现结果 |
 
 **响应：**
+
 ```json
 {
   "job_id": "7ddf135f-5a10-40a7-843b-5c48728be172",
@@ -188,12 +202,15 @@ curl http://localhost:8000/health
 ```
 
 ### `GET /jobs`
+
 列出所有任务。
 
 ### `GET /jobs/{job_id}`
+
 查询单个任务状态。状态值：`queued` / `running` / `completed` / `failed`
 
 ### `GET /jobs/{job_id}/download`
+
 下载完成的 MP4 文件。
 
 ---
@@ -274,6 +291,7 @@ make doctor
 ### Q: 模型下载很慢？
 
 在 `.env` 中设置：
+
 ```bash
 HF_ENDPOINT=https://hf-mirror.com
 HF_HUB_ENABLE_HF_TRANSFER=1
@@ -282,6 +300,7 @@ HF_HUB_ENABLE_HF_TRANSFER=1
 ### Q: 生成的视频接缝处有伪影？
 
 这是全景生成的已知局限。全景连续性由算法约束保证（循环滚动 + 循环 padding），建议：
+
 - 使用更高推理步数（50 步）
 - 在 Prompt 中描述大范围自然场景（云雾、山川、海洋）效果更好
 
@@ -290,6 +309,7 @@ HF_HUB_ENABLE_HF_TRANSFER=1
 ## 环境配置详情
 
 详见 [ENVIRONMENT.md](ENVIRONMENT.md)，包含：
+
 - NVIDIA Container Toolkit 安装与修复
 - 所有环境变量说明
 - WSL2 特殊配置
@@ -311,7 +331,7 @@ python3 -m unittest discover -s tests
 docker run --rm -p 8000:8000 --gpus all \
   -v $(pwd)/data/models:/app/PanoWan/models \
   -v $(pwd)/data/runtime:/app/runtime \
-  panowan-local
+  panowan
 ```
 
 ---
@@ -323,6 +343,7 @@ docker run --rm -p 8000:8000 --gpus all \
 模型权重（Wan2.1、PanoWan LoRA）遵循其各自的开源许可证（**Apache 2.0**）。
 
 **详见 [LICENSE.md](LICENSE.md)**，其中包含：
+
 - 完整的许可证条款和免责声明
 - 所有依赖库和模型的许可证汇总
 - 使用限制和禁止用途
