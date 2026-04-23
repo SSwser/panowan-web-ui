@@ -313,6 +313,53 @@
 
       .empty-row td { text-align: center; color: var(--muted); padding: 28px; }
 
+      /* ── comparison preview ── */
+      .compare-tabs {
+        display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      .compare-tab {
+        flex: 1; text-align: center; padding: 8px 0; font-size: 0.78rem; font-weight: 700;
+        background: rgba(255,255,255,0.03); border: none; color: #8a8070; cursor: pointer;
+        transition: color 120ms, background 120ms;
+      }
+      .compare-tab:hover { background: rgba(255,255,255,0.06); }
+      .compare-tab.active { color: #e0d8cc; background: rgba(255,255,255,0.08); }
+
+      .compare-side-by-side {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+      }
+      .compare-side-by-side video { width: 100%; display: block; }
+
+      .compare-toggle-wrap { position: relative; }
+      .compare-toggle-btns {
+        display: flex; gap: 6px; justify-content: center; padding: 8px 0;
+      }
+      .compare-toggle-btn {
+        padding: 4px 14px; border-radius: 999px; font-size: 0.78rem; font-weight: 700;
+        border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.06);
+        color: #8a8070; cursor: pointer;
+      }
+      .compare-toggle-btn.active { color: #e0d8cc; border-color: var(--accent); background: rgba(190,91,45,0.15); }
+
+      .compare-slider-wrap { position: relative; user-select: none; }
+      .compare-slider-wrap canvas { display: block; width: 100%; }
+      .compare-slider-line {
+        position: absolute; top: 0; bottom: 0; width: 2px;
+        background: var(--accent); cursor: ew-resize; z-index: 2;
+      }
+      .compare-slider-label {
+        position: absolute; top: 6px; font-size: 0.68rem; font-weight: 700; color: rgba(255,255,255,0.6);
+      }
+      .compare-slider-label.left { left: 8px; }
+      .compare-slider-label.right { right: 8px; }
+      .compare-frame-nav {
+        display: flex; justify-content: center; gap: 8px; padding: 6px 0;
+      }
+      .compare-frame-nav button {
+        padding: 3px 10px; font-size: 0.72rem; border-radius: 8px;
+        background: rgba(255,255,255,0.08); border: none; color: #8a8070; cursor: pointer;
+      }
+
       .table-wrap { overflow-x: auto; }
 
       @media (max-width: 720px) {
@@ -329,8 +376,70 @@
           <h3 id="dialog-title">视频预览</h3>
           <button class="dialog-close" id="dialog-close-btn">✕</button>
         </div>
-        <video class="dialog-video" id="dialog-video" controls loop></video>
+        <div id="compare-tabs-bar" class="compare-tabs" style="display:none;">
+          <button class="compare-tab active" data-compare="side-by-side">并排对比</button>
+          <button class="compare-tab" data-compare="toggle">A/B 切换</button>
+          <button class="compare-tab" data-compare="slider">滑块对比</button>
+        </div>
+        <div id="preview-content">
+          <video class="dialog-video" id="dialog-video" controls loop></video>
+        </div>
         <div class="dialog-meta" id="dialog-meta"></div>
+      </div>
+    </dialog>
+
+    <!-- Upscale dialog -->
+    <dialog id="upscale-dialog">
+      <div class="dialog-inner" style="background:var(--panel-strong);color:var(--ink);">
+        <div class="dialog-header" style="border-bottom:1px solid var(--border);">
+          <h3 id="upscale-title" style="color:var(--ink);">提升画质</h3>
+          <button class="dialog-close" id="upscale-close-btn" style="background:var(--accent-soft);color:var(--accent);">✕</button>
+        </div>
+        <div style="padding:18px 22px;">
+          <p id="upscale-source-info" style="font-size:0.85rem;color:var(--muted);margin:0 0 14px;"></p>
+
+          <label style="font-size:0.85rem;">超分模型</label>
+          <select id="upscale-model" style="margin-bottom:14px;">
+            <option value="realesrgan-animevideov3">Real-ESRGAN (快速)</option>
+            <option value="realbasicvsr">RealBasicVSR (高质量)</option>
+            <option value="seedvr2-3b">SeedVR2-3B (SOTA)</option>
+          </select>
+
+          <label style="font-size:0.85rem;">缩放方式</label>
+          <div class="quality-row" style="margin-bottom:14px;">
+            <button type="button" class="quality-btn active" data-scale-mode="factor">按倍率</button>
+            <button type="button" class="quality-btn" data-scale-mode="resolution">指定分辨率</button>
+          </div>
+
+          <div id="upscale-factor-section">
+            <label style="font-size:0.85rem;">缩放倍率</label>
+            <select id="upscale-scale">
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+          </div>
+
+          <div id="upscale-resolution-section" style="display:none;">
+            <div class="params-grid">
+              <div>
+                <label style="font-size:0.85rem;">目标宽度</label>
+                <input type="number" id="upscale-target-w" min="32" step="32">
+              </div>
+              <div>
+                <label style="font-size:0.85rem;">目标高度</label>
+                <input type="number" id="upscale-target-h" min="32" step="32">
+              </div>
+            </div>
+          </div>
+
+          <p id="upscale-hint" style="font-size:0.78rem;color:var(--muted);margin-top:10px;"></p>
+
+          <div class="row" style="margin-top:18px;">
+            <button id="upscale-cancel-btn" class="secondary" type="button">取消</button>
+            <button id="upscale-submit-btn" type="button">开始提升</button>
+          </div>
+          <span id="upscale-status" class="submit-status"></span>
+        </div>
       </div>
     </dialog>
 
@@ -459,8 +568,79 @@
       const customResolution = document.getElementById("custom-res");
       const resolutionSelect = document.getElementById("resolution");
 
-      let pollTimer = null;
       let selectedQuality = "standard";
+
+      class JobEventSource {
+        constructor() {
+          this.es = null;
+          this.reconnectTimer = null;
+          this.fallbackPollTimer = null;
+        }
+
+        connect() {
+          this.es = new EventSource("/jobs/events");
+
+          this.es.addEventListener("job_created", (e) => {
+            const job = JSON.parse(e.data);
+            _jobCache[job.job_id] = job;
+            this._renderIncremental();
+          });
+
+          this.es.addEventListener("job_updated", (e) => {
+            const patch = JSON.parse(e.data);
+            const id = patch.job_id;
+            if (_jobCache[id]) {
+              Object.assign(_jobCache[id], patch);
+            } else {
+              _jobCache[id] = patch;
+            }
+            this._renderIncremental();
+          });
+
+          this.es.onerror = () => {
+            this.es.close();
+            this.es = null;
+            this.startFallbackPoll();
+            this.scheduleReconnect();
+          };
+        }
+
+        _renderIncremental() {
+          const jobs = Object.values(_jobCache);
+          jobs.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+          renderTable(jobs);
+          const busy = jobs.some(j => j.status === "queued" || j.status === "running");
+          setPollingIndicator(busy);
+        }
+
+        startFallbackPoll() {
+          if (this.fallbackPollTimer) return;
+          this.fallbackPollTimer = setInterval(refreshJobs, 5000);
+        }
+
+        stopFallbackPoll() {
+          if (this.fallbackPollTimer) {
+            clearInterval(this.fallbackPollTimer);
+            this.fallbackPollTimer = null;
+          }
+        }
+
+        scheduleReconnect() {
+          if (this.reconnectTimer) return;
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            fetchJobs().then(jobs => {
+              if (jobs) {
+                renderTable(jobs);
+                this.stopFallbackPoll();
+                this.connect();
+              }
+            });
+          }, 5000);
+        }
+      }
+
+      const sseClient = new JobEventSource();
 
       document.querySelectorAll(".quality-btn").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -487,8 +667,11 @@
       // ── dialog ──
       function resetPreview() {
         previewDialog.close();
-        dialogVideo.pause();
-        dialogVideo.src = "";
+        // Pause any playing videos in preview-content
+        const videos = document.getElementById("preview-content").querySelectorAll("video");
+        videos.forEach(v => { v.pause(); v.src = ""; });
+        compareSourceJob = null;
+        compareUpscaleJob = null;
       }
 
       document.getElementById("dialog-close-btn").addEventListener("click", resetPreview);
@@ -506,14 +689,36 @@
       }
 
       function openPreview(job) {
-        const url = job.download_url || `/jobs/${job.job_id}/download`;
-        dialogVideo.src = url;
-        dialogTitle.textContent = `预览 — ${job.job_id.slice(0, 8)}…`;
+        if (job.type === "upscale" && job.source_job_id) {
+          // Comparison mode: find source job
+          compareUpscaleJob = job;
+          compareSourceJob = _jobCache[job.source_job_id] || null;
+          document.getElementById("compare-tabs-bar").style.display = "";
+          compareMode = "side-by-side";
+          document.querySelectorAll(".compare-tab").forEach(t => t.classList.remove("active"));
+          document.querySelector('[data-compare="side-by-side"]').classList.add("active");
+          dialogTitle.textContent = `对比 — ${job.job_id.slice(0, 8)}…`;
+          renderComparison();
+        } else {
+          // Single video mode
+          compareSourceJob = null;
+          compareUpscaleJob = null;
+          document.getElementById("compare-tabs-bar").style.display = "none";
+          const url = job.download_url || `/jobs/${job.job_id}/download`;
+          document.getElementById("preview-content").innerHTML =
+            `<video class="dialog-video" id="dialog-video" controls loop src="${url}"></video>`;
+          dialogTitle.textContent = `预览 — ${job.job_id.slice(0, 8)}…`;
+        }
+
         const p = job.params || {};
         const parts = [];
         if (p.num_inference_steps) parts.push(`${p.num_inference_steps} 步`);
         if (p.width && p.height) parts.push(`${p.width}×${p.height}`);
         if (p.seed !== undefined && p.seed !== null) parts.push(`seed ${p.seed}`);
+        if (job.upscale_params) {
+          parts.push(`${job.upscale_params.model}`);
+          parts.push(`${job.upscale_params.scale}x`);
+        }
         let duration = "";
         if (job.created_at && job.finished_at) {
           const secs = Math.round((new Date(job.finished_at) - new Date(job.created_at)) / 1000);
@@ -524,6 +729,270 @@
           (parts.length ? `<strong>参数:</strong> ${parts.join(" · ")}` : "") +
           (duration ? ` &nbsp;·&nbsp; <strong>耗时:</strong> ${duration}` : "");
         previewDialog.showModal();
+      }
+
+      // ── comparison preview ──
+      let compareMode = "side-by-side";
+      let compareSourceJob = null;
+      let compareUpscaleJob = null;
+
+      document.querySelectorAll(".compare-tab").forEach(tab => {
+        tab.addEventListener("click", () => {
+          document.querySelectorAll(".compare-tab").forEach(t => t.classList.remove("active"));
+          tab.classList.add("active");
+          compareMode = tab.dataset.compare;
+          renderComparison();
+        });
+      });
+
+      function renderComparison() {
+        const content = document.getElementById("preview-content");
+        if (!compareSourceJob || !compareUpscaleJob) {
+          // Single video mode (generate job)
+          return;
+        }
+
+        const srcUrl = `/jobs/${compareSourceJob.job_id}/download`;
+        const upUrl = `/jobs/${compareUpscaleJob.job_id}/download`;
+
+        if (compareMode === "side-by-side") {
+          content.innerHTML = `
+            <div class="compare-side-by-side">
+              <div>
+                <video src="${srcUrl}" controls loop class="dialog-video" id="compare-vid-a"></video>
+                <div style="text-align:center;font-size:0.72rem;color:#8a8070;padding:4px;">原始</div>
+              </div>
+              <div>
+                <video src="${upUrl}" controls loop class="dialog-video" id="compare-vid-b"></video>
+                <div style="text-align:center;font-size:0.72rem;color:#8a8070;padding:4px;">超分</div>
+              </div>
+            </div>`;
+          // Sync playback
+          const vidA = document.getElementById("compare-vid-a");
+          const vidB = document.getElementById("compare-vid-b");
+          if (vidA && vidB) syncVideos(vidA, vidB);
+        } else if (compareMode === "toggle") {
+          content.innerHTML = `
+            <div class="compare-toggle-wrap">
+              <div class="compare-toggle-btns">
+                <button class="compare-toggle-btn active" id="toggle-a-btn">A 原始</button>
+                <button class="compare-toggle-btn" id="toggle-b-btn">B 超分</button>
+              </div>
+              <video src="${srcUrl}" controls loop class="dialog-video" id="compare-toggle-vid"></video>
+            </div>`;
+          const vid = document.getElementById("compare-toggle-vid");
+          const btnA = document.getElementById("toggle-a-btn");
+          const btnB = document.getElementById("toggle-b-btn");
+          let currentSrc = "a";
+          btnA.addEventListener("click", () => {
+            if (currentSrc === "a") return;
+            const time = vid.currentTime; const paused = vid.paused;
+            vid.src = srcUrl; vid.currentTime = time; if (!paused) vid.play();
+            currentSrc = "a"; btnA.classList.add("active"); btnB.classList.remove("active");
+          });
+          btnB.addEventListener("click", () => {
+            if (currentSrc === "b") return;
+            const time = vid.currentTime; const paused = vid.paused;
+            vid.src = upUrl; vid.currentTime = time; if (!paused) vid.play();
+            currentSrc = "b"; btnB.classList.add("active"); btnA.classList.remove("active");
+          });
+          // Keyboard shortcuts
+          const handleKey = (e) => {
+            if (e.key === "a" || e.key === "A") btnA.click();
+            if (e.key === "b" || e.key === "B") btnB.click();
+          };
+          document.addEventListener("keydown", handleKey);
+          previewDialog.addEventListener("close", () => document.removeEventListener("keydown", handleKey), { once: true });
+        } else if (compareMode === "slider") {
+          content.innerHTML = `
+            <div class="compare-slider-wrap">
+              <canvas id="compare-canvas"></canvas>
+              <div class="compare-slider-line" id="slider-line" style="left:50%;"></div>
+              <span class="compare-slider-label left">原始</span>
+              <span class="compare-slider-label right">超分</span>
+            </div>
+            <div class="compare-frame-nav">
+              <button id="slider-prev-frame">◀ 上一帧</button>
+              <span id="slider-frame-info" style="font-size:0.72rem;color:#8a8070;padding:3px 8px;">帧 0/0</span>
+              <button id="slider-next-frame">下一帧 ▶</button>
+            </div>`;
+          initSliderComparison(srcUrl, upUrl);
+        }
+      }
+
+      function syncVideos(vidA, vidB) {
+        vidA.addEventListener("play", () => { if (vidB.paused) vidB.play(); });
+        vidB.addEventListener("play", () => { if (vidA.paused) vidA.play(); });
+        vidA.addEventListener("pause", () => { if (!vidB.paused) vidB.pause(); });
+        vidB.addEventListener("pause", () => { if (!vidA.paused) vidA.pause(); });
+        vidA.addEventListener("seeked", () => { vidB.currentTime = vidA.currentTime; });
+      }
+
+      function initSliderComparison(srcUrl, upUrl) {
+        const canvas = document.getElementById("compare-canvas");
+        const ctx = canvas.getContext("2d");
+        const line = document.getElementById("slider-line");
+        let splitPos = 0.5;
+
+        // Create offscreen videos
+        const vidA = document.createElement("video"); vidA.src = srcUrl; vidA.preload = "auto"; vidA.muted = true;
+        const vidB = document.createElement("video"); vidB.src = upUrl; vidB.preload = "auto"; vidB.muted = true;
+
+        vidA.addEventListener("loadeddata", () => {
+          canvas.width = vidA.videoWidth || 896;
+          canvas.height = vidA.videoHeight || 448;
+          vidA.currentTime = 0; vidB.currentTime = 0;
+          drawSliderFrame();
+        });
+
+        function drawSliderFrame() {
+          const w = canvas.width, h = canvas.height;
+          const splitX = Math.round(w * splitPos);
+          ctx.clearRect(0, 0, w, h);
+          // Left: original
+          ctx.drawImage(vidA, 0, 0, splitX, h, 0, 0, splitX, h);
+          // Right: upscaled
+          ctx.drawImage(vidB, splitX, 0, w - splitX, h, splitX, 0, w - splitX, h);
+          line.style.left = `${splitPos * 100}%`;
+        }
+
+        // Drag slider
+        let dragging = false;
+        line.addEventListener("mousedown", () => { dragging = true; });
+        document.addEventListener("mousemove", (e) => {
+          if (!dragging) return;
+          const rect = canvas.getBoundingClientRect();
+          splitPos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          drawSliderFrame();
+        });
+        document.addEventListener("mouseup", () => { dragging = false; });
+
+        // Frame navigation
+        const frameStep = 1 / 24; // assume 24fps
+        document.getElementById("slider-prev-frame").addEventListener("click", () => {
+          vidA.currentTime = Math.max(0, vidA.currentTime - frameStep);
+          vidB.currentTime = vidA.currentTime;
+          vidA.addEventListener("seeked", drawSliderFrame, { once: true });
+          updateFrameInfo();
+        });
+        document.getElementById("slider-next-frame").addEventListener("click", () => {
+          vidA.currentTime = Math.min(vidA.duration, vidA.currentTime + frameStep);
+          vidB.currentTime = vidA.currentTime;
+          vidA.addEventListener("seeked", drawSliderFrame, { once: true });
+          updateFrameInfo();
+        });
+
+        function updateFrameInfo() {
+          const frame = Math.round(vidA.currentTime * 24);
+          const total = Math.round(vidA.duration * 24);
+          document.getElementById("slider-frame-info").textContent = `帧 ${frame}/${total}`;
+        }
+      }
+
+      // ── upscale dialog ──
+      const upscaleDialog = document.getElementById("upscale-dialog");
+      let upscaleSourceJobId = null;
+
+      document.getElementById("upscale-close-btn").addEventListener("click", () => {
+        upscaleDialog.close();
+      });
+      document.getElementById("upscale-cancel-btn").addEventListener("click", () => {
+        upscaleDialog.close();
+      });
+      upscaleDialog.addEventListener("click", e => {
+        if (e.target === upscaleDialog) upscaleDialog.close();
+      });
+
+      // Scale mode toggle
+      document.querySelectorAll("[data-scale-mode]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll("[data-scale-mode]").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          const mode = btn.dataset.scaleMode;
+          document.getElementById("upscale-factor-section").style.display = mode === "factor" ? "" : "none";
+          document.getElementById("upscale-resolution-section").style.display = mode === "resolution" ? "" : "none";
+        });
+      });
+
+      // Model hint updates
+      const MODEL_HINTS = {
+        "realesrgan-animevideov3": "Real-ESRGAN: 逐帧处理，速度快，无时序一致性。推荐 2x。",
+        "realbasicvsr": "RealBasicVSR: 双向传播，时序一致性好。仅支持 4x。",
+        "seedvr2-3b": "SeedVR2-3B: 单步扩散，最佳画质。目标分辨率需为 32 的倍数。",
+      };
+      document.getElementById("upscale-model").addEventListener("change", function() {
+        document.getElementById("upscale-hint").textContent = MODEL_HINTS[this.value] || "";
+      });
+
+      function openUpscaleDialog(job) {
+        upscaleSourceJobId = job.job_id;
+        const p = job.params || {};
+        document.getElementById("upscale-source-info").textContent =
+          `源任务: #${job.job_id.slice(0,8)}…  |  原始分辨率: ${p.width || "?"}×${p.height || "?"}`;
+        document.getElementById("upscale-model").value = "realesrgan-animevideov3";
+        document.getElementById("upscale-hint").textContent = MODEL_HINTS["realesrgan-animevideov3"];
+        document.getElementById("upscale-scale").value = "2";
+        document.getElementById("upscale-status").textContent = "";
+        document.querySelectorAll("[data-scale-mode]").forEach(b => b.classList.remove("active"));
+        document.querySelector("[data-scale-mode='factor']").classList.add("active");
+        document.getElementById("upscale-factor-section").style.display = "";
+        document.getElementById("upscale-resolution-section").style.display = "none";
+        if (p.width) document.getElementById("upscale-target-w").value = p.width * 2;
+        if (p.height) document.getElementById("upscale-target-h").value = p.height * 2;
+        upscaleDialog.showModal();
+      }
+
+      document.getElementById("upscale-submit-btn").addEventListener("click", async () => {
+        if (!upscaleSourceJobId) return;
+        const body = { source_job_id: upscaleSourceJobId };
+        body.model = document.getElementById("upscale-model").value;
+        const mode = document.querySelector("[data-scale-mode].active").dataset.scaleMode;
+        if (mode === "factor") {
+          body.scale = parseInt(document.getElementById("upscale-scale").value);
+        } else {
+          body.target_width = parseInt(document.getElementById("upscale-target-w").value) || undefined;
+          body.target_height = parseInt(document.getElementById("upscale-target-h").value) || undefined;
+        }
+        const statusEl = document.getElementById("upscale-status");
+        try {
+          const res = await fetch("/upscale", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const payload = await res.json();
+          if (!res.ok) {
+            statusEl.textContent = `失败: ${payload.detail || res.status}`;
+            return;
+          }
+          statusEl.textContent = `✓ 超分任务 ${payload.job_id.slice(0,8)}… 已加入队列`;
+          upscaleDialog.close();
+          refreshJobs();
+        } catch (err) {
+          statusEl.textContent = `网络错误: ${err}`;
+        }
+      });
+
+      // ── cancel job ──
+      async function cancelJob(jobId, isRunning) {
+        if (isRunning) {
+          const ok = confirm("该任务正在 GPU 上执行，强制终止可能产生不完整的输出。是否确认强制终止？");
+          if (!ok) return;
+        }
+        try {
+          const res = await fetch(`/jobs/${jobId}/cancel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ force: isRunning }),
+          });
+          if (res.status === 202) {
+            alert("任务正在运行，请确认强制终止。");
+            return;
+          }
+          refreshJobs();
+        } catch (err) {
+          alert(`取消失败: ${err}`);
+        }
       }
 
       // ── utilities ──
@@ -577,15 +1046,29 @@
       }
 
       function actionCell(job) {
+        const parts = [];
         if (job.status === "completed") {
-          const url = job.download_url || `/jobs/${job.job_id}/download`;
-          return `<button class="preview-btn" data-job-id="${escapeHtml(job.job_id)}">预览</button>` +
-                 `<a class="download-btn" href="${url}" download="${escapeHtml(job.job_id)}.mp4">下载</a>`;
+          parts.push(`<button class="preview-btn" data-job-id="${escapeHtml(job.job_id)}">预览</button>`);
+          if (job.type === "upscale") {
+            const srcId = job.source_job_id || "";
+            parts.push(`<a class="download-btn" href="/jobs/${escapeHtml(srcId)}/download" download="${escapeHtml(srcId)}.mp4">下载原视频</a>`);
+            parts.push(`<a class="download-btn" href="/jobs/${escapeHtml(job.job_id)}/download" download="${escapeHtml(job.job_id)}.mp4" style="background:var(--success-soft);color:var(--success);">下载超分</a>`);
+          } else {
+            const url = job.download_url || `/jobs/${job.job_id}/download`;
+            parts.push(`<a class="download-btn" href="${url}" download="${escapeHtml(job.job_id)}.mp4">下载</a>`);
+          }
+          parts.push(`<button class="preview-btn" data-action="upscale" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--queued-soft);color:var(--accent);">提升画质</button>`);
+        } else if (job.status === "queued") {
+          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--error-soft);color:var(--error);">取消</button>`);
+        } else if (job.status === "running") {
+          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}" data-running="true" style="background:var(--error-soft);color:var(--error);">取消</button>`);
+        } else if (job.status === "failed" && job.error) {
+          parts.push(`<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`);
         }
-        if (job.status === "failed" && job.error) {
-          return `<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`;
+        if (job.type === "upscale" && job.source_job_id) {
+          parts.unshift(`<span style="font-size:0.72rem;color:var(--muted);">↑ ${escapeHtml(job.source_job_id.slice(0,6))}…</span>`);
         }
-        return "-";
+        return parts.length ? parts.join(" ") : "-";
       }
 
       function escapeHtml(str) {
@@ -594,15 +1077,29 @@
 
       let _jobCache = {};
       tbody.addEventListener("click", event => {
-        const previewButton = event.target.closest(".preview-btn");
-        if (!previewButton) return;
+        const previewBtn = event.target.closest('[data-action="preview"], .preview-btn:not([data-action])');
+        const upscaleBtn = event.target.closest('[data-action="upscale"]');
+        const cancelBtn = event.target.closest('[data-action="cancel"]');
 
-        const job = _jobCache[previewButton.dataset.jobId];
-        if (job) openPreview(job);
+        if (previewBtn) {
+          const job = _jobCache[previewBtn.dataset.jobId];
+          if (job) openPreview(job);
+          return;
+        }
+        if (upscaleBtn) {
+          const job = _jobCache[upscaleBtn.dataset.jobId];
+          if (job) openUpscaleDialog(job);
+          return;
+        }
+        if (cancelBtn) {
+          const jobId = cancelBtn.dataset.jobId;
+          const isRunning = cancelBtn.dataset.running === "true";
+          cancelJob(jobId, isRunning);
+          return;
+        }
       });
 
       function renderTable(jobs) {
-        _jobCache = {};
         jobs.forEach(j => { _jobCache[j.job_id] = j; });
 
         if (!jobs || jobs.length === 0) {
@@ -651,15 +1148,7 @@
           renderTable(jobs);
           const busy = hasActiveJobs(jobs);
           setPollingIndicator(busy);
-          scheduleRefresh(busy ? 3000 : 10000);
-        } else {
-          scheduleRefresh(5000);
         }
-      }
-
-      function scheduleRefresh(delay) {
-        if (pollTimer !== null) clearTimeout(pollTimer);
-        pollTimer = setTimeout(refreshJobs, delay);
       }
 
       // ── submit ──
@@ -710,8 +1199,7 @@
           }
 
           submitStatus.textContent = `✓ 任务 ${payload.job_id} 已加入队列`;
-          if (pollTimer !== null) clearTimeout(pollTimer);
-          pollTimer = setTimeout(refreshJobs, 400);
+          refreshJobs();
         } catch (err) {
           submitStatus.textContent = `网络错误: ${err}`;
         } finally {
@@ -719,8 +1207,10 @@
         }
       });
 
-      // ── init ──
-      refreshJobs();
+      // ── init: full load then SSE ──
+      refreshJobs().then(() => {
+        sseClient.connect();
+      });
     </script>
   </body>
 </html>
