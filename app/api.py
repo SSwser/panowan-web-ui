@@ -31,7 +31,7 @@ app = FastAPI(
 
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
-_gpu_slot = threading.Semaphore(1)
+_gpu_slot = threading.Semaphore(settings.max_concurrent_jobs)
 
 
 def _now_iso() -> str:
@@ -151,11 +151,29 @@ def _get_job(job_id: str) -> dict[str, Any] | None:
         return dict(job) if job is not None else None
 
 
+def _is_job_cancelled(job_id: str) -> bool:
+    """Check if a job has been cancelled (status no longer queued/running)."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        return job is not None and job["status"] not in {"queued", "running"}
+
+
 def _run_generation_job(job_id: str, payload: dict) -> None:
     try:
-        _update_job(job_id, status="running", started_at=_now_iso())
-        with _gpu_slot:
+        # Wait for GPU slot — job stays "queued" while waiting
+        _gpu_slot.acquire()
+        try:
+            # Check if cancelled while queued
+            if _is_job_cancelled(job_id):
+                return
+            _update_job(job_id, status="running", started_at=_now_iso())
             result = generate_video(payload)
+        finally:
+            _gpu_slot.release()
+
+        # Check if cancelled during execution
+        if _is_job_cancelled(job_id):
+            return
         _update_job(
             job_id,
             status="completed",
@@ -180,8 +198,13 @@ def _run_upscale_job(
     job_id: str, input_path: str, output_path: str, upscale_params: dict
 ) -> None:
     try:
-        _update_job(job_id, status="running", started_at=_now_iso())
-        with _gpu_slot:
+        # Wait for GPU slot — job stays "queued" while waiting
+        _gpu_slot.acquire()
+        try:
+            # Check if cancelled while queued
+            if _is_job_cancelled(job_id):
+                return
+            _update_job(job_id, status="running", started_at=_now_iso())
             result = upscale_video(
                 input_path=input_path,
                 output_path=output_path,
@@ -192,6 +215,12 @@ def _run_upscale_job(
                 model_dir=settings.upscale_model_dir,
                 timeout_seconds=settings.upscale_timeout_seconds,
             )
+        finally:
+            _gpu_slot.release()
+
+        # Check if cancelled during execution
+        if _is_job_cancelled(job_id):
+            return
         _update_job(
             job_id,
             status="completed",
@@ -437,35 +466,43 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
             _persist_jobs_unlocked()
             result = dict(job)
             result.pop("_process", None)
-            return result
 
-        if status == "running":
-            if not force:
+    if status == "queued":
+        broadcast_job_event("job_updated", {"job_id": job_id, "status": "failed", "error": "Cancelled by user"})
+        return result
+
+    if status == "running":
+        if not force:
+            with _jobs_lock:
                 process = job.get("_process")
-                return {
-                    "warning": True,
-                    "job_id": job_id,
-                    "status": "running",
-                    "message": "Job is currently running. Force termination may cause incomplete output. Set force=true to confirm.",
-                    "pid": process.pid if process else None,
-                }
-            # Two-phase termination
+            return {
+                "warning": True,
+                "job_id": job_id,
+                "status": "running",
+                "message": "Job is currently running. Force termination may cause incomplete output. Set force=true to confirm.",
+                "pid": process.pid if process else None,
+            }
+        # Two-phase termination
+        with _jobs_lock:
             process = job.get("_process")
-            if process is not None:
-                process.terminate()
+        if process is not None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
                 try:
-                    process.wait(timeout=5)
+                    process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    try:
-                        process.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
+                    with _jobs_lock:
                         job.pop("_process", None)
                         job["status"] = "failed"
                         job["error"] = "Cancel failed: process unkillable"
                         job["finished_at"] = _now_iso()
                         _persist_jobs_unlocked()
-                        raise HTTPException(status_code=500, detail="Cancel failed: process unkillable")
+                    broadcast_job_event("job_updated", {"job_id": job_id, "status": "failed", "error": "Cancel failed: process unkillable"})
+                    raise HTTPException(status_code=500, detail="Cancel failed: process unkillable")
+        with _jobs_lock:
             job.pop("_process", None)
             job["status"] = "failed"
             job["error"] = "Cancelled by user"
@@ -473,10 +510,11 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
             _persist_jobs_unlocked()
             result = dict(job)
             result.pop("_process", None)
-            return result
+        broadcast_job_event("job_updated", {"job_id": job_id, "status": "failed", "error": "Cancelled by user"})
+        return result
 
-        # completed or failed
-        raise HTTPException(status_code=409, detail=f"Cannot cancel job with status {status}")
+    # completed or failed
+    raise HTTPException(status_code=409, detail=f"Cannot cancel job with status {status}")
 
 
 @app.post("/jobs/{job_id}/cancel")

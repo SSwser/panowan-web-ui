@@ -26,6 +26,7 @@ services:
       UPSCALE_MODEL_DIR:
       UPSCALE_OUTPUT_DIR:
       UPSCALE_TIMEOUT_SECONDS:
+      MAX_CONCURRENT_JOBS:
     volumes:
       - ./data/models:/app/PanoWan/models
       - ./data/models/upscale:/app/data/models/upscale

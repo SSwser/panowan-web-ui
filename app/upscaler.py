@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -51,7 +52,7 @@ class RealESRGANBackend:
     ) -> list[str]:
         script = os.path.join(model_dir, "realesrgan", "inference_realesrgan_video.py")
         return [
-            "python",
+            sys.executable,
             script,
             "-i",
             input_path,
@@ -104,7 +105,7 @@ class RealBasicVSRBackend:
         )
         output_path = os.path.join(output_dir, "output.mp4")
         return [
-            "python",
+            sys.executable,
             script,
             config,
             checkpoint,

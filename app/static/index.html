@@ -1207,6 +1207,25 @@
         }
       });
 
+      // ── tick: update duration for running/queued jobs every second ──
+      setInterval(() => {
+        const activeJobs = Object.values(_jobCache).filter(j => j.status === "running" || j.status === "queued");
+        if (activeJobs.length === 0) return;
+        const rows = tbody.querySelectorAll("tr");
+        rows.forEach(row => {
+          const idCell = row.querySelector(".col-id");
+          if (!idCell) return;
+          const jobId = idCell.getAttribute("title");
+          const job = _jobCache[jobId];
+          if (!job || (job.status !== "running" && job.status !== "queued")) return;
+          // Update duration cell (5th column, 0-indexed = col 5)
+          const cells = row.querySelectorAll("td");
+          if (cells.length >= 6) {
+            cells[5].textContent = durationCell(job);
+          }
+        });
+      }, 1000);
+
       // ── init: full load then SSE ──
       refreshJobs().then(() => {
         sseClient.connect();

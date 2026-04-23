@@ -6,10 +6,20 @@ from typing import Any
 
 
 class SSEBus:
-    """Simple pub/sub bus for SSE job events."""
+    """Simple pub/sub bus for SSE job events.
+
+    Thread-safe: broadcast() can be called from any thread.
+    """
 
     def __init__(self) -> None:
         self._subscribers: list[asyncio.Queue] = []
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """Get the running event loop (cached after first call)."""
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.get_event_loop()
+        return self._loop
 
     def subscribe(self, maxsize: int = 0) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
@@ -29,9 +39,14 @@ class SSEBus:
         }
         for queue in self._subscribers:
             try:
-                queue.put_nowait(message)
-            except asyncio.QueueFull:
-                pass  # Drop if consumer is slow
+                loop = self._get_loop()
+                if loop.is_running():
+                    loop.call_soon_threadsafe(queue.put_nowait, message)
+                else:
+                    # No running loop (e.g. in tests), fall back to direct put
+                    queue.put_nowait(message)
+            except (asyncio.QueueFull, RuntimeError):
+                pass  # Drop if consumer is slow or loop is closed
 
 
 # Module-level singleton
