@@ -57,11 +57,13 @@ make doctor
 
 ### Dev 模式依赖缓存（跨 worktree）
 
-`docker-compose-dev.yml` 已配置共享 named volume：
+`docker-compose-dev.yml` 已配置共享 external volume：
 
 - `panowan-uv-cache:/root/.cache/uv`
 
-该 volume 使用固定名称 `panowan-uv-cache`，因此不同 worktree 跑 `make up DEV=1` 时，`uv sync --locked` 会复用同一份 uv 下载缓存，避免重复下载大体积 wheel（例如 `flash-attn`）。
+该 volume 使用固定名称 `panowan-uv-cache`（可通过 `UV_CACHE_VOLUME_NAME` 覆盖），因此不同 worktree 跑 `make up DEV=1` 时，会复用同一份 uv 下载缓存，避免重复下载大体积 wheel（例如 `flash-attn`）。
+
+`make up DEV=1` 会在启动前自动执行 `docker volume create $(UV_CACHE_VOLUME_NAME)`，确保 external volume 存在。
 
 说明：
 
@@ -90,7 +92,7 @@ DEV_SKIP_DOWNLOAD_MODELS=1
 
 如果诊断发现 Docker 容器内 GPU 无法访问，脚本会交互式询问是否修复：
 
-```
+```text
 是否立即尝试自动修复 NVIDIA Container Toolkit？(需要 sudo) [y/N]
 ```
 

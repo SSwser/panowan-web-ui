@@ -11,6 +11,7 @@ DOCKER ?= bash scripts/docker-proxy.sh
 COMPOSE ?= $(DOCKER) compose -f $(COMPOSE_FILE)
 SERVICE_URL ?= http://localhost:8000
 TAG ?= latest
+UV_CACHE_VOLUME_NAME ?= panowan-uv-cache
 export TAG
 
 ifneq (,$(wildcard .env))
@@ -25,7 +26,7 @@ export $(1) := $(shell $(NORMALIZE_BIND_PATH) "$($(1))")
 endif
 endef
 
-$(eval $(call normalize_bind_var,PANOWAN_SRC_DIR))
+$(eval $(call normalize_bind_var,PANOWAN_HOST_DIR))
 $(eval $(call normalize_bind_var,MODEL_ROOT))
 
 .PHONY: init submodule env test build up down logs health doctor download-models docker-env
@@ -45,6 +46,7 @@ build:
 	$(COMPOSE) build
 
 up:
+	@if [ "$(DEV)" = "1" ]; then $(DOCKER) volume create $(UV_CACHE_VOLUME_NAME) >/dev/null; fi
 	$(COMPOSE) up -d $(UP_FLAGS)
 
 down:

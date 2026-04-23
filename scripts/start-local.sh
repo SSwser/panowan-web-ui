@@ -4,18 +4,23 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
 panowan_env_runtime
 
-cd "${PANOWAN_DIR}"
+cd "${PANOWAN_APP_DIR}"
 
 # ── Dev mode: validate mounted source and sync Python environment ─────────────
 if [[ "${DEV_MODE:-0}" == "1" ]]; then
     if [[ ! -f "pyproject.toml" ]]; then
-        echo "ERROR: PanoWan source not found at ${PANOWAN_DIR}." >&2
+        echo "ERROR: PanoWan source not found at ${PANOWAN_APP_DIR}." >&2
         echo "Ensure third_party/PanoWan submodule is initialized (make init), then ensure pyproject.toml exists there." >&2
         exit 1
     fi
     echo "[dev] Using shared uv cache at ${UV_CACHE_DIR:-/root/.cache/uv}"
-    echo "[dev] Syncing PanoWan dependencies (uv sync --locked)..."
-    uv sync --locked
+    if [[ -f "uv.lock" ]]; then
+        echo "[dev] Syncing PanoWan dependencies (uv sync --locked)..."
+        uv sync --locked
+    else
+        echo "[dev] uv.lock not found; running uv sync without --locked."
+        uv sync
+    fi
 fi
 
 skip_model_download=false

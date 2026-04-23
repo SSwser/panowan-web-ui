@@ -3,15 +3,15 @@
 # start-local.sh (uv sync) and app/main.py (uvicorn --reload).
 #
 # Design note — two separate PanoWan paths:
-#   • third_party/PanoWan (git submodule) → bind-mounted here for live-editing.
-#   • .cache/PanoWan (PANOWAN_SRC_DIR)   → used by download-models.sh etc. for
-#     cloning/caching; kept separate because the submodule's .git is a file (not
-#     a directory) which breaks `-d .git` repo-detection in shell scripts.
+#   • third_party/PanoWan (git submodule) → bind-mounted as PANOWAN_APP_DIR for live-editing.
+#   • .cache/PanoWan (PANOWAN_HOST_DIR)   → host-side clone/cache for download-models.sh;
+#     kept separate because the submodule's .git is a file (not a directory) which
+#     breaks `-d .git` repo-detection in shell scripts.
 #
 # Prerequisites:
 #   make init
 #   # or: git submodule update --init
-#   # optionally set PANOWAN_SRC_DIR in .env to override the cache path
+#   # optionally set PANOWAN_HOST_DIR in .env to override the cache path
 #
 # Usage:
 #   docker compose -f docker-compose-dev.yml up
@@ -36,7 +36,7 @@ services:
       DEV_SKIP_DOWNLOAD_MODELS: ${DEV_SKIP_DOWNLOAD_MODELS:-0}
     volumes:
       - panowan-uv-cache:/root/.cache/uv
-      # Bind-mount the git submodule directly — NOT PANOWAN_SRC_DIR (which is the
+      # Bind-mount the git submodule directly — NOT PANOWAN_HOST_DIR (which is the
       # script cache path, see "Design note" in header above).
       # NOTE: Must prefix with ./ so Compose treats it as a bind mount, not a named volume.
       - ./third_party/PanoWan:/app/PanoWan
@@ -49,4 +49,5 @@ services:
 
 volumes:
   panowan-uv-cache:
-    name: panowan-uv-cache
+    name: ${UV_CACHE_VOLUME_NAME:-panowan-uv-cache}
+    external: true

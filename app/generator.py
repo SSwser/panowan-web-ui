@@ -9,14 +9,14 @@ from .settings import settings
 def log_startup_diagnostics() -> None:
     print("All imports successful", flush=True)
 
-    if os.path.exists(settings.panowan_dir):
-        print(f"PanoWan dir: OK ({settings.panowan_dir})", flush=True)
-        models_dir = os.path.join(settings.panowan_dir, "models")
+    if os.path.exists(settings.panowan_app_dir):
+        print(f"PanoWan dir: OK ({settings.panowan_app_dir})", flush=True)
+        models_dir = os.path.join(settings.panowan_app_dir, "models")
         if os.path.exists(models_dir):
             print(f"Models dir contents: {os.listdir(models_dir)}", flush=True)
     else:
         print(
-            f"WARNING: PanoWan dir not found at {settings.panowan_dir}",
+            f"WARNING: PanoWan dir not found at {settings.panowan_app_dir}",
             flush=True,
         )
 
@@ -112,7 +112,7 @@ def generate_video(payload: dict) -> dict:
     try:
         result = subprocess.run(
             cmd,
-            cwd=settings.panowan_dir,
+            cwd=settings.panowan_app_dir,
             capture_output=True,
             text=True,
             timeout=settings.generation_timeout_seconds,

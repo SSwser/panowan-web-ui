@@ -76,7 +76,7 @@ class GenerateVideoTests(unittest.TestCase):
                 "--seed",
                 "0",
             ],
-            cwd=settings.panowan_dir,
+            cwd=settings.panowan_app_dir,
             capture_output=True,
             text=True,
             timeout=settings.generation_timeout_seconds,
