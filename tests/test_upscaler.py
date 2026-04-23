@@ -1,0 +1,226 @@
+import os
+import subprocess
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from app.upscaler import (
+    UPSCALE_BACKENDS,
+    RealBasicVSRBackend,
+    RealESRGANBackend,
+    SeedVR2Backend,
+    upscale_video,
+)
+
+
+class UpscalerRegistryTests(unittest.TestCase):
+    def test_registry_contains_expected_backends(self) -> None:
+        self.assertIn("realesrgan-animevideov3", UPSCALE_BACKENDS)
+        self.assertIn("realbasicvsr", UPSCALE_BACKENDS)
+        self.assertIn("seedvr2-3b", UPSCALE_BACKENDS)
+
+    def test_all_backends_have_required_fields(self) -> None:
+        for name, backend in UPSCALE_BACKENDS.items():
+            self.assertEqual(backend.name, name)
+            self.assertIsInstance(backend.display_name, str)
+            self.assertTrue(len(backend.display_name) > 0)
+            self.assertIsInstance(backend.default_scale, int)
+            self.assertGreaterEqual(backend.default_scale, 2)
+            self.assertIsInstance(backend.max_scale, int)
+            self.assertGreaterEqual(backend.max_scale, backend.default_scale)
+
+
+class RealESRGANBackendTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.backend = RealESRGANBackend()
+
+    def test_build_command_basic(self) -> None:
+        cmd = self.backend.build_command(
+            input_path="/input/video.mp4",
+            output_dir="/output",
+            model_dir="/models/upscale",
+            scale=2,
+        )
+        cmd_str = " ".join(cmd)
+        self.assertIn("inference_realesrgan_video.py", cmd_str)
+        self.assertIn("-i", cmd_str)
+        self.assertIn("/input/video.mp4", cmd_str)
+        self.assertIn("-o", cmd_str)
+        self.assertIn("/output", cmd_str)
+        self.assertIn("-n", cmd_str)
+        self.assertIn("realesr-animevideov3", cmd_str)
+        self.assertIn("-s", cmd_str)
+        self.assertIn("2", cmd_str)
+        self.assertIn("--half", cmd_str)
+
+    def test_validate_params_rejects_exceed_max_scale(self) -> None:
+        result = self.backend.validate_params(scale=8)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+
+    def test_validate_params_accepts_valid_scale(self) -> None:
+        result = self.backend.validate_params(scale=2)
+        self.assertIsNone(result)
+
+    def test_build_command_with_target_resolution(self) -> None:
+        cmd = self.backend.build_command(
+            input_path="/input/video.mp4",
+            output_dir="/output",
+            model_dir="/models/upscale",
+            scale=2,
+        )
+        cmd_str = " ".join(cmd)
+        self.assertIn("-s", cmd_str)
+
+
+class RealBasicVSRBackendTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.backend = RealBasicVSRBackend()
+
+    def test_validate_params_rejects_non_4x(self) -> None:
+        result = self.backend.validate_params(scale=2)
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+
+    def test_validate_params_accepts_4x(self) -> None:
+        result = self.backend.validate_params(scale=4)
+        self.assertIsNone(result)
+
+    def test_build_command_contains_expected_args(self) -> None:
+        cmd = self.backend.build_command(
+            input_path="/input/video.mp4",
+            output_dir="/output",
+            model_dir="/models/upscale",
+            scale=4,
+        )
+        cmd_str = " ".join(cmd)
+        self.assertIn("inference_realbasicvsr.py", cmd_str)
+        self.assertIn("--max-seq-len", cmd_str)
+        self.assertIn("30", cmd_str)
+
+
+class SeedVR2BackendTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.backend = SeedVR2Backend()
+
+    def test_validate_params_rejects_non_multiple_32(self) -> None:
+        # 448 * 3 + 1 = 1345, 1345 % 32 != 0
+        result = self.backend.validate_params(
+            scale=3, target_width=1345, target_height=1345
+        )
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, str)
+
+    def test_validate_params_accepts_multiple_32(self) -> None:
+        # 448 * 2 = 896, 896 % 32 == 0
+        result = self.backend.validate_params(
+            scale=2, target_width=896, target_height=896
+        )
+        self.assertIsNone(result)
+
+    def test_validate_params_rejects_scale_over_max(self) -> None:
+        result = self.backend.validate_params(scale=8, target_width=3584, target_height=3584)
+        self.assertIsNotNone(result)
+
+    def test_build_command_contains_torchrun(self) -> None:
+        cmd = self.backend.build_command(
+            input_path="/input/video.mp4",
+            output_dir="/output",
+            model_dir="/models/upscale",
+            scale=2,
+            target_width=896,
+            target_height=448,
+        )
+        cmd_str = " ".join(cmd)
+        self.assertIn("torchrun", cmd_str)
+        self.assertIn("--nproc_per_node=1", cmd_str)
+        self.assertIn("--res_h", cmd_str)
+        self.assertIn("--res_w", cmd_str)
+        self.assertIn("--sp_size", cmd_str)
+
+
+class UpscaleVideoTests(unittest.TestCase):
+    def test_upscale_video_raises_on_unknown_model(self) -> None:
+        with self.assertRaises(ValueError):
+            upscale_video(
+                input_path="/input/video.mp4",
+                output_path="/output/video.mp4",
+                model="nonexistent",
+            )
+
+    @patch("app.upscaler.subprocess.Popen")
+    @patch("app.upscaler.os.path.exists", return_value=True)
+    def test_upscale_video_calls_popen_and_returns_result(
+        self, mock_exists, mock_popen
+    ) -> None:
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"ok", b"")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        result = upscale_video(
+            input_path="/input/video.mp4",
+            output_path="/output/video.mp4",
+            model="realesrgan-animevideov3",
+            scale=2,
+        )
+
+        self.assertEqual(result["output_path"], "/output/video.mp4")
+        self.assertEqual(result["model"], "realesrgan-animevideov3")
+        self.assertEqual(result["scale"], 2)
+        mock_popen.assert_called_once()
+
+    @patch("app.upscaler.subprocess.Popen")
+    def test_upscale_video_raises_on_nonzero_returncode(self, mock_popen) -> None:
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"", b"error details here")
+        mock_proc.returncode = 1
+        mock_popen.return_value = mock_proc
+
+        with self.assertRaises(RuntimeError):
+            upscale_video(
+                input_path="/input/video.mp4",
+                output_path="/output/video.mp4",
+                model="realesrgan-animevideov3",
+                scale=2,
+            )
+
+    @patch("app.upscaler.subprocess.Popen")
+    def test_upscale_video_raises_on_timeout(self, mock_popen) -> None:
+        mock_proc = MagicMock()
+        # First communicate() raises TimeoutExpired; second (after kill) succeeds
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd="python", timeout=1800),
+            (b"", b""),
+        ]
+        mock_proc.kill = MagicMock()
+        mock_popen.return_value = mock_proc
+
+        with self.assertRaises(TimeoutError):
+            upscale_video(
+                input_path="/input/video.mp4",
+                output_path="/output/video.mp4",
+                model="realesrgan-animevideov3",
+                scale=2,
+            )
+        mock_proc.kill.assert_called()
+
+    @patch("app.upscaler.subprocess.Popen")
+    @patch("app.upscaler.os.path.exists", return_value=False)
+    def test_upscale_video_raises_on_missing_output(self, mock_exists, mock_popen) -> None:
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (b"ok", b"")
+        mock_proc.returncode = 0
+        mock_popen.return_value = mock_proc
+
+        with self.assertRaises(FileNotFoundError):
+            upscale_video(
+                input_path="/input/video.mp4",
+                output_path="/output/video.mp4",
+                model="realesrgan-animevideov3",
+                scale=2,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
