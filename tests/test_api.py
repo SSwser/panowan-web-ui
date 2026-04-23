@@ -373,3 +373,54 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"], "Cancelled by user")
         mock_process.terminate.assert_called_once()
+
+    def test_upscale_and_cancel_queued_job(self) -> None:
+        """End-to-end: create source job, upscale it, cancel the upscale."""
+        with patch.dict(api._jobs, clear=True):
+            source_id = "src-1"
+            api._jobs[source_id] = {
+                "job_id": source_id, "status": "completed", "type": "generate",
+                "prompt": "test", "params": {"width": 448, "height": 224},
+                "output_path": "/fake/out.mp4", "download_url": f"/jobs/{source_id}/download",
+                "created_at": "now", "started_at": "now", "finished_at": "now",
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            with patch("app.api.os.path.exists", return_value=True):
+                background_tasks = BackgroundTasks()
+                resp = api.upscale(
+                    {"source_job_id": source_id, "model": "realesrgan-animevideov3", "scale": 2},
+                    background_tasks,
+                )
+
+            upscale_id = resp["job_id"]
+            self.assertEqual(resp["type"], "upscale")
+
+            # Cancel the queued upscale job
+            result = api.cancel_job(upscale_id, force=False)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["error"], "Cancelled by user")
+
+    def test_upscale_job_record_has_source_info(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            source_id = "src-2"
+            api._jobs[source_id] = {
+                "job_id": source_id, "status": "completed", "type": "generate",
+                "prompt": "hello", "params": {"width": 896, "height": 448},
+                "output_path": "/fake/out2.mp4", "download_url": f"/jobs/{source_id}/download",
+                "created_at": "now", "started_at": "now", "finished_at": "now",
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            with patch("app.api.os.path.exists", return_value=True):
+                background_tasks = BackgroundTasks()
+                resp = api.upscale(
+                    {"source_job_id": source_id, "model": "seedvr2-3b", "scale": 2},
+                    background_tasks,
+                )
+
+            job = api.get_job(resp["job_id"])
+            self.assertEqual(job["type"], "upscale")
+            self.assertEqual(job["source_job_id"], source_id)
+            self.assertEqual(job["upscale_params"]["model"], "seedvr2-3b")
+            self.assertEqual(job["upscale_params"]["scale"], 2)
+            self.assertEqual(job["upscale_params"]["target_width"], 1792)
+            self.assertEqual(job["upscale_params"]["target_height"], 896)
