@@ -193,6 +193,24 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(result[0]["job_id"], "job-b")
         self.assertEqual(result[1]["job_id"], "job-a")
 
+    def test_create_job_record_includes_type_field(self) -> None:
+        record = api._create_job_record("test-id", "prompt", "/out.mp4", {})
+        self.assertEqual(record["type"], "generate")
+        self.assertIsNone(record["source_job_id"])
+        self.assertIsNone(record["upscale_params"])
+
+    def test_normalize_job_record_adds_type_for_legacy_jobs(self) -> None:
+        legacy = {
+            "job_id": "old-job",
+            "status": "completed",
+            "output_path": "/exists.mp4",
+        }
+        with patch("app.api.os.path.exists", return_value=True):
+            normalized = api._normalize_job_record("old-job", legacy)
+        self.assertEqual(normalized["type"], "generate")
+        self.assertIsNone(normalized["source_job_id"])
+        self.assertIsNone(normalized["upscale_params"])
+
     def test_download_returns_mp4_file_response(self) -> None:
         job_id = "job-1"
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:

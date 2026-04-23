@@ -58,6 +58,9 @@ def _normalize_job_record(job_id: str, record: dict[str, Any]) -> dict[str, Any]
     normalized.setdefault("finished_at", None)
     normalized.setdefault("error", None)
     normalized.setdefault("status", "queued")
+    normalized.setdefault("type", "generate")
+    normalized.setdefault("source_job_id", None)
+    normalized.setdefault("upscale_params", None)
 
     if normalized["status"] in {"queued", "running"}:
         normalized["status"] = "failed"
@@ -97,11 +100,15 @@ def _restore_jobs_from_disk() -> None:
 
 
 def _create_job_record(
-    job_id: str, prompt: str, output_path: str, params: dict[str, Any]
+    job_id: str, prompt: str, output_path: str, params: dict[str, Any],
+    job_type: str = "generate",
+    source_job_id: str | None = None,
+    upscale_params: dict | None = None,
 ) -> dict[str, Any]:
     record = {
         "job_id": job_id,
         "status": "queued",
+        "type": job_type,
         "prompt": prompt,
         "params": params,
         "output_path": output_path,
@@ -110,6 +117,8 @@ def _create_job_record(
         "started_at": None,
         "finished_at": None,
         "error": None,
+        "source_job_id": source_job_id,
+        "upscale_params": upscale_params,
     }
     with _jobs_lock:
         if job_id in _jobs:
