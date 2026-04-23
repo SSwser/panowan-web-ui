@@ -13,13 +13,17 @@ if [[ "${DEV_MODE:-0}" == "1" ]]; then
         echo "Ensure third_party/PanoWan submodule is initialized (make init), then ensure pyproject.toml exists there." >&2
         exit 1
     fi
+    if [[ -z "${UV_LINK_MODE:-}" ]]; then
+        export UV_LINK_MODE=copy
+        echo "[dev] UV_LINK_MODE not set; defaulting to copy to avoid cross-filesystem hardlink warnings."
+    fi
     echo "[dev] Using shared uv cache at ${UV_CACHE_DIR:-/root/.cache/uv}"
     if [[ -f "uv.lock" ]]; then
-        echo "[dev] Syncing PanoWan dependencies (uv sync --locked)..."
-        uv sync --locked
+        echo "[dev] Syncing PanoWan dependencies (uv sync --locked --link-mode=copy)..."
+        uv sync --locked --link-mode=copy
     else
-        echo "[dev] uv.lock not found; running uv sync without --locked."
-        uv sync
+        echo "[dev] uv.lock not found; running uv sync --link-mode=copy without --locked."
+        uv sync --link-mode=copy
     fi
 fi
 
