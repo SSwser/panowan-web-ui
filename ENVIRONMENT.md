@@ -8,7 +8,82 @@
 make doctor
 ```
 
+### Windows + WSL2 推荐方式
+
+两种模式都支持：
+
+1. WSL 原生 Docker（在 WSL 内安装 docker engine）：不需要设置 context。
+2. Docker Desktop（WSL2 backend）：可显式使用 `desktop-linux` context。
+
+Makefile 使用最直接模式：默认 `DOCKER=bash scripts/docker-proxy.sh`。
+
+行为如下：
+
+- 本机有 `docker`：直接使用本机 docker。
+- 本机没有 `docker`：自动尝试 `wsl docker`。
+
+需要切到 Docker Desktop context 时，显式覆盖 `DOCKER` 即可：
+
+- 自动模式：`make up`
+- Desktop context：`make up DOCKER='docker --context desktop-linux'`
+
+常用命令：
+
+```bash
+docker context ls
+
+# 查看 Makefile 当前判定
+make docker-env
+
+# 默认（prod）
+make up
+
+# 开发模式（dev）
+make up DEV=1
+
+# Docker Desktop context（prod/dev）
+make up DOCKER='docker --context desktop-linux'
+make up DEV=1 DOCKER='docker --context desktop-linux'
+
+# 诊断
+make doctor
+```
+
+说明：
+
+- 不覆盖 `DOCKER` 时，Makefile 使用当前 `docker` 默认行为。
+- 若使用其他 context（例如远端 Docker），替换为：
+   `DOCKER='docker --context <your-context>'`
+
+### Dev 模式依赖缓存（跨 worktree）
+
+`docker-compose-dev.yml` 已配置共享 external volume：
+
+- `panowan-uv-cache:/root/.cache/uv`
+
+该 volume 使用固定名称 `panowan-uv-cache`（可通过 `UV_CACHE_VOLUME_NAME` 覆盖），因此不同 worktree 跑 `make up DEV=1` 时，会复用同一份 uv 下载缓存，避免重复下载大体积 wheel（例如 `flash-attn`）。
+
+`make up DEV=1` 会在启动前自动执行 `docker volume create $(UV_CACHE_VOLUME_NAME)`，确保 external volume 存在。
+
+说明：
+
+- 共享的是下载缓存，不是 `.venv`。
+- 每个 worktree 仍会维护自己的项目环境，但网络下载成本显著下降。
+
+如需把模型缓存放到宿主机公共目录，并在 dev 启动时跳过模型下载，可在 `.env` 中设置：
+
+```bash
+MODEL_ROOT=./data/models
+DEV_SKIP_DOWNLOAD_MODELS=1
+```
+
+说明：
+
+- `MODEL_ROOT` 控制 compose 挂载到 `/app/PanoWan/models` 的宿主机路径，`make download-models` 也会复用它。
+- `DEV_SKIP_DOWNLOAD_MODELS=1` 时，启动只做服务与依赖环境准备，不自动下载 Wan/LoRA 权重。
+
 输出将显示：
+
 - Docker 及 docker compose 安装状态
 - NVIDIA GPU 及 Container Toolkit 配置
 - 必要模型文件状态
@@ -17,21 +92,24 @@ make doctor
 
 如果诊断发现 Docker 容器内 GPU 无法访问，脚本会交互式询问是否修复：
 
-```
+```text
 是否立即尝试自动修复 NVIDIA Container Toolkit？(需要 sudo) [y/N]
 ```
 
 1. **清理旧配置**
+
    ```bash
    sudo rm -f /etc/apt/sources.list.d/nvidia-docker.list
    ```
 
 2. **安装依赖**
+
    ```bash
    sudo apt-get install -y ca-certificates curl gnupg2
    ```
 
 3. **添加 NVIDIA 密钥和源**
+
    ```bash
    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
      sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
@@ -42,6 +120,7 @@ make doctor
    ```
 
 4. **安装 NVIDIA Container Toolkit**
+
    ```bash
    export NVIDIA_CONTAINER_TOOLKIT_VERSION=1.19.0-1
    sudo apt-get install -y \
@@ -52,6 +131,7 @@ make doctor
    ```
 
 5. **配置 Docker 运行时**
+
    ```bash
    sudo nvidia-ctk runtime configure --runtime=docker
    sudo systemctl restart docker
@@ -117,13 +197,15 @@ make env
 ### Q: CUDA 初始化失败 (named symbol not found)
 
 **A:** 这通常是宿主机运行时问题。需要：
+
 1. 更新 NVIDIA 驱动（`nvidia-smi` 应显示驱动版本）
 2. 重新启动 WSL2 或 Docker daemon
-4. 运行 `make doctor`，按提示交互式修复
+3. 运行 `make doctor`，按提示交互式修复
 
 ### Q: 模型下载很慢
 
-**A:** 
+**A:**
+
 - 设置 `HF_ENDPOINT` 为镜像站点（见上文）
 - 增加 `HF_MAX_WORKERS`（但受网络和磁盘 I/O 限制）
 - 启用 `HF_HUB_ENABLE_HF_TRANSFER=1`（需要 `pip install hf_transfer`）

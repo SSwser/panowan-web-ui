@@ -1,11 +1,40 @@
-COMPOSE ?= docker compose
+DEV ?= 0
+COMPOSE_FILE ?= docker-compose.yml
+ifeq ($(DEV),1)
+COMPOSE_FILE := docker-compose-dev.yml
+endif
+
+UP_FLAGS ?=
+
+DOCKER ?= bash scripts/docker-proxy.sh
+
+COMPOSE ?= $(DOCKER) compose -f $(COMPOSE_FILE)
 SERVICE_URL ?= http://localhost:8000
+TAG ?= latest
+UV_CACHE_VOLUME_NAME ?= panowan-uv-cache
+export TAG
 
 ifneq (,$(wildcard .env))
 include .env
 endif
 
-.PHONY: env test build up down logs health download-models doctor
+NORMALIZE_BIND_PATH ?= bash scripts/lib/path.sh
+
+define normalize_bind_var
+ifneq ($(strip $($(1))),)
+export $(1) := $(shell $(NORMALIZE_BIND_PATH) "$($(1))")
+endif
+endef
+
+$(eval $(call normalize_bind_var,PANOWAN_HOST_DIR))
+$(eval $(call normalize_bind_var,MODEL_ROOT))
+
+.PHONY: init submodule env test build up down logs health doctor download-models docker-env
+
+init: env submodule
+
+submodule:
+	git submodule update --init --recursive
 
 env:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
@@ -17,7 +46,8 @@ build:
 	$(COMPOSE) build
 
 up:
-	$(COMPOSE) up -d
+	@if [ "$(DEV)" = "1" ]; then $(DOCKER) volume create $(UV_CACHE_VOLUME_NAME) >/dev/null; fi
+	$(COMPOSE) up -d $(UP_FLAGS)
 
 down:
 	$(COMPOSE) down
@@ -28,8 +58,14 @@ logs:
 health:
 	SERVICE_URL="$(SERVICE_URL)" bash scripts/health.sh
 
+doctor:
+	bash scripts/doctor.sh
+
 download-models:
 	bash scripts/download-models.sh
 
-doctor:
-	bash scripts/doctor.sh
+docker-env:
+	@echo "DOCKER=$(DOCKER)"
+	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
+	@echo "TAG=$(TAG)"
+	@$(DOCKER) version --format '{{.Server.Version}}' 2>/dev/null || echo "docker daemon unavailable"

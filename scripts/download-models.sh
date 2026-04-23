@@ -6,12 +6,12 @@ panowan_env_host
 
 LORA_DIR="$(dirname "${LORA_CHECKPOINT_PATH}")"
 
-if [[ ! -d "${PANOWAN_SRC_DIR}/.git" ]]; then
-    mkdir -p "$(dirname "${PANOWAN_SRC_DIR}")"
-    git clone "${PANOWAN_REPO_URL}" "${PANOWAN_SRC_DIR}"
+if [[ ! -d "${PANOWAN_HOST_DIR}/.git" ]]; then
+    mkdir -p "$(dirname "${PANOWAN_HOST_DIR}")"
+    git clone "${PANOWAN_REPO_URL}" "${PANOWAN_HOST_DIR}"
 fi
 
-cd "${PANOWAN_SRC_DIR}"
+cd "${PANOWAN_HOST_DIR}"
 
 if [[ ! -f "${WAN_DIFFUSION_FILE}" ]] || [[ ! -f "${WAN_T5_FILE}" ]]; then
     mkdir -p "${WAN_MODEL_PATH}"

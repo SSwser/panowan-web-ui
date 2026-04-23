@@ -258,7 +258,7 @@ def root() -> FileResponse:
 
 @app.get("/health")
 def healthcheck() -> dict:
-    panowan_dir_exists = os.path.exists(settings.panowan_dir)
+    panowan_app_dir_exists = os.path.exists(settings.panowan_app_dir)
     wan_model_ready = os.path.exists(
         settings.wan_diffusion_absolute_path
     ) and os.path.exists(settings.wan_t5_absolute_path)
@@ -269,7 +269,7 @@ def healthcheck() -> dict:
         "status": "ready" if model_ready else "starting",
         "service_started": True,
         "model_ready": model_ready,
-        "panowan_dir_exists": panowan_dir_exists,
+        "panowan_app_dir_exists": panowan_app_dir_exists,
         "wan_model_exists": wan_model_ready,
         "lora_exists": lora_exists,
     }

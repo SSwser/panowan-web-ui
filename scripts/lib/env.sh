@@ -22,7 +22,11 @@ panowan_env_host() {
   export REPO_ROOT="${REPO_ROOT:-${repo_root}}"
   export SERVICE_URL="${SERVICE_URL:-http://localhost:8000}"
   export MODEL_ROOT="${MODEL_ROOT:-${REPO_ROOT}/data/models}"
-  export PANOWAN_SRC_DIR="${PANOWAN_SRC_DIR:-${REPO_ROOT}/.cache/PanoWan}"
+  # Clone/cache path for download-models.sh and other host-side scripts.
+  # NOT the same as the git submodule at third_party/PanoWan used by dev compose —
+  # keeping them separate avoids the submodule's .git file (vs directory) confusing
+  # repo-detection logic, and lets prod scripts clone/cache independently.
+  export PANOWAN_HOST_DIR="${PANOWAN_HOST_DIR:-${REPO_ROOT}/.cache/PanoWan}"
   export PANOWAN_REPO_URL="${PANOWAN_REPO_URL:-https://github.com/VariantConst/PanoWan.git}"
   export WAN_MODEL_PATH="${WAN_MODEL_PATH:-${MODEL_ROOT}/Wan-AI/Wan2.1-T2V-1.3B}"
   export WAN_DIFFUSION_FILE="${WAN_DIFFUSION_FILE:-${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors}"
@@ -39,7 +43,7 @@ panowan_env_tool_defaults() {
 }
 
 panowan_env_runtime() {
-  export PANOWAN_DIR="${PANOWAN_DIR:-/app/PanoWan}"
+  export PANOWAN_APP_DIR="${PANOWAN_APP_DIR:-/app/PanoWan}"
   export WAN_MODEL_PATH="${WAN_MODEL_PATH:-./models/Wan-AI/Wan2.1-T2V-1.3B}"
   export WAN_DIFFUSION_FILE="${WAN_DIFFUSION_FILE:-${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors}"
   export WAN_T5_FILE="${WAN_T5_FILE:-${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth}"

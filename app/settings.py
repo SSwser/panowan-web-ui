@@ -6,7 +6,7 @@ from dataclasses import dataclass
 class Settings:
     service_title: str
     service_version: str
-    panowan_dir: str
+    panowan_app_dir: str
     wan_model_path: str
     lora_checkpoint_path: str
     runtime_dir: str
@@ -26,7 +26,7 @@ class Settings:
 
     @property
     def wan_model_absolute_path(self) -> str:
-        return os.path.join(self.panowan_dir, self.wan_model_path.lstrip("./"))
+        return os.path.join(self.panowan_app_dir, self.wan_model_path.lstrip("./"))
 
     @property
     def wan_diffusion_absolute_path(self) -> str:
@@ -43,7 +43,7 @@ class Settings:
 
     @property
     def lora_absolute_path(self) -> str:
-        return os.path.join(self.panowan_dir, self.lora_checkpoint_path.lstrip("./"))
+        return os.path.join(self.panowan_app_dir, self.lora_checkpoint_path.lstrip("./"))
 
 
 def load_settings() -> Settings:
@@ -51,7 +51,7 @@ def load_settings() -> Settings:
     return Settings(
         service_title="PanoWan Local Service",
         service_version="1.0.0",
-        panowan_dir=os.getenv("PANOWAN_DIR", "/app/PanoWan"),
+        panowan_app_dir=os.getenv("PANOWAN_APP_DIR", "/app/PanoWan"),
         wan_model_path=os.getenv(
             "WAN_MODEL_PATH", "./models/Wan-AI/Wan2.1-T2V-1.3B"
         ),
