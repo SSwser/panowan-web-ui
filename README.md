@@ -318,9 +318,15 @@ docker run --rm -p 8000:8000 --gpus all \
 
 ## 许可证
 
-本项目代码遵循 MIT 许可证。
+本项目代码遵循 **MIT 许可证**，仅用于学习、研究和技术交流目的。
 
-模型权重（Wan2.1、PanoWan LoRA）遵循其各自的开源许可证（Apache 2.0），详见 `data/models/` 下各自的 README。
+模型权重（Wan2.1、PanoWan LoRA）遵循其各自的开源许可证（**Apache 2.0**）。
+
+**详见 [LICENSE.md](LICENSE.md)**，其中包含：
+- 完整的许可证条款和免责声明
+- 所有依赖库和模型的许可证汇总
+- 使用限制和禁止用途
+- 学术引用指南
 
 ---
 
