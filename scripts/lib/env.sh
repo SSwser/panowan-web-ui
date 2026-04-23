@@ -22,7 +22,7 @@ panowan_env_host() {
   export REPO_ROOT="${REPO_ROOT:-${repo_root}}"
   export SERVICE_URL="${SERVICE_URL:-http://localhost:8000}"
   export MODEL_ROOT="${MODEL_ROOT:-${REPO_ROOT}/data/models}"
-  export PANOWAN_SRC_DIR="${PANOWAN_SRC_DIR:-${REPO_ROOT}/.cache/PanoWan}"
+  export PANOWAN_SRC_DIR="${PANOWAN_SRC_DIR:-${REPO_ROOT}/third_party/PanoWan}"
   export PANOWAN_REPO_URL="${PANOWAN_REPO_URL:-https://github.com/VariantConst/PanoWan.git}"
   export WAN_MODEL_PATH="${WAN_MODEL_PATH:-${MODEL_ROOT}/Wan-AI/Wan2.1-T2V-1.3B}"
   export WAN_DIFFUSION_FILE="${WAN_DIFFUSION_FILE:-${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors}"
