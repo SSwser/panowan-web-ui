@@ -64,7 +64,7 @@ Submit an upscale job for a completed generation job.
 }
 ```
 
-- `source_job_id` (required): must exist and be `completed` with output file present
+- `source_job_id` (required): must exist, be `completed`, have output file present, and be of type `generate` or `upscale` (upscale jobs can be chained)
 - `model` (optional): defaults to `"realesrgan-animevideov3"`, must be in supported list
 - `scale` (optional): defaults to model's default scale
 - `target_width`/`target_height` (optional): if provided, takes priority over `scale`; at least one of `scale` or target dimensions must be provided
@@ -172,7 +172,7 @@ Works for both generate and upscale jobs. Upscale job's download_url points to t
 | Job type/status | Actions |
 |---|---|
 | `generate` + `completed` | Existing preview + download, **new "Upscale" button** |
-| `upscale` + `completed` | Preview (with comparison modes) + **two download links** (original + upscaled) + source job tag (e.g., `source: abc123`) |
+| `upscale` + `completed` | Preview (with comparison modes) + **two download links** (original + upscaled) + source job tag (e.g., `source: abc123`) + **"Upscale" button** (can upscale an already-upscaled video) |
 | `queued` (any type) | **"Cancel" button** |
 | `running` (any type) | **"Cancel" button** (triggers confirmation dialog for force termination) |
 
@@ -347,7 +347,10 @@ def cancel_job(job_id: str, force: bool = False):
         job["status"] = "failed"
         job["error"] = "Cancelled by user"
     elif job["status"] == "running" and not force:
-        return {"warning": True, "status": "running", "pid": job.get("_process", {}).pid}
+        process = job.get("_process")
+        return {"warning": True, "status": "running", "pid": process.pid if process else None}
+
+**Note on `_process` access:** The `_process` field is a `subprocess.Popen` object stored in memory only (not persisted). There is a brief window between status being set to `running` and `_process` being stored. If cancel is called during this window, `_process` will be `None`. In this case, the cancel for `running` + `force=true` should still mark the job as `failed` but skip the termination step, as the Popen hasn't been created yet. The background task wrapper should check for cancellation before starting the subprocess.
 ```
 
 ### 4.6 Settings Extensions
