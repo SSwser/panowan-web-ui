@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import subprocess
@@ -7,8 +8,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+
+from .sse import broadcast_job_event, subscribe, unsubscribe
 
 from .generator import (
     extract_prompt,
@@ -127,6 +130,7 @@ def _create_job_record(
             raise ValueError(f"Job {job_id} already exists")
         _jobs[job_id] = record
         _persist_jobs_unlocked()
+    broadcast_job_event("job_created", record)
     return record
 
 
@@ -136,7 +140,9 @@ def _update_job(job_id: str, **updates: Any) -> dict[str, Any]:
             raise KeyError(job_id)
         _jobs[job_id].update(updates)
         _persist_jobs_unlocked()
-        return dict(_jobs[job_id])
+        result = dict(_jobs[job_id])
+    broadcast_job_event("job_updated", {**updates, "job_id": job_id})
+    return result
 
 
 def _get_job(job_id: str) -> dict[str, Any] | None:
@@ -356,6 +362,30 @@ def list_jobs() -> list[dict[str, Any]]:
         jobs = list(_jobs.values())
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
     return jobs
+
+
+@app.get("/jobs/events")
+async def job_events(request: Request) -> Any:
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        queue = subscribe()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield event
+                except asyncio.TimeoutError:
+                    yield {
+                        "event": "heartbeat",
+                        "data": json.dumps({"ts": _now_iso()}),
+                    }
+        finally:
+            unsubscribe(queue)
+
+    return EventSourceResponse(event_generator())
 
 
 @app.get("/jobs/{job_id}")
