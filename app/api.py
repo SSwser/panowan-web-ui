@@ -15,6 +15,7 @@ from .generator import (
     log_startup_diagnostics,
     resolve_inference_params,
 )
+from .upscaler import UPSCALE_BACKENDS, upscale_video
 from .settings import settings
 
 
@@ -168,6 +169,42 @@ def _run_generation_job(job_id: str, payload: dict) -> None:
             pass
 
 
+def _run_upscale_job(
+    job_id: str, input_path: str, output_path: str, upscale_params: dict
+) -> None:
+    try:
+        _update_job(job_id, status="running", started_at=_now_iso())
+        with _gpu_slot:
+            result = upscale_video(
+                input_path=input_path,
+                output_path=output_path,
+                model=upscale_params["model"],
+                scale=upscale_params["scale"],
+                target_width=upscale_params.get("target_width"),
+                target_height=upscale_params.get("target_height"),
+                model_dir=settings.upscale_model_dir,
+                timeout_seconds=settings.upscale_timeout_seconds,
+            )
+        _update_job(
+            job_id,
+            status="completed",
+            finished_at=_now_iso(),
+            output_path=result["output_path"],
+        )
+    except Exception as exc:
+        print(f"ERROR: upscale job {job_id} failed: {exc}", flush=True)
+        traceback.print_exc()
+        try:
+            _update_job(
+                job_id,
+                status="failed",
+                finished_at=_now_iso(),
+                error=str(exc),
+            )
+        except KeyError:
+            pass
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     try:
@@ -224,6 +261,91 @@ def generate(payload: dict, background_tasks: BackgroundTasks) -> dict:
         "prompt": prompt,
         "output_path": output_path,
         "download_url": _job_download_url(job_id),
+    }
+
+
+@app.post("/upscale", status_code=202)
+def upscale(payload: dict, background_tasks: BackgroundTasks) -> dict:
+    source_job_id = payload.get("source_job_id")
+    if not source_job_id:
+        raise HTTPException(status_code=400, detail="source_job_id is required")
+
+    source_job = _get_job(source_job_id)
+    if source_job is None:
+        raise HTTPException(status_code=400, detail="Source job not found")
+    if source_job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Can only upscale completed jobs")
+    if not os.path.exists(source_job["output_path"]):
+        raise HTTPException(status_code=400, detail="Source video file not found")
+
+    model_name = payload.get("model", "realesrgan-animevideov3")
+    backend = UPSCALE_BACKENDS.get(model_name)
+    if backend is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
+
+    # Resolve scale
+    target_width = payload.get("target_width")
+    target_height = payload.get("target_height")
+    scale = payload.get("scale")
+
+    src_params = source_job.get("params", {})
+    src_w = src_params.get("width", 896)
+    src_h = src_params.get("height", 448)
+
+    if not scale and not target_width and not target_height:
+        scale = backend.default_scale
+    elif not scale:
+        if target_width:
+            scale = target_width // src_w
+        elif target_height:
+            scale = target_height // src_h
+        if scale and scale < 1:
+            scale = 1
+    if not scale:
+        scale = backend.default_scale
+
+    # Validate
+    validation_error = backend.validate_params(scale, src_w, src_h)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+
+    # Calculate target dimensions if not provided
+    if target_width is None and target_height is None:
+        target_width = src_w * scale
+        target_height = src_h * scale
+
+    job_id = str(uuid.uuid4())
+    output_path = os.path.join(settings.upscale_output_dir, f"output_{job_id}.mp4")
+    upscale_params = {
+        "model": model_name,
+        "scale": scale,
+        "target_width": target_width,
+        "target_height": target_height,
+    }
+
+    try:
+        _create_job_record(
+            job_id,
+            prompt=source_job.get("prompt", ""),
+            output_path=output_path,
+            params=source_job.get("params", {}),
+            job_type="upscale",
+            source_job_id=source_job_id,
+            upscale_params=upscale_params,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    background_tasks.add_task(
+        _run_upscale_job, job_id, source_job["output_path"], output_path, upscale_params
+    )
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "type": "upscale",
+        "source_job_id": source_job_id,
+        "upscale_params": upscale_params,
     }
 
 

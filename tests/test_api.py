@@ -242,3 +242,72 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.path, temp_path)
         self.assertEqual(response.media_type, "video/mp4")
         self.assertEqual(response.headers["x-job-id"], job_id)
+
+    def test_upscale_creates_new_job_linked_to_source(self) -> None:
+        # Create a completed source job in _jobs
+        source_id = "source-1"
+        with patch.dict(api._jobs, clear=True):
+            api._jobs[source_id] = {
+                "job_id": source_id, "status": "completed", "type": "generate",
+                "prompt": "test", "params": {"width": 448, "height": 224},
+                "output_path": "/fake/output.mp4",
+                "download_url": f"/jobs/{source_id}/download",
+                "created_at": "now", "started_at": "now", "finished_at": "now",
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            with patch("app.api.os.path.exists", return_value=True):
+                background_tasks = BackgroundTasks()
+                response = api.upscale({"source_job_id": source_id, "model": "realesrgan-animevideov3", "scale": 2}, background_tasks)
+
+        self.assertEqual(response["status"], "queued")
+        self.assertEqual(response["type"], "upscale")
+        self.assertEqual(response["source_job_id"], source_id)
+        self.assertEqual(response["upscale_params"]["model"], "realesrgan-animevideov3")
+        self.assertEqual(response["upscale_params"]["scale"], 2)
+
+    def test_upscale_rejects_non_completed_source(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["running-1"] = {
+                "job_id": "running-1", "status": "running", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            background_tasks = BackgroundTasks()
+            with self.assertRaises(HTTPException) as ctx:
+                api.upscale({"source_job_id": "running-1"}, background_tasks)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_upscale_rejects_unknown_model(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["done-1"] = {
+                "job_id": "done-1", "status": "completed", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "/out.mp4", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            with patch("app.api.os.path.exists", return_value=True):
+                background_tasks = BackgroundTasks()
+                with self.assertRaises(HTTPException) as ctx:
+                    api.upscale({"source_job_id": "done-1", "model": "nonexistent"}, background_tasks)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_upscale_rejects_missing_source_job(self) -> None:
+        background_tasks = BackgroundTasks()
+        with self.assertRaises(HTTPException) as ctx:
+            api.upscale({"source_job_id": "nonexistent"}, background_tasks)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_upscale_rejects_missing_source_file(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["done-2"] = {
+                "job_id": "done-2", "status": "completed", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "/nonexistent.mp4", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            with patch("app.api.os.path.exists", return_value=False):
+                background_tasks = BackgroundTasks()
+                with self.assertRaises(HTTPException) as ctx:
+                    api.upscale({"source_job_id": "done-2"}, background_tasks)
+        self.assertEqual(ctx.exception.status_code, 400)
