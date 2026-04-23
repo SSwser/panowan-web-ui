@@ -17,6 +17,9 @@ class Settings:
     default_num_inference_steps: int
     default_width: int
     default_height: int
+    upscale_model_dir: str
+    upscale_output_dir: str
+    upscale_timeout_seconds: int
     host: str
     port: int
 
@@ -70,6 +73,9 @@ def load_settings() -> Settings:
         ),
         default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
         default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
+        upscale_model_dir=os.getenv("UPSCALE_MODEL_DIR", "/app/data/models/upscale"),
+        upscale_output_dir=os.getenv("UPSCALE_OUTPUT_DIR", "/app/runtime/outputs"),
+        upscale_timeout_seconds=int(os.getenv("UPSCALE_TIMEOUT_SECONDS", "1800")),
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
     )

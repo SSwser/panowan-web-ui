@@ -31,3 +31,21 @@ class SettingsTests(unittest.TestCase):
             loaded.lora_absolute_path,
             "/workspace/PanoWan/models/custom-lora.ckpt",
         )
+
+    def test_load_settings_includes_upscale_defaults(self) -> None:
+        loaded = load_settings()
+        self.assertEqual(loaded.upscale_model_dir, "/app/data/models/upscale")
+        self.assertEqual(loaded.upscale_output_dir, "/app/runtime/outputs")
+        self.assertEqual(loaded.upscale_timeout_seconds, 1800)
+
+    def test_load_settings_upscale_from_environment(self) -> None:
+        env = {
+            "UPSCALE_MODEL_DIR": "/custom/models",
+            "UPSCALE_OUTPUT_DIR": "/custom/outputs",
+            "UPSCALE_TIMEOUT_SECONDS": "900",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            loaded = load_settings()
+        self.assertEqual(loaded.upscale_model_dir, "/custom/models")
+        self.assertEqual(loaded.upscale_output_dir, "/custom/outputs")
+        self.assertEqual(loaded.upscale_timeout_seconds, 900)
