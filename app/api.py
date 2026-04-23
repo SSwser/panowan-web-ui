@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import threading
 import traceback
 import uuid
@@ -7,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .generator import (
     extract_prompt,
@@ -390,3 +391,69 @@ def download_job(job_id: str) -> FileResponse:
         filename=f"{job_id}.mp4",
         headers={"X-Job-Id": job_id},
     )
+
+
+def cancel_job(job_id: str, force: bool = False) -> dict:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        status = job["status"]
+        if status == "queued":
+            job["status"] = "failed"
+            job["error"] = "Cancelled by user"
+            job["finished_at"] = _now_iso()
+            _persist_jobs_unlocked()
+            result = dict(job)
+            result.pop("_process", None)
+            return result
+
+        if status == "running":
+            if not force:
+                process = job.get("_process")
+                return {
+                    "warning": True,
+                    "job_id": job_id,
+                    "status": "running",
+                    "message": "Job is currently running. Force termination may cause incomplete output. Set force=true to confirm.",
+                    "pid": process.pid if process else None,
+                }
+            # Two-phase termination
+            process = job.get("_process")
+            if process is not None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        job.pop("_process", None)
+                        job["status"] = "failed"
+                        job["error"] = "Cancel failed: process unkillable"
+                        job["finished_at"] = _now_iso()
+                        _persist_jobs_unlocked()
+                        raise HTTPException(status_code=500, detail="Cancel failed: process unkillable")
+            job.pop("_process", None)
+            job["status"] = "failed"
+            job["error"] = "Cancelled by user"
+            job["finished_at"] = _now_iso()
+            _persist_jobs_unlocked()
+            result = dict(job)
+            result.pop("_process", None)
+            return result
+
+        # completed or failed
+        raise HTTPException(status_code=409, detail=f"Cannot cancel job with status {status}")
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job_endpoint(job_id: str, payload: dict = None) -> dict:
+    payload = payload or {}
+    force = payload.get("force", False)
+    result = cancel_job(job_id, force=force)
+    if result.get("warning"):
+        return JSONResponse(content=result, status_code=202)
+    return result

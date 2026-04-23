@@ -311,3 +311,65 @@ class ApiTests(unittest.TestCase):
                 with self.assertRaises(HTTPException) as ctx:
                     api.upscale({"source_job_id": "done-2"}, background_tasks)
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_cancel_queued_job_succeeds(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["q1"] = {
+                "job_id": "q1", "status": "queued", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            result = api.cancel_job("q1", force=False)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "Cancelled by user")
+
+    def test_cancel_running_without_force_returns_warning(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["r1"] = {
+                "job_id": "r1", "status": "running", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+                "_process": None,
+            }
+            result = api.cancel_job("r1", force=False)
+
+        self.assertTrue(result.get("warning"))
+
+    def test_cancel_completed_job_raises(self) -> None:
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["c1"] = {
+                "job_id": "c1", "status": "completed", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "/out.mp4", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+            }
+            with self.assertRaises(HTTPException) as ctx:
+                api.cancel_job("c1", force=False)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_cancel_nonexistent_job_raises(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            api.cancel_job("nonexistent", force=False)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_cancel_running_with_force_marks_failed(self) -> None:
+        mock_process = unittest.mock.MagicMock()
+        mock_process.pid = 12345
+        mock_process.wait.return_value = 0
+
+        with patch.dict(api._jobs, clear=True):
+            api._jobs["r2"] = {
+                "job_id": "r2", "status": "running", "type": "generate",
+                "prompt": "", "params": {}, "output_path": "", "download_url": "",
+                "created_at": "now", "started_at": None, "finished_at": None,
+                "error": None, "source_job_id": None, "upscale_params": None,
+                "_process": mock_process,
+            }
+            result = api.cancel_job("r2", force=True)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "Cancelled by user")
+        mock_process.terminate.assert_called_once()
