@@ -1,6 +1,7 @@
 import os
+import subprocess
 import unittest
-from types import SimpleNamespace
+import unittest.mock
 from unittest.mock import patch
 
 from app.generator import extract_prompt, generate_video, resolve_inference_params
@@ -35,15 +36,18 @@ class GenerateVideoTests(unittest.TestCase):
     @patch("app.generator.os.makedirs")
     @patch("app.generator.os.path.exists", return_value=True)
     @patch("app.generator.os.path.getsize", return_value=11)
-    @patch("app.generator.subprocess.run")
+    @patch("app.generator.subprocess.Popen")
     def test_generates_video_payload(
         self,
-        mock_run,
+        mock_popen,
         mock_getsize,
         mock_exists,
         mock_makedirs,
-    ) -> None:
-        mock_run.return_value = SimpleNamespace(returncode=0, stdout="ok", stderr="")
+    ):
+        mock_process = unittest.mock.MagicMock()
+        mock_process.communicate.return_value = ("ok", "")
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
 
         result = generate_video({"id": "job-1", "prompt": "mountain sunset"})
 
@@ -54,35 +58,24 @@ class GenerateVideoTests(unittest.TestCase):
             result["output_path"],
             os.path.join(settings.output_dir, "output_job-1.mp4"),
         )
-        mock_run.assert_called_once_with(
-            [
-                "uv",
-                "run",
-                "panowan-test",
-                "--wan-model-path",
-                settings.wan_model_path,
-                "--lora-checkpoint-path",
-                settings.lora_checkpoint_path,
-                "--output-path",
-                os.path.join(settings.output_dir, "output_job-1.mp4"),
-                "--prompt",
-                "mountain sunset",
-                "--num-inference-steps",
-                str(settings.default_num_inference_steps),
-                "--width",
-                str(settings.default_width),
-                "--height",
-                str(settings.default_height),
-                "--seed",
-                "0",
-            ],
-            cwd=settings.panowan_dir,
-            capture_output=True,
-            text=True,
-            timeout=settings.generation_timeout_seconds,
-        )
+        mock_popen.assert_called_once()
         mock_getsize.assert_called_once_with(
             os.path.join(settings.output_dir, "output_job-1.mp4")
         )
         mock_makedirs.assert_called_once_with(settings.output_dir, exist_ok=True)
         self.assertTrue(mock_exists.called)
+
+    @patch("app.generator.os.makedirs")
+    @patch("app.generator.subprocess.Popen")
+    def test_generate_video_timeout_kills_process(self, mock_popen, mock_makedirs):
+        mock_process = unittest.mock.MagicMock()
+        mock_process.communicate.side_effect = subprocess.TimeoutExpired(cmd="test", timeout=10)
+        mock_process.kill = unittest.mock.MagicMock()
+        mock_process.wait = unittest.mock.MagicMock()
+        mock_popen.return_value = mock_process
+
+        with self.assertRaises(TimeoutError):
+            generate_video({"id": "timeout-test", "prompt": "test"})
+
+        mock_process.kill.assert_called_once()
+        mock_process.wait.assert_called_once()

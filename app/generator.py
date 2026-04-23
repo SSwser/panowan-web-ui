@@ -110,28 +110,31 @@ def generate_video(payload: dict) -> dict:
     print(f"Running: {' '.join(cmd)}", flush=True)
 
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             cmd,
             cwd=settings.panowan_dir,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=settings.generation_timeout_seconds,
         )
-    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = process.communicate(timeout=settings.generation_timeout_seconds)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
         print("ERROR: Generation timed out", flush=True)
         raise TimeoutError(
             "Generation timed out after "
             f"{settings.generation_timeout_seconds} seconds"
-        ) from exc
+        )
 
-    print(f"Return code: {result.returncode}", flush=True)
-    if result.stdout:
-        print(f"Stdout: {result.stdout[-500:]}", flush=True)
-    if result.stderr:
-        print(f"Stderr: {result.stderr[-500:]}", flush=True)
+    print(f"Return code: {process.returncode}", flush=True)
+    if stdout:
+        print(f"Stdout: {stdout[-500:]}", flush=True)
+    if stderr:
+        print(f"Stderr: {stderr[-500:]}", flush=True)
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Generation failed: {result.stderr[-500:]}")
+    if process.returncode != 0:
+        raise RuntimeError(f"Generation failed: {stderr[-500:]}")
 
     if not os.path.exists(output_path):
         raise FileNotFoundError("Output file not created")
