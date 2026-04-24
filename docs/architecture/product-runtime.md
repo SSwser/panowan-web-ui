@@ -1,7 +1,7 @@
 # Product Runtime Architecture
 
 Date: 2026-04-24
-Status: Accepted direction, implementation pending
+Status: Accepted direction, initial Docker/Compose implementation complete
 
 ## Summary
 
@@ -147,6 +147,14 @@ Role expectations:
 - `model-setup`: one-shot model asset preparation.
 
 Development overrides may bind-mount source and enable reload, but development convenience should not define the production architecture.
+
+## Implementation Note
+
+The initial Docker/Compose implementation matches this direction:
+
+- `docker-compose.yml` — production split topology (api / worker-panowan / model-setup).
+- `docker-compose-dev.yml` — dev override (mounts source, dev targets).
+- Dockerfile role targets: `api`, `worker-panowan`, `dev-api`, `dev-worker-panowan`.
 
 ## Non-Goals
 

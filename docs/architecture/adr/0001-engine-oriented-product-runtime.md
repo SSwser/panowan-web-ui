@@ -63,6 +63,10 @@ Near-term implementation should:
 - Ensure API startup does not import engine-heavy modules.
 - Keep model downloads out of production worker startup.
 
+## Implementation Notes
+
+The initial implementation uses Dockerfile targets `api`, `worker-panowan`, `dev-api`, and `dev-worker-panowan`. The default Compose topology exposes `api`, `worker-panowan`, and a profiled `model-setup` service.
+
 ## Related Documents
 
 - [Product Runtime Architecture](../product-runtime.md)
