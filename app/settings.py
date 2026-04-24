@@ -1,12 +1,15 @@
 import os
 from dataclasses import dataclass
 
+from .paths import container_child, container_join
+
 
 @dataclass(frozen=True)
 class Settings:
     service_title: str
     service_version: str
-    panowan_app_dir: str
+    panowan_engine_dir: str
+    model_root: str
     wan_model_path: str
     lora_checkpoint_path: str
     runtime_dir: str
@@ -23,63 +26,61 @@ class Settings:
     max_concurrent_jobs: int
     host: str
     port: int
+    worker_poll_interval_seconds: float
+
+    @property
+    def panowan_app_dir(self) -> str:
+        return self.panowan_engine_dir
 
     @property
     def wan_model_absolute_path(self) -> str:
-        return os.path.join(self.panowan_app_dir, self.wan_model_path.lstrip("./"))
+        return self.wan_model_path
 
     @property
     def wan_diffusion_absolute_path(self) -> str:
-        return os.path.join(
-            self.wan_model_absolute_path, "diffusion_pytorch_model.safetensors"
-        )
+        return container_child(self.wan_model_absolute_path, "diffusion_pytorch_model.safetensors")
 
     @property
     def wan_t5_absolute_path(self) -> str:
-        return os.path.join(
-            self.wan_model_absolute_path,
-            "models_t5_umt5-xxl-enc-bf16.pth",
-        )
+        return container_child(self.wan_model_absolute_path, "models_t5_umt5-xxl-enc-bf16.pth")
 
     @property
     def lora_absolute_path(self) -> str:
-        return os.path.join(self.panowan_app_dir, self.lora_checkpoint_path.lstrip("./"))
+        return self.lora_checkpoint_path
 
 
 def load_settings() -> Settings:
     runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime")
+    model_root = os.getenv("MODEL_ROOT", "/models")
+    output_dir = os.getenv("OUTPUT_DIR", container_child(runtime_dir, "outputs"))
     return Settings(
-        service_title="PanoWan Local Service",
+        service_title="PanoWan Worker",
         service_version="1.0.0",
-        panowan_app_dir=os.getenv("PANOWAN_APP_DIR", "/app/PanoWan"),
+        panowan_engine_dir=os.getenv("PANOWAN_ENGINE_DIR", "/engines/panowan"),
+        model_root=model_root,
         wan_model_path=os.getenv(
-            "WAN_MODEL_PATH", "./models/Wan-AI/Wan2.1-T2V-1.3B"
+            "WAN_MODEL_PATH",
+            container_join(model_root, "Wan-AI/Wan2.1-T2V-1.3B"),
         ),
         lora_checkpoint_path=os.getenv(
-            "LORA_CHECKPOINT_PATH", "./models/PanoWan/latest-lora.ckpt"
+            "LORA_CHECKPOINT_PATH",
+            container_join(model_root, "PanoWan/latest-lora.ckpt"),
         ),
         runtime_dir=runtime_dir,
-        output_dir=os.getenv("OUTPUT_DIR", os.path.join(runtime_dir, "outputs")),
-        job_store_path=os.getenv(
-            "JOB_STORE_PATH", os.path.join(runtime_dir, "jobs.json")
-        ),
-        default_prompt=os.getenv(
-            "DEFAULT_PROMPT", "A beautiful mountain landscape at sunset"
-        ),
-        generation_timeout_seconds=int(
-            os.getenv("GENERATION_TIMEOUT_SECONDS", "1800")
-        ),
-        default_num_inference_steps=int(
-            os.getenv("DEFAULT_NUM_INFERENCE_STEPS", "50")
-        ),
+        output_dir=output_dir,
+        job_store_path=os.getenv("JOB_STORE_PATH", container_child(runtime_dir, "jobs.json")),
+        default_prompt=os.getenv("DEFAULT_PROMPT", "A beautiful mountain landscape at sunset"),
+        generation_timeout_seconds=int(os.getenv("GENERATION_TIMEOUT_SECONDS", "1800")),
+        default_num_inference_steps=int(os.getenv("DEFAULT_NUM_INFERENCE_STEPS", "50")),
         default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
         default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
-        upscale_model_dir=os.getenv("UPSCALE_MODEL_DIR", "/app/data/models/upscale"),
-        upscale_output_dir=os.getenv("UPSCALE_OUTPUT_DIR", "/app/runtime/outputs"),
+        upscale_model_dir=os.getenv("UPSCALE_MODEL_DIR", container_child(model_root, "upscale")),
+        upscale_output_dir=os.getenv("UPSCALE_OUTPUT_DIR", output_dir),
         upscale_timeout_seconds=int(os.getenv("UPSCALE_TIMEOUT_SECONDS", "1800")),
         max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", "1")),
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
+        worker_poll_interval_seconds=float(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")),
     )
 
 
