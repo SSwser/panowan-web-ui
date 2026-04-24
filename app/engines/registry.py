@@ -6,6 +6,8 @@ class EngineRegistry:
         self._engines: dict[str, EngineAdapter] = {}
 
     def register(self, engine: EngineAdapter) -> None:
+        if engine.name in self._engines:
+            raise ValueError(f"Engine already registered: {engine.name}")
         self._engines[engine.name] = engine
 
     def get(self, name: str) -> EngineAdapter:

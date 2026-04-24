@@ -37,7 +37,7 @@ class ApiTests(unittest.TestCase):
 
     def test_healthcheck_reports_path_status(self) -> None:
         path_exists = {
-            api.settings.panowan_app_dir: True,
+            api.settings.panowan_engine_dir: True,
             api.settings.wan_diffusion_absolute_path: True,
             api.settings.wan_t5_absolute_path: False,
             api.settings.lora_absolute_path: False,
@@ -52,6 +52,7 @@ class ApiTests(unittest.TestCase):
                 "status": "starting",
                 "service_started": True,
                 "model_ready": False,
+                "panowan_engine_dir_exists": True,
                 "panowan_app_dir_exists": True,
                 "wan_model_exists": False,
                 "lora_exists": False,

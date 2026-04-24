@@ -20,17 +20,39 @@ class EngineRegistryTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             registry.get("missing")
 
+    def test_register_duplicate_engine_raises_value_error(self):
+        engine = PanoWanEngine()
+        registry = EngineRegistry()
+        registry.register(engine)
+
+        with self.assertRaises(ValueError):
+            registry.register(engine)
+
+
+class EngineResultTests(unittest.TestCase):
+    def test_metadata_defaults_to_new_dict(self):
+        first = EngineResult(output_path="/tmp/a.mp4")
+        second = EngineResult(output_path="/tmp/b.mp4")
+
+        first.metadata["ok"] = True
+
+        self.assertEqual(second.metadata, {})
+
 
 class PanoWanEngineTests(unittest.TestCase):
     @mock.patch("app.engines.panowan.generate_video")
     def test_run_generate_delegates_to_generator(self, generate_video):
-        generate_video.return_value = {"output_path": "/app/runtime/outputs/output_job-1.mp4"}
+        generate_video.return_value = {
+            "output_path": "/app/runtime/outputs/output_job-1.mp4"
+        }
         engine = PanoWanEngine()
 
         result = engine.run({"job_id": "job-1", "type": "generate", "prompt": "sky"})
 
         self.assertEqual(
             result,
-            EngineResult(output_path="/app/runtime/outputs/output_job-1.mp4", metadata={}),
+            EngineResult(
+                output_path="/app/runtime/outputs/output_job-1.mp4", metadata={}
+            ),
         )
         generate_video.assert_called_once()

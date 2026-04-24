@@ -17,6 +17,16 @@ services:
       HOST: 0.0.0.0
       RUNTIME_DIR: /app/runtime
       JOB_BACKEND: local
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     volumes:
       - ./data/runtime:/app/runtime
     restart: unless-stopped
@@ -42,6 +52,9 @@ services:
       JOB_BACKEND: local
       TORCH_CUDNN_V8_API_ENABLED: "1"
       CUDA_MODULE_LOADING: LAZY
+    depends_on:
+      api:
+        condition: service_healthy
     volumes:
       - ${MODEL_ROOT:-./data/models}:/models
       - ./data/runtime:/app/runtime
@@ -56,8 +69,8 @@ services:
         APT_MIRROR: ${APT_MIRROR:-}
         PYPI_INDEX: ${PYPI_INDEX:-}
     image: panowan-worker-panowan:${TAG:-latest}
-    profiles: ["setup"]
-    command: ["bash", "/app/scripts/model-setup.sh"]
+    profiles: [ "setup" ]
+    command: [ "bash", "/app/scripts/model-setup.sh" ]
     env_file:
       - path: .env
         required: false

@@ -28,16 +28,12 @@ _job_backend: LocalJobBackend | None = None
 def get_job_backend() -> LocalJobBackend:
     """Return a process-cached ``LocalJobBackend`` for the active store path.
 
-    The backend instance auto-applies restart-recovery semantics on construction
-    (queued/running -> failed), so we must not build a fresh backend per call —
-    that would corrupt live queued jobs. We cache by ``job_store_path`` so tests
-    that patch ``settings`` to per-test tmpdirs still get isolated instances.
+    We cache by ``job_store_path`` so tests that patch ``settings`` to per-test
+    tmpdirs still get isolated instances while API requests reuse the same
+    backend object inside the process.
     """
     global _job_backend
-    if (
-        _job_backend is None
-        or _job_backend.job_store_path != settings.job_store_path
-    ):
+    if _job_backend is None or _job_backend.job_store_path != settings.job_store_path:
         _job_backend = LocalJobBackend(settings.job_store_path)
     return _job_backend
 
@@ -104,7 +100,7 @@ def root() -> FileResponse:
 
 @app.get("/health")
 def healthcheck() -> dict:
-    panowan_app_dir_exists = os.path.exists(settings.panowan_app_dir)
+    panowan_engine_dir_exists = os.path.exists(settings.panowan_engine_dir)
     wan_model_ready = os.path.exists(
         settings.wan_diffusion_absolute_path
     ) and os.path.exists(settings.wan_t5_absolute_path)
@@ -115,7 +111,8 @@ def healthcheck() -> dict:
         "status": "ready" if model_ready else "starting",
         "service_started": True,
         "model_ready": model_ready,
-        "panowan_app_dir_exists": panowan_app_dir_exists,
+        "panowan_engine_dir_exists": panowan_engine_dir_exists,
+        "panowan_app_dir_exists": panowan_engine_dir_exists,
         "wan_model_exists": wan_model_ready,
         "lora_exists": lora_exists,
     }

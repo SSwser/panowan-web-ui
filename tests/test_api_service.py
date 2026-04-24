@@ -32,7 +32,11 @@ class ApiServiceTests(unittest.TestCase):
         self.addCleanup(_restore)
 
         for module_name in list(sys.modules):
-            if module_name.startswith("app.api_service") or module_name.startswith("app.worker_service") or module_name.startswith("app.engines"):
+            if (
+                module_name.startswith("app.api_service")
+                or module_name.startswith("app.worker_service")
+                or module_name.startswith("app.engines")
+            ):
                 sys.modules.pop(module_name, None)
 
         importlib.import_module("app.api_service")

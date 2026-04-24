@@ -30,7 +30,9 @@ class LocalJobBackendTests(unittest.TestCase):
     def test_claim_next_job_marks_it_running(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")
-            backend.create_job({"job_id": "job-1", "status": "queued", "type": "generate"})
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
 
             claimed = backend.claim_next_job(worker_id="worker-a")
 
@@ -44,9 +46,12 @@ class LocalJobBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = f"{tmp}/jobs.json"
             backend = LocalJobBackend(path)
-            backend.create_job({"job_id": "job-1", "status": "running", "type": "generate"})
+            backend.create_job(
+                {"job_id": "job-1", "status": "running", "type": "generate"}
+            )
 
             restored = LocalJobBackend(path)
+            restored.restore()
             job = restored.get_job("job-1")
 
             self.assertEqual(job["status"], "failed")
@@ -87,16 +92,39 @@ class LocalJobBackendTests(unittest.TestCase):
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             backend.create_job({"job_id": "j1", "status": "queued", "type": "generate"})
             with self.assertRaises(ValueError):
-                backend.create_job({"job_id": "j1", "status": "queued", "type": "generate"})
+                backend.create_job(
+                    {"job_id": "j1", "status": "queued", "type": "generate"}
+                )
 
     def test_create_job_does_not_alias_params(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             params = {"width": 896}
-            backend.create_job({"job_id": "j1", "status": "queued", "type": "generate", "params": params})
+            backend.create_job(
+                {
+                    "job_id": "j1",
+                    "status": "queued",
+                    "type": "generate",
+                    "params": params,
+                }
+            )
             params["width"] = 1920  # mutate caller's copy
             stored = backend.get_job("j1")
             self.assertEqual(stored["params"], {"width": 896})
+
+    def test_separate_backend_instances_reload_latest_disk_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/jobs.json"
+            first = LocalJobBackend(path)
+            second = LocalJobBackend(path)
+
+            first.create_job({"job_id": "j1", "status": "queued", "type": "generate"})
+
+            self.assertEqual(second.get_job("j1")["status"], "queued")
+            with self.assertRaises(ValueError):
+                second.create_job(
+                    {"job_id": "j1", "status": "queued", "type": "generate"}
+                )
 
 
 if __name__ == "__main__":

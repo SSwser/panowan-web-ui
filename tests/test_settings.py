@@ -42,6 +42,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(loaded.upscale_output_dir, "/app/runtime/outputs")
         self.assertEqual(loaded.upscale_timeout_seconds, 1800)
 
+    def test_load_settings_falls_back_to_legacy_panowan_app_dir(self) -> None:
+        env = {"PANOWAN_APP_DIR": "/legacy/PanoWan"}
+        with patch.dict(os.environ, env, clear=True):
+            loaded = load_settings()
+
+        self.assertEqual(loaded.panowan_engine_dir, "/legacy/PanoWan")
+        self.assertEqual(loaded.panowan_app_dir, "/legacy/PanoWan")
+
     def test_load_settings_upscale_from_environment(self) -> None:
         env = {
             "UPSCALE_MODEL_DIR": "/custom/models",
