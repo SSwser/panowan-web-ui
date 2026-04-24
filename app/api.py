@@ -1,25 +1,17 @@
 import asyncio
 import json
 import os
-import subprocess
-import threading
-import traceback
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from .sse import broadcast_job_event, subscribe, unsubscribe
 
-from .generator import (
-    extract_prompt,
-    generate_video,
-    log_startup_diagnostics,
-    resolve_inference_params,
-)
-from .upscaler import UPSCALE_BACKENDS, upscale_video
+from .generator import extract_prompt, resolve_inference_params
+from .upscaler import UPSCALE_BACKENDS
+from .jobs import LocalJobBackend, now_iso
 from .settings import settings
 
 
@@ -29,86 +21,37 @@ app = FastAPI(
     version=settings.service_version,
 )
 
-_jobs: dict[str, dict[str, Any]] = {}
-_jobs_lock = threading.Lock()
-_gpu_slot = threading.Semaphore(settings.max_concurrent_jobs)
+
+_job_backend: LocalJobBackend | None = None
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def get_job_backend() -> LocalJobBackend:
+    """Return a process-cached ``LocalJobBackend`` for the active store path.
 
-
-def _job_download_url(job_id: str) -> str:
-    return f"/jobs/{job_id}/download"
-
-
-def _persist_jobs_unlocked() -> None:
-    os.makedirs(os.path.dirname(settings.job_store_path), exist_ok=True)
-    temp_path = f"{settings.job_store_path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump({"jobs": _jobs}, handle, indent=2, sort_keys=True)
-        handle.write("\n")
-    os.replace(temp_path, settings.job_store_path)
-
-
-def _normalize_job_record(job_id: str, record: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(record)
-    normalized["job_id"] = str(normalized.get("job_id") or job_id)
-    normalized["download_url"] = _job_download_url(normalized["job_id"])
-    normalized.setdefault("prompt", settings.default_prompt)
-    normalized.setdefault("params", {})
-    normalized.setdefault("output_path", "")
-    normalized.setdefault("created_at", _now_iso())
-    normalized.setdefault("started_at", None)
-    normalized.setdefault("finished_at", None)
-    normalized.setdefault("error", None)
-    normalized.setdefault("status", "queued")
-    normalized.setdefault("type", "generate")
-    normalized.setdefault("source_job_id", None)
-    normalized.setdefault("upscale_params", None)
-
-    if normalized["status"] in {"queued", "running"}:
-        normalized["status"] = "failed"
-        normalized["finished_at"] = normalized["finished_at"] or _now_iso()
-        normalized["error"] = "Service restarted before the job completed"
-    elif normalized["status"] == "completed" and not os.path.exists(
-        normalized["output_path"]
+    The backend instance auto-applies restart-recovery semantics on construction
+    (queued/running -> failed), so we must not build a fresh backend per call —
+    that would corrupt live queued jobs. We cache by ``job_store_path`` so tests
+    that patch ``settings`` to per-test tmpdirs still get isolated instances.
+    """
+    global _job_backend
+    if (
+        _job_backend is None
+        or _job_backend.job_store_path != settings.job_store_path
     ):
-        normalized["status"] = "failed"
-        normalized["finished_at"] = normalized["finished_at"] or _now_iso()
-        normalized["error"] = "Output file missing after service restart"
-
-    return normalized
-
-
-def _restore_jobs_from_disk() -> None:
-    if not os.path.exists(settings.job_store_path):
-        return
-
-    with open(settings.job_store_path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-
-    raw_jobs = payload.get("jobs", payload)
-    if not isinstance(raw_jobs, dict):
-        raise ValueError("Job store payload must contain a jobs object")
-
-    restored_jobs = {
-        str(job_id): _normalize_job_record(str(job_id), record)
-        for job_id, record in raw_jobs.items()
-        if isinstance(record, dict)
-    }
-
-    with _jobs_lock:
-        _jobs.clear()
-        _jobs.update(restored_jobs)
-        _persist_jobs_unlocked()
+        _job_backend = LocalJobBackend(settings.job_store_path)
+    return _job_backend
 
 
 def _create_job_record(
-    job_id: str, prompt: str, output_path: str, params: dict[str, Any],
+    job_id: str,
+    prompt: str,
+    output_path: str,
+    params: dict[str, Any],
     job_type: str = "generate",
     source_job_id: str | None = None,
     upscale_params: dict | None = None,
+    payload: dict | None = None,
+    source_output_path: str | None = None,
 ) -> dict[str, Any]:
     record = {
         "job_id": job_id,
@@ -117,137 +60,40 @@ def _create_job_record(
         "prompt": prompt,
         "params": params,
         "output_path": output_path,
-        "download_url": _job_download_url(job_id),
-        "created_at": _now_iso(),
+        "created_at": now_iso(),
         "started_at": None,
         "finished_at": None,
         "error": None,
         "source_job_id": source_job_id,
         "upscale_params": upscale_params,
+        "payload": payload or {},
+        "source_output_path": source_output_path,
     }
-    with _jobs_lock:
-        if job_id in _jobs:
-            raise ValueError(f"Job {job_id} already exists")
-        _jobs[job_id] = record
-        _persist_jobs_unlocked()
-    broadcast_job_event("job_created", record)
-    return record
+    backend = get_job_backend()
+    try:
+        created = backend.create_job(record)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    broadcast_job_event("job_created", created)
+    return created
 
 
 def _update_job(job_id: str, **updates: Any) -> dict[str, Any]:
-    with _jobs_lock:
-        if job_id not in _jobs:
-            raise KeyError(job_id)
-        _jobs[job_id].update(updates)
-        _persist_jobs_unlocked()
-        result = dict(_jobs[job_id])
+    updated = get_job_backend().update_job(job_id, **updates)
     broadcast_job_event("job_updated", {**updates, "job_id": job_id})
-    return result
+    return updated
 
 
 def _get_job(job_id: str) -> dict[str, Any] | None:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        return dict(job) if job is not None else None
-
-
-def _is_job_cancelled(job_id: str) -> bool:
-    """Check if a job has been cancelled (status no longer queued/running)."""
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        return job is not None and job["status"] not in {"queued", "running"}
-
-
-def _run_generation_job(job_id: str, payload: dict) -> None:
-    try:
-        # Wait for GPU slot — job stays "queued" while waiting
-        _gpu_slot.acquire()
-        try:
-            # Check if cancelled while queued
-            if _is_job_cancelled(job_id):
-                return
-            _update_job(job_id, status="running", started_at=_now_iso())
-            result = generate_video(payload)
-        finally:
-            _gpu_slot.release()
-
-        # Check if cancelled during execution
-        if _is_job_cancelled(job_id):
-            return
-        _update_job(
-            job_id,
-            status="completed",
-            finished_at=_now_iso(),
-            output_path=result["output_path"],
-        )
-    except Exception as exc:
-        print(f"ERROR: job {job_id} failed: {exc}", flush=True)
-        traceback.print_exc()
-        try:
-            _update_job(
-                job_id,
-                status="failed",
-                finished_at=_now_iso(),
-                error=str(exc),
-            )
-        except KeyError:
-            pass
-
-
-def _run_upscale_job(
-    job_id: str, input_path: str, output_path: str, upscale_params: dict
-) -> None:
-    try:
-        # Wait for GPU slot — job stays "queued" while waiting
-        _gpu_slot.acquire()
-        try:
-            # Check if cancelled while queued
-            if _is_job_cancelled(job_id):
-                return
-            _update_job(job_id, status="running", started_at=_now_iso())
-            result = upscale_video(
-                input_path=input_path,
-                output_path=output_path,
-                model=upscale_params["model"],
-                scale=upscale_params["scale"],
-                target_width=upscale_params.get("target_width"),
-                target_height=upscale_params.get("target_height"),
-                model_dir=settings.upscale_model_dir,
-                timeout_seconds=settings.upscale_timeout_seconds,
-            )
-        finally:
-            _gpu_slot.release()
-
-        # Check if cancelled during execution
-        if _is_job_cancelled(job_id):
-            return
-        _update_job(
-            job_id,
-            status="completed",
-            finished_at=_now_iso(),
-            output_path=result["output_path"],
-        )
-    except Exception as exc:
-        print(f"ERROR: upscale job {job_id} failed: {exc}", flush=True)
-        traceback.print_exc()
-        try:
-            _update_job(
-                job_id,
-                status="failed",
-                finished_at=_now_iso(),
-                error=str(exc),
-            )
-        except KeyError:
-            pass
+    return get_job_backend().get_job(job_id)
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     try:
-        _restore_jobs_from_disk()
+        get_job_backend().restore()
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"WARNING: could not restore jobs from disk: {exc}", flush=True)
-    log_startup_diagnostics()
 
 
 @app.get("/")
@@ -276,32 +122,27 @@ def healthcheck() -> dict:
 
 
 @app.post("/generate", status_code=202)
-def generate(payload: dict, background_tasks: BackgroundTasks) -> dict:
+def generate(payload: dict) -> dict:
     job_id = str(payload.get("id") or uuid.uuid4())
     prompt = extract_prompt(payload)
     output_path = os.path.join(settings.output_dir, f"output_{job_id}.mp4")
     job_payload = dict(payload)
     job_payload["id"] = job_id
     params = resolve_inference_params(job_payload)
-
-    try:
-        _create_job_record(job_id, prompt, output_path, params)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    background_tasks.add_task(_run_generation_job, job_id, job_payload)
-
+    record = _create_job_record(
+        job_id, prompt, output_path, params, payload=job_payload
+    )
     return {
         "job_id": job_id,
-        "status": "queued",
+        "status": record["status"],
         "prompt": prompt,
         "output_path": output_path,
-        "download_url": _job_download_url(job_id),
+        "download_url": record["download_url"],
     }
 
 
 @app.post("/upscale", status_code=202)
-def upscale(payload: dict, background_tasks: BackgroundTasks) -> dict:
+def upscale(payload: dict) -> dict:
     source_job_id = payload.get("source_job_id")
     if not source_job_id:
         raise HTTPException(status_code=400, detail="source_job_id is required")
@@ -358,27 +199,29 @@ def upscale(payload: dict, background_tasks: BackgroundTasks) -> dict:
         "target_width": target_width,
         "target_height": target_height,
     }
+    source_output_path = source_job["output_path"]
+    job_payload = {
+        "source_job_id": source_job_id,
+        "source_output_path": source_output_path,
+        "output_path": output_path,
+        "upscale_params": upscale_params,
+    }
 
-    try:
-        _create_job_record(
-            job_id,
-            prompt=source_job.get("prompt", ""),
-            output_path=output_path,
-            params=source_job.get("params", {}),
-            job_type="upscale",
-            source_job_id=source_job_id,
-            upscale_params=upscale_params,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    background_tasks.add_task(
-        _run_upscale_job, job_id, source_job["output_path"], output_path, upscale_params
+    record = _create_job_record(
+        job_id,
+        prompt=source_job.get("prompt", ""),
+        output_path=output_path,
+        params=source_job.get("params", {}),
+        job_type="upscale",
+        source_job_id=source_job_id,
+        upscale_params=upscale_params,
+        payload=job_payload,
+        source_output_path=source_output_path,
     )
 
     return {
         "job_id": job_id,
-        "status": "queued",
+        "status": record["status"],
         "type": "upscale",
         "source_job_id": source_job_id,
         "upscale_params": upscale_params,
@@ -387,8 +230,7 @@ def upscale(payload: dict, background_tasks: BackgroundTasks) -> dict:
 
 @app.get("/jobs")
 def list_jobs() -> list[dict[str, Any]]:
-    with _jobs_lock:
-        jobs = list(_jobs.values())
+    jobs = get_job_backend().list_jobs()
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
     return jobs
 
@@ -409,7 +251,7 @@ async def job_events(request: Request) -> Any:
                 except asyncio.TimeoutError:
                     yield {
                         "event": "heartbeat",
-                        "data": json.dumps({"ts": _now_iso()}),
+                        "data": json.dumps({"ts": now_iso()}),
                     }
         finally:
             unsubscribe(queue)
@@ -439,7 +281,7 @@ def download_job(job_id: str) -> FileResponse:
         _update_job(
             job_id,
             status="failed",
-            finished_at=_now_iso(),
+            finished_at=now_iso(),
             error="Output file missing",
         )
         raise HTTPException(status_code=500, detail="Output file not created")
@@ -453,68 +295,45 @@ def download_job(job_id: str) -> FileResponse:
 
 
 def cancel_job(job_id: str, force: bool = False) -> dict:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="Job not found")
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
 
-        status = job["status"]
-        if status == "queued":
-            job["status"] = "failed"
-            job["error"] = "Cancelled by user"
-            job["finished_at"] = _now_iso()
-            _persist_jobs_unlocked()
-            result = dict(job)
-            result.pop("_process", None)
-
+    status = job["status"]
     if status == "queued":
-        broadcast_job_event("job_updated", {"job_id": job_id, "status": "failed", "error": "Cancelled by user"})
-        return result
+        return _update_job(
+            job_id,
+            status="failed",
+            error="Cancelled by user",
+            finished_at=now_iso(),
+        )
 
     if status == "running":
         if not force:
-            with _jobs_lock:
-                process = job.get("_process")
             return {
                 "warning": True,
                 "job_id": job_id,
                 "status": "running",
-                "message": "Job is currently running. Force termination may cause incomplete output. Set force=true to confirm.",
-                "pid": process.pid if process else None,
+                "message": (
+                    "Job is currently running. Force termination may cause "
+                    "incomplete output. Set force=true to confirm."
+                ),
+                "pid": None,
             }
-        # Two-phase termination
-        with _jobs_lock:
-            process = job.get("_process")
-        if process is not None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    with _jobs_lock:
-                        job.pop("_process", None)
-                        job["status"] = "failed"
-                        job["error"] = "Cancel failed: process unkillable"
-                        job["finished_at"] = _now_iso()
-                        _persist_jobs_unlocked()
-                    broadcast_job_event("job_updated", {"job_id": job_id, "status": "failed", "error": "Cancel failed: process unkillable"})
-                    raise HTTPException(status_code=500, detail="Cancel failed: process unkillable")
-        with _jobs_lock:
-            job.pop("_process", None)
-            job["status"] = "failed"
-            job["error"] = "Cancelled by user"
-            job["finished_at"] = _now_iso()
-            _persist_jobs_unlocked()
-            result = dict(job)
-            result.pop("_process", None)
-        broadcast_job_event("job_updated", {"job_id": job_id, "status": "failed", "error": "Cancelled by user"})
-        return result
+        # TODO(task6): coordinate force-cancel signal with worker process.
+        # The API process no longer owns the inference subprocess; the worker
+        # must observe the status flip and abort its own run.
+        return _update_job(
+            job_id,
+            status="failed",
+            error="Cancelled by user",
+            finished_at=now_iso(),
+        )
 
     # completed or failed
-    raise HTTPException(status_code=409, detail=f"Cannot cancel job with status {status}")
+    raise HTTPException(
+        status_code=409, detail=f"Cannot cancel job with status {status}"
+    )
 
 
 @app.post("/jobs/{job_id}/cancel")

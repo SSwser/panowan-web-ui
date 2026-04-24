@@ -4,14 +4,16 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from unittest.mock import patch
 
 
 FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
 if FASTAPI_AVAILABLE:
-    from fastapi import BackgroundTasks, HTTPException
+    from fastapi import HTTPException
     from fastapi.responses import FileResponse
+    from fastapi.testclient import TestClient
     from app import api
 
 
@@ -29,8 +31,9 @@ class ApiTests(unittest.TestCase):
         self.settings_patch = patch("app.api.settings", patched_settings)
         self.settings_patch.start()
         self.addCleanup(self.settings_patch.stop)
-        self.addCleanup(api._jobs.clear)
-        api._jobs.clear()
+        # Backend state lives on the per-test tmpdir job store; no module
+        # globals to clear.
+        self.client = TestClient(api.app)
 
     def test_healthcheck_reports_path_status(self) -> None:
         path_exists = {
@@ -65,32 +68,15 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(result["wan_model_exists"])
         self.assertTrue(result["lora_exists"])
 
-    def test_generate_queues_background_job_and_marks_failure(self) -> None:
-        with patch("app.api.generate_video", side_effect=TimeoutError("too slow")):
-            background_tasks = BackgroundTasks()
-            response = api.generate({"prompt": "test"}, background_tasks)
-
-        self.assertEqual(response["status"], "queued")
-        self.assertEqual(len(background_tasks.tasks), 1)
-
-        task = background_tasks.tasks[0]
-        task.func(*task.args, **task.kwargs)
-
-        job = api.get_job(response["job_id"])
-        self.assertEqual(job["status"], "failed")
-        self.assertEqual(job["error"], "too slow")
-
     def test_generate_returns_queued_job_metadata(self) -> None:
-        with patch("app.api.generate_video") as mock_generate_video:
-            background_tasks = BackgroundTasks()
-            response = api.generate({"prompt": "test"}, background_tasks)
+        response = api.generate({"prompt": "test"})
 
         self.assertEqual(response["status"], "queued")
         self.assertIn("job_id", response)
-        self.assertEqual(len(background_tasks.tasks), 1)
         self.assertTrue(response["output_path"].endswith(f"{response['job_id']}.mp4"))
-        self.assertEqual(response["download_url"], f"/jobs/{response['job_id']}/download")
-        mock_generate_video.assert_not_called()
+        self.assertEqual(
+            response["download_url"], f"/jobs/{response['job_id']}/download"
+        )
 
         with open(api.settings.job_store_path, "r", encoding="utf-8") as handle:
             persisted = json.load(handle)
@@ -100,12 +86,51 @@ class ApiTests(unittest.TestCase):
             "queued",
         )
 
+    def test_generate_creates_queued_job_without_running_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "RUNTIME_DIR": tmp,
+                    "JOB_STORE_PATH": f"{tmp}/jobs.json",
+                    "OUTPUT_DIR": f"{tmp}/outputs",
+                },
+                clear=True,
+            ):
+                from app.jobs.local import LocalJobBackend
+                from app.settings import load_settings
+
+                loaded = load_settings()
+                backend = LocalJobBackend(loaded.job_store_path)
+                record = backend.create_job(
+                    {
+                        "job_id": "job-1",
+                        "status": "queued",
+                        "type": "generate",
+                        "prompt": "sky",
+                        "params": {"width": 896, "height": 448},
+                        "output_path": f"{tmp}/outputs/output_job-1.mp4",
+                    }
+                )
+
+                self.assertEqual(record["status"], "queued")
+
+    def test_generate_endpoint_only_queues_job(self) -> None:
+        response = self.client.post("/generate", json={"prompt": "sky"})
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["status"], "queued")
+        job = self.client.get(f"/jobs/{payload['job_id']}").json()
+        self.assertEqual(job["status"], "queued")
+
     def test_restore_jobs_marks_running_job_failed_after_restart(self) -> None:
         completed_output = os.path.join(self.temp_dir.name, "outputs", "done.mp4")
         os.makedirs(os.path.dirname(completed_output), exist_ok=True)
         with open(completed_output, "wb") as handle:
             handle.write(b"video")
 
+        os.makedirs(os.path.dirname(api.settings.job_store_path), exist_ok=True)
         with open(api.settings.job_store_path, "w", encoding="utf-8") as handle:
             json.dump(
                 {
@@ -137,10 +162,10 @@ class ApiTests(unittest.TestCase):
                 handle,
             )
 
-        api._restore_jobs_from_disk()
+        api.get_job_backend().restore()
 
-        queued_job = api.get_job("queued-job")
-        done_job = api.get_job("done-job")
+        queued_job = api._get_job("queued-job")
+        done_job = api._get_job("done-job")
 
         self.assertEqual(queued_job["status"], "failed")
         self.assertEqual(
@@ -157,35 +182,27 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(response.path.endswith("index.html"))
 
     def test_list_jobs_returns_sorted_jobs(self) -> None:
-        with patch.dict(
-            api._jobs,
+        backend = api.get_job_backend()
+        backend.create_job(
             {
-                "job-a": {
-                    "job_id": "job-a",
-                    "status": "completed",
-                    "prompt": "first",
-                    "output_path": "",
-                    "download_url": "/jobs/job-a/download",
-                    "created_at": "2026-01-01T00:00:00+00:00",
-                    "started_at": None,
-                    "finished_at": None,
-                    "error": None,
-                },
-                "job-b": {
-                    "job_id": "job-b",
-                    "status": "queued",
-                    "prompt": "second",
-                    "output_path": "",
-                    "download_url": "/jobs/job-b/download",
-                    "created_at": "2026-06-01T00:00:00+00:00",
-                    "started_at": None,
-                    "finished_at": None,
-                    "error": None,
-                },
-            },
-            clear=True,
-        ):
-            result = api.list_jobs()
+                "job_id": "job-a",
+                "status": "completed",
+                "prompt": "first",
+                "output_path": "",
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+        backend.create_job(
+            {
+                "job_id": "job-b",
+                "status": "queued",
+                "prompt": "second",
+                "output_path": "",
+                "created_at": "2026-06-01T00:00:00+00:00",
+            }
+        )
+
+        result = api.list_jobs()
 
         self.assertIsInstance(result, list)
         self.assertEqual(len(result), 2)
@@ -199,18 +216,6 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(record["source_job_id"])
         self.assertIsNone(record["upscale_params"])
 
-    def test_normalize_job_record_adds_type_for_legacy_jobs(self) -> None:
-        legacy = {
-            "job_id": "old-job",
-            "status": "completed",
-            "output_path": "/exists.mp4",
-        }
-        with patch("app.api.os.path.exists", return_value=True):
-            normalized = api._normalize_job_record("old-job", legacy)
-        self.assertEqual(normalized["type"], "generate")
-        self.assertIsNone(normalized["source_job_id"])
-        self.assertIsNone(normalized["upscale_params"])
-
     def test_download_returns_mp4_file_response(self) -> None:
         job_id = "job-1"
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -219,45 +224,56 @@ class ApiTests(unittest.TestCase):
 
         self.addCleanup(lambda: os.path.exists(temp_path) and os.unlink(temp_path))
 
-        with patch.dict(
-            api._jobs,
-            {
-                job_id: {
-                    "job_id": job_id,
-                    "status": "completed",
-                    "prompt": "test",
-                    "output_path": temp_path,
-                    "download_url": f"/jobs/{job_id}/download",
-                    "created_at": "now",
-                    "started_at": "now",
-                    "finished_at": "now",
-                    "error": None,
-                }
-            },
-            clear=True,
-        ):
-            response = api.download_job(job_id)
+        api._create_job_record(job_id, "test", temp_path, {})
+        api._update_job(
+            job_id,
+            status="completed",
+            started_at="now",
+            finished_at="now",
+            output_path=temp_path,
+        )
+
+        response = api.download_job(job_id)
 
         self.assertIsInstance(response, FileResponse)
         self.assertEqual(response.path, temp_path)
         self.assertEqual(response.media_type, "video/mp4")
         self.assertEqual(response.headers["x-job-id"], job_id)
 
+    def _seed_completed_source(
+        self,
+        source_id: str,
+        *,
+        output_path: str = "/fake/output.mp4",
+        params: dict | None = None,
+        prompt: str = "test",
+    ) -> None:
+        api._create_job_record(
+            source_id,
+            prompt,
+            output_path,
+            params or {"width": 448, "height": 224},
+        )
+        api._update_job(
+            source_id,
+            status="completed",
+            started_at="now",
+            finished_at="now",
+            output_path=output_path,
+        )
+
     def test_upscale_creates_new_job_linked_to_source(self) -> None:
-        # Create a completed source job in _jobs
         source_id = "source-1"
-        with patch.dict(api._jobs, clear=True):
-            api._jobs[source_id] = {
-                "job_id": source_id, "status": "completed", "type": "generate",
-                "prompt": "test", "params": {"width": 448, "height": 224},
-                "output_path": "/fake/output.mp4",
-                "download_url": f"/jobs/{source_id}/download",
-                "created_at": "now", "started_at": "now", "finished_at": "now",
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            with patch("app.api.os.path.exists", return_value=True):
-                background_tasks = BackgroundTasks()
-                response = api.upscale({"source_job_id": source_id, "model": "realesrgan-animevideov3", "scale": 2}, background_tasks)
+        self._seed_completed_source(source_id)
+
+        with patch("app.api.os.path.exists", return_value=True):
+            response = api.upscale(
+                {
+                    "source_job_id": source_id,
+                    "model": "realesrgan-animevideov3",
+                    "scale": 2,
+                }
+            )
 
         self.assertEqual(response["status"], "queued")
         self.assertEqual(response["type"], "upscale")
@@ -266,88 +282,60 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response["upscale_params"]["scale"], 2)
 
     def test_upscale_rejects_non_completed_source(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["running-1"] = {
-                "job_id": "running-1", "status": "running", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            background_tasks = BackgroundTasks()
-            with self.assertRaises(HTTPException) as ctx:
-                api.upscale({"source_job_id": "running-1"}, background_tasks)
+        api._create_job_record("running-1", "", "", {})
+        api._update_job("running-1", status="running", started_at="now")
+
+        with self.assertRaises(HTTPException) as ctx:
+            api.upscale({"source_job_id": "running-1"})
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_upscale_rejects_unknown_model(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["done-1"] = {
-                "job_id": "done-1", "status": "completed", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "/out.mp4", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            with patch("app.api.os.path.exists", return_value=True):
-                background_tasks = BackgroundTasks()
-                with self.assertRaises(HTTPException) as ctx:
-                    api.upscale({"source_job_id": "done-1", "model": "nonexistent"}, background_tasks)
+        self._seed_completed_source("done-1", output_path="/out.mp4")
+
+        with patch("app.api.os.path.exists", return_value=True):
+            with self.assertRaises(HTTPException) as ctx:
+                api.upscale({"source_job_id": "done-1", "model": "nonexistent"})
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_upscale_rejects_missing_source_job(self) -> None:
-        background_tasks = BackgroundTasks()
         with self.assertRaises(HTTPException) as ctx:
-            api.upscale({"source_job_id": "nonexistent"}, background_tasks)
+            api.upscale({"source_job_id": "nonexistent"})
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_upscale_rejects_missing_source_file(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["done-2"] = {
-                "job_id": "done-2", "status": "completed", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "/nonexistent.mp4", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            with patch("app.api.os.path.exists", return_value=False):
-                background_tasks = BackgroundTasks()
-                with self.assertRaises(HTTPException) as ctx:
-                    api.upscale({"source_job_id": "done-2"}, background_tasks)
+        self._seed_completed_source("done-2", output_path="/nonexistent.mp4")
+
+        with patch("app.api.os.path.exists", return_value=False):
+            with self.assertRaises(HTTPException) as ctx:
+                api.upscale({"source_job_id": "done-2"})
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_cancel_queued_job_succeeds(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["q1"] = {
-                "job_id": "q1", "status": "queued", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            result = api.cancel_job("q1", force=False)
+        api._create_job_record("q1", "", "", {})
+
+        result = api.cancel_job("q1", force=False)
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"], "Cancelled by user")
 
     def test_cancel_running_without_force_returns_warning(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["r1"] = {
-                "job_id": "r1", "status": "running", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-                "_process": None,
-            }
-            result = api.cancel_job("r1", force=False)
+        # Subprocess termination now lives in the worker (Task 6); the API
+        # cannot return a real PID and just emits the warning shape.
+        api._create_job_record("r1", "", "", {})
+        api._update_job("r1", status="running", started_at="now")
+
+        result = api.cancel_job("r1", force=False)
 
         self.assertTrue(result.get("warning"))
+        self.assertEqual(result["status"], "running")
+        self.assertIsNone(result["pid"])
 
     def test_cancel_completed_job_raises(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["c1"] = {
-                "job_id": "c1", "status": "completed", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "/out.mp4", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            with self.assertRaises(HTTPException) as ctx:
-                api.cancel_job("c1", force=False)
+        api._create_job_record("c1", "", "/out.mp4", {})
+        api._update_job("c1", status="completed", finished_at="now")
+
+        with self.assertRaises(HTTPException) as ctx:
+            api.cancel_job("c1", force=False)
         self.assertEqual(ctx.exception.status_code, 409)
 
     def test_cancel_nonexistent_job_raises(self) -> None:
@@ -356,71 +344,58 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 404)
 
     def test_cancel_running_with_force_marks_failed(self) -> None:
-        mock_process = unittest.mock.MagicMock()
-        mock_process.pid = 12345
-        mock_process.wait.return_value = 0
+        # Subprocess termination now lives in the worker (Task 6). Force-cancel
+        # from the API just flips the status; the worker must observe and abort.
+        api._create_job_record("r2", "", "", {})
+        api._update_job("r2", status="running", started_at="now")
 
-        with patch.dict(api._jobs, clear=True):
-            api._jobs["r2"] = {
-                "job_id": "r2", "status": "running", "type": "generate",
-                "prompt": "", "params": {}, "output_path": "", "download_url": "",
-                "created_at": "now", "started_at": None, "finished_at": None,
-                "error": None, "source_job_id": None, "upscale_params": None,
-                "_process": mock_process,
-            }
-            result = api.cancel_job("r2", force=True)
+        result = api.cancel_job("r2", force=True)
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"], "Cancelled by user")
-        mock_process.terminate.assert_called_once()
 
     def test_upscale_and_cancel_queued_job(self) -> None:
         """End-to-end: create source job, upscale it, cancel the upscale."""
-        with patch.dict(api._jobs, clear=True):
-            source_id = "src-1"
-            api._jobs[source_id] = {
-                "job_id": source_id, "status": "completed", "type": "generate",
-                "prompt": "test", "params": {"width": 448, "height": 224},
-                "output_path": "/fake/out.mp4", "download_url": f"/jobs/{source_id}/download",
-                "created_at": "now", "started_at": "now", "finished_at": "now",
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            with patch("app.api.os.path.exists", return_value=True):
-                background_tasks = BackgroundTasks()
-                resp = api.upscale(
-                    {"source_job_id": source_id, "model": "realesrgan-animevideov3", "scale": 2},
-                    background_tasks,
-                )
+        source_id = "src-1"
+        self._seed_completed_source(source_id, output_path="/fake/out.mp4")
 
-            upscale_id = resp["job_id"]
-            self.assertEqual(resp["type"], "upscale")
+        with patch("app.api.os.path.exists", return_value=True):
+            resp = api.upscale(
+                {
+                    "source_job_id": source_id,
+                    "model": "realesrgan-animevideov3",
+                    "scale": 2,
+                }
+            )
 
-            # Cancel the queued upscale job
-            result = api.cancel_job(upscale_id, force=False)
-            self.assertEqual(result["status"], "failed")
-            self.assertEqual(result["error"], "Cancelled by user")
+        upscale_id = resp["job_id"]
+        self.assertEqual(resp["type"], "upscale")
+
+        # Cancel the queued upscale job
+        result = api.cancel_job(upscale_id, force=False)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error"], "Cancelled by user")
 
     def test_upscale_job_record_has_source_info(self) -> None:
-        with patch.dict(api._jobs, clear=True):
-            source_id = "src-2"
-            api._jobs[source_id] = {
-                "job_id": source_id, "status": "completed", "type": "generate",
-                "prompt": "hello", "params": {"width": 896, "height": 448},
-                "output_path": "/fake/out2.mp4", "download_url": f"/jobs/{source_id}/download",
-                "created_at": "now", "started_at": "now", "finished_at": "now",
-                "error": None, "source_job_id": None, "upscale_params": None,
-            }
-            with patch("app.api.os.path.exists", return_value=True):
-                background_tasks = BackgroundTasks()
-                resp = api.upscale(
-                    {"source_job_id": source_id, "model": "seedvr2-3b", "scale": 2},
-                    background_tasks,
-                )
+        source_id = "src-2"
+        self._seed_completed_source(
+            source_id,
+            output_path="/fake/out2.mp4",
+            params={"width": 896, "height": 448},
+            prompt="hello",
+        )
 
-            job = api.get_job(resp["job_id"])
-            self.assertEqual(job["type"], "upscale")
-            self.assertEqual(job["source_job_id"], source_id)
-            self.assertEqual(job["upscale_params"]["model"], "seedvr2-3b")
-            self.assertEqual(job["upscale_params"]["scale"], 2)
-            self.assertEqual(job["upscale_params"]["target_width"], 1792)
-            self.assertEqual(job["upscale_params"]["target_height"], 896)
+        with patch("app.api.os.path.exists", return_value=True):
+            resp = api.upscale(
+                {"source_job_id": source_id, "model": "seedvr2-3b", "scale": 2}
+            )
+
+        job = api._get_job(resp["job_id"])
+        self.assertEqual(job["type"], "upscale")
+        self.assertEqual(job["source_job_id"], source_id)
+        self.assertEqual(job["upscale_params"]["model"], "seedvr2-3b")
+        self.assertEqual(job["upscale_params"]["scale"], 2)
+        self.assertEqual(job["upscale_params"]["target_width"], 1792)
+        self.assertEqual(job["upscale_params"]["target_height"], 896)
+        self.assertEqual(job["source_output_path"], "/fake/out2.mp4")
+        self.assertEqual(job["payload"]["source_output_path"], "/fake/out2.mp4")
