@@ -4,7 +4,22 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
 panowan_env_runtime
 
+log() {
+    printf '[startup][%s] %s\n' "$(date '+%H:%M:%S')" "$*"
+}
+
+run_timed() {
+    local label="$1"
+    shift
+    local started_at="${SECONDS}"
+    log "BEGIN: ${label}"
+    "$@"
+    local elapsed="$((SECONDS - started_at))"
+    log "DONE : ${label} (${elapsed}s)"
+}
+
 cd "${PANOWAN_APP_DIR}"
+log "Working directory: ${PANOWAN_APP_DIR}"
 
 # ── Dev mode: validate mounted source and sync Python environment ─────────────
 if [[ "${DEV_MODE:-0}" == "1" ]]; then
@@ -15,46 +30,51 @@ if [[ "${DEV_MODE:-0}" == "1" ]]; then
     fi
     if [[ -z "${UV_LINK_MODE:-}" ]]; then
         export UV_LINK_MODE=copy
-        echo "[dev] UV_LINK_MODE not set; defaulting to copy to avoid cross-filesystem hardlink warnings."
+        log "[dev] UV_LINK_MODE not set; defaulting to copy to avoid cross-filesystem hardlink warnings."
     fi
-    echo "[dev] Using shared uv cache at ${UV_CACHE_DIR:-/root/.cache/uv}"
+    log "[dev] Using shared uv cache at ${UV_CACHE_DIR:-/root/.cache/uv}"
     if [[ -f "uv.lock" ]]; then
-        echo "[dev] Syncing PanoWan dependencies (uv sync --locked --link-mode=copy)..."
-        uv sync --locked --link-mode=copy
+        log "[dev] uv.lock detected. Running locked dependency sync."
+        run_timed "uv sync --locked --link-mode=copy" uv sync --locked --link-mode=copy
     else
-        echo "[dev] uv.lock not found; running uv sync --link-mode=copy without --locked."
-        uv sync --link-mode=copy
+        log "[dev] uv.lock not found; running unlocked dependency sync."
+        run_timed "uv sync --link-mode=copy" uv sync --link-mode=copy
     fi
 fi
 
 skip_model_download=false
 if [[ "${DEV_MODE:-0}" == "1" ]] && [[ "${DEV_SKIP_DOWNLOAD_MODELS:-0}" == "1" ]]; then
     skip_model_download=true
-    echo "[dev] DEV_SKIP_DOWNLOAD_MODELS=1, skipping model and LoRA downloads."
+    log "[dev] DEV_SKIP_DOWNLOAD_MODELS=1, skipping model and LoRA downloads."
 fi
 
+log "Checking model files in ${WAN_MODEL_PATH} and $(dirname "${LORA_CHECKPOINT_PATH}")"
 if [[ "${skip_model_download}" != true ]] && ([[ ! -f "${WAN_DIFFUSION_FILE}" ]] || [[ ! -f "${WAN_T5_FILE}" ]]); then
-    echo "Downloading Wan model weights into ${WAN_MODEL_PATH}..."
+    log "Wan model weights missing. Downloading into ${WAN_MODEL_PATH} (this can take several minutes)."
     export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
     mkdir -p "${WAN_MODEL_PATH}"
-    uvx --from="huggingface_hub[cli]" hf download \
-        Wan-AI/Wan2.1-T2V-1.3B \
-        --local-dir "${WAN_MODEL_PATH}" \
-        --max-workers "${HF_MAX_WORKERS:-8}"
+    run_timed "hf download Wan-AI/Wan2.1-T2V-1.3B" \
+        uvx --from="huggingface_hub[cli]" hf download \
+            Wan-AI/Wan2.1-T2V-1.3B \
+            --local-dir "${WAN_MODEL_PATH}" \
+            --max-workers "${HF_MAX_WORKERS:-8}"
+else
+    log "Wan model weights already present."
 fi
 
 lora_dir="$(dirname "${LORA_CHECKPOINT_PATH}")"
 
 if [[ "${skip_model_download}" != true ]] && [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
-    echo "Downloading PanoWan LoRA weights into ${lora_dir}..."
+    log "PanoWan LoRA checkpoint missing. Downloading into ${lora_dir}."
     mkdir -p "${lora_dir}"
     lora_downloaded=false
     for i in 1 2 3; do
-        if bash ./scripts/download-panowan.sh "${lora_dir}"; then
+        log "LoRA download attempt ${i}/3"
+        if run_timed "download-panowan.sh attempt ${i}" bash ./scripts/download-panowan.sh "${lora_dir}"; then
             lora_downloaded=true
             break
         fi
-        echo "Attempt ${i} failed, waiting 30s..."
+        log "Attempt ${i} failed, waiting 30s before retry..."
         sleep 30
     done
 
@@ -62,6 +82,8 @@ if [[ "${skip_model_download}" != true ]] && [[ ! -f "${LORA_CHECKPOINT_PATH}" ]
         echo "Failed to download PanoWan LoRA weights after 3 attempts." >&2
         exit 1
     fi
+else
+    log "PanoWan LoRA checkpoint already present."
 fi
 
 # Optional pagecache warm-up: set VMTOUCH_MODELS=1 in .env to enable.
@@ -70,7 +92,7 @@ fi
 # service startup.
 if [[ "${VMTOUCH_MODELS:-0}" == "1" ]]; then
     if command -v vmtouch &>/dev/null; then
-        echo "Warming pagecache for model files (background)..."
+        log "Warming pagecache for model files (background)."
         vmtouch -t "${WAN_MODEL_PATH}" "${lora_dir}" &>/dev/null &
     else
         echo "WARNING: VMTOUCH_MODELS=1 but vmtouch is not installed, skipping."
@@ -78,4 +100,5 @@ if [[ "${VMTOUCH_MODELS:-0}" == "1" ]]; then
 fi
 
 cd /app
+log "Runtime prerequisites ready. Launching API service..."
 exec python3 -m app.main
