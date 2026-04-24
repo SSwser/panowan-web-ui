@@ -29,4 +29,4 @@ if [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
     bash ./scripts/download-panowan.sh "${LORA_DIR}"
 fi
 
-echo "Model download complete: ${MODEL_ROOT}"
+echo "Host model download complete: ${MODEL_ROOT}. Use 'make setup-models' (compose model-setup role) for the production runtime layout."

@@ -43,9 +43,16 @@ panowan_env_tool_defaults() {
 }
 
 panowan_env_runtime() {
-  export PANOWAN_APP_DIR="${PANOWAN_APP_DIR:-/app/PanoWan}"
-  export WAN_MODEL_PATH="${WAN_MODEL_PATH:-./models/Wan-AI/Wan2.1-T2V-1.3B}"
+  export SERVICE_ROLE="${SERVICE_ROLE:-api}"
+  export RUNTIME_DIR="${RUNTIME_DIR:-/app/runtime}"
+  export MODEL_ROOT="${MODEL_ROOT:-/models}"
+  export PANOWAN_ENGINE_DIR="${PANOWAN_ENGINE_DIR:-/engines/panowan}"
+  export WAN_MODEL_PATH="${WAN_MODEL_PATH:-${MODEL_ROOT}/Wan-AI/Wan2.1-T2V-1.3B}"
   export WAN_DIFFUSION_FILE="${WAN_DIFFUSION_FILE:-${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors}"
   export WAN_T5_FILE="${WAN_T5_FILE:-${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth}"
-  export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-./models/PanoWan/latest-lora.ckpt}"
+  export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-${MODEL_ROOT}/PanoWan/latest-lora.ckpt}"
+  export OUTPUT_DIR="${OUTPUT_DIR:-${RUNTIME_DIR}/outputs}"
+  export JOB_STORE_PATH="${JOB_STORE_PATH:-${RUNTIME_DIR}/jobs.json}"
+  export UPSCALE_MODEL_DIR="${UPSCALE_MODEL_DIR:-${MODEL_ROOT}/upscale}"
+  export UPSCALE_OUTPUT_DIR="${UPSCALE_OUTPUT_DIR:-${OUTPUT_DIR}}"
 }
