@@ -112,7 +112,7 @@ def generate_video(payload: dict) -> dict:
     try:
         process = subprocess.Popen(
             cmd,
-            cwd=settings.panowan_app_dir,
+            cwd=settings.panowan_engine_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
