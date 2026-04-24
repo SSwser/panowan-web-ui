@@ -1,23 +1,10 @@
-DEV ?= 0
-COMPOSE_FILE ?= docker-compose.yml
-ifeq ($(DEV),1)
-COMPOSE_FILE := docker-compose-dev.yml
-endif
-
-UP_FLAGS ?=
-
 DOCKER ?= bash scripts/docker-proxy.sh
-
-COMPOSE ?= $(DOCKER) compose -f $(COMPOSE_FILE)
+COMPOSE_PROD ?= $(DOCKER) compose -f docker-compose.yml
+COMPOSE_DEV ?= $(DOCKER) compose -f docker-compose.yml -f docker-compose-dev.yml
 SERVICE_URL ?= http://localhost:8000
 TAG ?= latest
-UV_CACHE_VOLUME_NAME ?= panowan-uv-cache
 export TAG
 
-# Build-time mirror overrides (leave empty for official sources).
-# Examples:
-#   make build APT_MIRROR=mirrors.tuna.tsinghua.edu.cn PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
-#   make build APT_MIRROR=mirrors.aliyun.com PYPI_INDEX=https://mirrors.aliyun.com/pypi/simple
 APT_MIRROR ?=
 PYPI_INDEX ?=
 BUILD_ARGS := $(if $(APT_MIRROR),--build-arg APT_MIRROR=$(APT_MIRROR)) $(if $(PYPI_INDEX),--build-arg PYPI_INDEX=$(PYPI_INDEX))
@@ -34,10 +21,9 @@ export $(1) := $(shell $(NORMALIZE_BIND_PATH) "$($(1))")
 endif
 endef
 
-$(eval $(call normalize_bind_var,PANOWAN_HOST_DIR))
 $(eval $(call normalize_bind_var,MODEL_ROOT))
 
-.PHONY: init submodule env test build up down logs health doctor download-models docker-env
+.PHONY: init submodule env test build build-dev setup-models up up-dev down down-dev logs logs-dev health doctor download-models docker-env
 
 init: env submodule
 
@@ -48,20 +34,34 @@ env:
 	@if [ ! -f .env ]; then cp .env.example .env; fi
 
 test:
-	python3 -m unittest discover -s tests
+	python -m unittest discover -s tests
 
 build:
-	$(COMPOSE) build $(BUILD_ARGS)
+	$(COMPOSE_PROD) build $(BUILD_ARGS)
+
+build-dev:
+	$(COMPOSE_DEV) build $(BUILD_ARGS)
+
+setup-models:
+	$(COMPOSE_PROD) run --rm --profile setup model-setup
 
 up:
-	@if [ "$(DEV)" = "1" ]; then $(DOCKER) volume create $(UV_CACHE_VOLUME_NAME) >/dev/null; fi
-	$(COMPOSE) up -d $(UP_FLAGS)
+	$(COMPOSE_PROD) up -d $(UP_FLAGS)
+
+up-dev:
+	$(COMPOSE_DEV) up -d $(UP_FLAGS)
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE_PROD) down
+
+down-dev:
+	$(COMPOSE_DEV) down
 
 logs:
-	$(COMPOSE) logs -f
+	$(COMPOSE_PROD) logs -f
+
+logs-dev:
+	$(COMPOSE_DEV) logs -f
 
 health:
 	SERVICE_URL="$(SERVICE_URL)" bash scripts/health.sh
@@ -74,6 +74,7 @@ download-models:
 
 docker-env:
 	@echo "DOCKER=$(DOCKER)"
-	@echo "COMPOSE_FILE=$(COMPOSE_FILE)"
+	@echo "COMPOSE_PROD=$(COMPOSE_PROD)"
+	@echo "COMPOSE_DEV=$(COMPOSE_DEV)"
 	@echo "TAG=$(TAG)"
 	@$(DOCKER) version --format '{{.Server.Version}}' 2>/dev/null || echo "docker daemon unavailable"
