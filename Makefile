@@ -14,6 +14,14 @@ TAG ?= latest
 UV_CACHE_VOLUME_NAME ?= panowan-uv-cache
 export TAG
 
+# Build-time mirror overrides (leave empty for official sources).
+# Examples:
+#   make build APT_MIRROR=mirrors.tuna.tsinghua.edu.cn PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
+#   make build APT_MIRROR=mirrors.aliyun.com PYPI_INDEX=https://mirrors.aliyun.com/pypi/simple
+APT_MIRROR ?=
+PYPI_INDEX ?=
+BUILD_ARGS := $(if $(APT_MIRROR),--build-arg APT_MIRROR=$(APT_MIRROR)) $(if $(PYPI_INDEX),--build-arg PYPI_INDEX=$(PYPI_INDEX))
+
 ifneq (,$(wildcard .env))
 include .env
 endif
@@ -43,7 +51,7 @@ test:
 	python3 -m unittest discover -s tests
 
 build:
-	$(COMPOSE) build
+	$(COMPOSE) build $(BUILD_ARGS)
 
 up:
 	@if [ "$(DEV)" = "1" ]; then $(DOCKER) volume create $(UV_CACHE_VOLUME_NAME) >/dev/null; fi
