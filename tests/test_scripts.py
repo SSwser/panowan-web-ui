@@ -28,10 +28,9 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertNotIn("hf download", script)
         self.assertNotIn("download-panowan.sh", script)
 
-    def test_start_local_uses_panowan_engine_dir_not_legacy_app_dir(self):
-        script = self.read_script("start-local.sh")
-        self.assertIn("${PANOWAN_ENGINE_DIR}", script)
-        self.assertNotIn("PANOWAN_APP_DIR", script)
+    def test_start_worker_supports_vmtouch(self):
+        script = self.read_script("start-worker.sh")
+        self.assertIn("VMTOUCH_MODELS", script)
 
     def test_docker_proxy_forwards_compose_interpolation_vars_to_wsl(self):
         script = self.read_script("docker-proxy.sh")

@@ -24,7 +24,7 @@ endef
 
 $(eval $(call normalize_bind_var,MODEL_ROOT))
 
-.PHONY: init submodule env test build setup-models up down logs health doctor download-models docker-env prune
+.PHONY: init submodule env test build setup-models up down logs health doctor docker-env prune
 
 init: env submodule
 
@@ -67,9 +67,6 @@ health:
 
 doctor:
 	bash scripts/doctor.sh
-
-download-models:
-	bash scripts/download-models.sh
 
 docker-env:
 	@echo "DOCKER=$(DOCKER)"

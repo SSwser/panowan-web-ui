@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 panowan_env_repo_root() {
-  cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
+  cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd
 }
 
 panowan_env_load_dotenv() {
@@ -22,7 +22,7 @@ panowan_env_host() {
   export REPO_ROOT="${REPO_ROOT:-${repo_root}}"
   export SERVICE_URL="${SERVICE_URL:-http://localhost:8000}"
   export MODEL_ROOT="${MODEL_ROOT:-${REPO_ROOT}/data/models}"
-  # Clone/cache path for download-models.sh and other host-side scripts.
+  # Clone/cache path for host-side model setup scripts.
   # NOT the same as the git submodule at third_party/PanoWan used by dev compose —
   # keeping them separate avoids the submodule's .git file (vs directory) confusing
   # repo-detection logic, and lets prod scripts clone/cache independently.

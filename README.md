@@ -77,10 +77,16 @@ PanoWan Worker 的发展目标是成为一个 engine-oriented video generation p
 ```text
 .
 ├── app/
-│   ├── api.py          # 当前 HTTP API 路由
-│   ├── generator.py    # 当前视频生成逻辑
-│   ├── main.py         # 当前服务入口
+│   ├── api.py          # HTTP API 路由
+│   ├── api_service.py  # API 服务入口
+│   ├── worker_service.py # Worker 服务入口
+│   ├── generator.py    # 视频生成逻辑
+│   ├── upscaler.py     # 视频超分辨率
+│   ├── process_runner.py # 子进程管理
+│   ├── sse.py          # Server-Sent Events
+│   ├── paths.py        # 路径常量
 │   ├── settings.py     # 环境变量配置
+│   ├── models/         # 模型注册与下载
 │   └── static/
 │       └── index.html  # Web UI
 ├── data/
@@ -91,8 +97,12 @@ PanoWan Worker 的发展目标是成为一个 engine-oriented video generation p
 │   └── panowan-architecture.md
 ├── scripts/
 │   ├── doctor.sh       # 环境诊断脚本
-│   ├── download-models.sh
-│   └── health.sh
+│   ├── health.sh      # 服务健康检查
+│   ├── model-setup.sh  # 模型下载（compose profile 方式）
+│   ├── check-runtime.sh # Worker 启动前运行时检查
+│   ├── start-api.sh    # API 容器入口
+│   ├── start-worker.sh # Worker 容器入口
+│   └── docker-proxy.sh # Docker CLI 代理（WSL 兼容）
 ├── third_party/
 │   └── PanoWan/        # 当前默认 vendor engine
 ├── tests/
@@ -177,9 +187,9 @@ make up
 开发模式（源码挂载 + dev 镜像）：
 
 ```bash
-make build-dev
-make up-dev
-make logs-dev
+make build DEV=1
+make up DEV=1
+make logs DEV=1
 ```
 
 开发 override 通过 `docker-compose-dev.yml` 注入，仅作为开发便利层，不改变默认产品拓扑。
@@ -318,13 +328,13 @@ make env           # initialize .env
 make doctor        # diagnose host Docker/GPU/model state
 make setup-models  # run one-shot model setup container
 make build         # build production api + worker images
-make build-dev     # build development api + worker images
+make build DEV=1   # build development api + worker images
 make up            # start split production topology
-make up-dev        # start split topology with dev overrides
+make up DEV=1      # start split topology with dev overrides
 make down          # stop production topology
-make down-dev      # stop development topology
+make down DEV=1    # stop development topology
 make logs          # follow production logs
-make logs-dev      # follow development logs
+make logs DEV=1    # follow development logs
 make health        # check API health endpoint
 make test          # run unit tests
 ```
@@ -396,9 +406,9 @@ python3 -m unittest discover -s tests
 开发运行使用 dev override：
 
 ```bash
-make build-dev
-make up-dev
-make logs-dev
+make build DEV=1
+make up DEV=1
+make logs DEV=1
 ```
 
 该流程会启用源码 bind mount 和 dev 目标镜像，保持与生产拓扑一致的 API / worker-panowan 拆分。
