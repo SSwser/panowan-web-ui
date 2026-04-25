@@ -98,7 +98,15 @@ class HuggingFaceProvider:
 
 
 class SubmoduleProvider:
-    """Validates third_party-backed assets that are built into the image."""
+    """Validates third_party-backed assets that are built into the image.
+
+    Submodule artifacts are populated by `git submodule update --init` (run as
+    part of `make init` / `make setup-submodules`) before this provider is
+    invoked, so on the host they are guaranteed to already exist — no download
+    is needed.  In the container they are bind-mounted from the host submodule
+    checkout, so they are also guaranteed to exist.  This provider therefore
+    validates only; it never downloads anything.
+    """
 
     def _require_present(self, spec: ModelSpec) -> None:
         for file_check in spec.files:
@@ -110,6 +118,8 @@ class SubmoduleProvider:
                 )
 
     def ensure(self, spec: ModelSpec) -> None:
+        # Submodules are populated by `make setup-submodules` before this runs;
+        # nothing to download here — only validate that the files are present.
         self._require_present(spec)
 
     def verify(self, spec: ModelSpec) -> None:

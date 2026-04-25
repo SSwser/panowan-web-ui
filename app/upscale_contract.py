@@ -22,12 +22,12 @@ File-path conventions:
 # entrypoint that prepends ``vendor/`` to ``sys.path`` and delegates to
 # ``inference_realesrgan_video.main()``.
 REALESRGAN_ENGINE_FILES: tuple[str, ...] = (
-    "realesrgan/vendor/__main__.py",
-    "realesrgan/vendor/inference_realesrgan_video.py",
-    "realesrgan/vendor/realesrgan/__init__.py",
-    "realesrgan/vendor/realesrgan/utils.py",
-    "realesrgan/vendor/realesrgan/archs/__init__.py",
-    "realesrgan/vendor/realesrgan/archs/srvgg_arch.py",
+    "vendor/__main__.py",
+    "vendor/inference_realesrgan_video.py",
+    "vendor/realesrgan/__init__.py",
+    "vendor/realesrgan/utils.py",
+    "vendor/realesrgan/archs/__init__.py",
+    "vendor/realesrgan/archs/srvgg_arch.py",
 )
 
 # Weight folder name under MODEL_ROOT. Kept as a constant so upscaler command

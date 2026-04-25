@@ -140,7 +140,7 @@ class UpscaleEngineTests(unittest.TestCase):
                 "scale": 2,
                 "target_width": None,
                 "target_height": None,
-                "engine_dir": "/engines/upscale",
+                "engine_dir": settings.upscale_engine_dir,
                 "weights_dir": settings.upscale_weights_dir,
                 "timeout_seconds": 1800,
                 "should_cancel": cancel_probe,

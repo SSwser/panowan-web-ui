@@ -1,4 +1,5 @@
 import os
+from pathlib import PurePath
 from dataclasses import dataclass
 
 from .paths import container_child, container_join
@@ -6,20 +7,18 @@ from .paths import container_child, container_join
 
 def _in_container() -> bool:
     """Best-effort detection of whether we're running inside a Docker container."""
-    # Docker sets these indicators; absence means host-side execution.
     if os.path.isfile("/.dockerenv"):
         return True
     try:
         return "docker" in os.readline("/proc/1/cgroup")
     except (OSError, AttributeError):
         pass
-    # SERVICE_ROLE is injected by docker-compose.yml environment blocks.
     return bool(os.getenv("SERVICE_ROLE"))
 
 
-# Host-side defaults — used when running outside a container (e.g. make init).
-_HOST_MODEL_ROOT = os.path.join(os.getcwd(), "data", "models")
-_HOST_RUNTIME_DIR = os.path.join(os.getcwd(), "data", "runtime")
+# Host-side project roots (submodule checkouts live under these).
+_HOST_ROOT = os.path.dirname(os.path.abspath(__file__)).rsplit(os.sep + "app", 1)[0]
+_HOST_THIRD_PARTY = os.path.join(_HOST_ROOT, "third_party")
 
 
 @dataclass(frozen=True)
@@ -72,14 +71,24 @@ class Settings:
 
 def load_settings() -> Settings:
     in_container = _in_container()
-    # When running on the host (e.g. make init → python -m app.backends install),
-    # MODEL_ROOT defaults to ./data/models so that file-existence checks find
-    # locally downloaded models. Inside a container the path is /models, which
-    # is the mount point mapped by docker-compose.yml.
-    runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime" if in_container else _HOST_RUNTIME_DIR)
-    model_root = os.getenv("MODEL_ROOT", "/models" if in_container else _HOST_MODEL_ROOT)
+
+    # Host-side: ./data/models  | Container: /models (docker-compose bind-mount)
+    model_root = os.getenv("MODEL_ROOT", "/models" if in_container else os.path.join(_HOST_ROOT, "data", "models"))
+    runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime" if in_container else os.path.join(_HOST_ROOT, "data", "runtime"))
     output_dir = os.getenv("OUTPUT_DIR", container_child(runtime_dir, "outputs"))
-    panowan_engine_dir = os.getenv("PANOWAN_ENGINE_DIR", "/engines/panowan")
+
+    # Engine dirs: host-side points to submodule checkouts; container points to bind-mount roots.
+    # PanoWan: host=third_party/PanoWan          | container=/engines/panowan
+    # Upscale:  host=third_party/Upscale/realesrgan | container=/engines/upscale
+    panowan_engine_dir = os.getenv(
+        "PANOWAN_ENGINE_DIR",
+        "/engines/panowan" if in_container else os.path.join(_HOST_THIRD_PARTY, "PanoWan")
+    )
+    upscale_engine_dir = os.getenv(
+        "UPSCALE_ENGINE_DIR",
+        "/engines/upscale" if in_container else os.path.join(_HOST_THIRD_PARTY, "Upscale", "realesrgan")
+    )
+
     return Settings(
         service_title="PanoWan Product Runtime API",
         service_version="1.0.0",
@@ -108,7 +117,7 @@ def load_settings() -> Settings:
         default_num_inference_steps=int(os.getenv("DEFAULT_NUM_INFERENCE_STEPS", "50")),
         default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
         default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
-        upscale_engine_dir=os.getenv("UPSCALE_ENGINE_DIR", "/engines/upscale"),
+        upscale_engine_dir=upscale_engine_dir,
         # ADR 0003: weights live under model-family folders directly under
         # MODEL_ROOT (e.g. /models/Real-ESRGAN/...), not under a functional
         # /models/upscale/ grouping. Default = MODEL_ROOT.
