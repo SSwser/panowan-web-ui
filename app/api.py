@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from .sse import broadcast_job_event, subscribe, unsubscribe
 
 from .generator import extract_prompt, resolve_inference_params
-from .upscaler import UPSCALE_BACKENDS, get_available_upscale_backends
-from .jobs import LocalJobBackend, now_iso
+from .upscaler import UPSCALE_BACKENDS
+from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
 from .settings import settings
 
 
@@ -53,6 +53,7 @@ _configure_access_log_filter()
 
 
 _job_backend: LocalJobBackend | None = None
+_worker_registry: LocalWorkerRegistry | None = None
 _JOB_EVENT_FIELDS = (
     "job_id",
     "status",
@@ -87,6 +88,16 @@ def get_job_backend() -> LocalJobBackend:
     if _job_backend is None or _job_backend.job_store_path != settings.job_store_path:
         _job_backend = LocalJobBackend(settings.job_store_path)
     return _job_backend
+
+
+def get_worker_registry() -> LocalWorkerRegistry:
+    global _worker_registry
+    if (
+        _worker_registry is None
+        or _worker_registry.worker_store_path != settings.worker_store_path
+    ):
+        _worker_registry = LocalWorkerRegistry(settings.worker_store_path)
+    return _worker_registry
 
 
 def _create_job_record(
@@ -143,22 +154,21 @@ def _resolve_upscale_params(
     source_job: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, Any]:
     model_name = payload.get("model", "realesrgan-animevideov3")
-    if model_name not in UPSCALE_BACKENDS:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
-
-    available_backends = get_available_upscale_backends(
-        settings.upscale_engine_dir,
-        settings.upscale_weights_dir,
-    )
-    backend = available_backends.get(model_name)
+    backend = UPSCALE_BACKENDS.get(model_name)
     if backend is None:
-        available = ", ".join(available_backends.keys()) or "none"
+        known = ", ".join(sorted(UPSCALE_BACKENDS.keys())) or "none"
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Model '{model_name}' is not available in this worker runtime. "
-                f"Available models: {available}"
-            ),
+            detail=f"Unknown model: {model_name}. Known models: {known}",
+        )
+
+    if not get_worker_registry().has_upscale_model(
+        model_name,
+        stale_seconds=settings.worker_stale_seconds,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=f"No online worker currently advertises upscale model: {model_name}",
         )
 
     target_width = payload.get("target_width")

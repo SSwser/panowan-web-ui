@@ -3,8 +3,9 @@ import socket
 import time
 
 from app.engines import EngineRegistry, PanoWanEngine, UpscaleEngine
-from app.jobs import LocalJobBackend
+from app.jobs import LocalJobBackend, LocalWorkerRegistry
 from app.settings import settings
+from app.upscaler import get_available_upscale_backends
 
 
 JOB_TYPE_TO_ENGINE = {
@@ -36,6 +37,33 @@ def _worker_still_owns_job(
         current is not None
         and current.get("status") == "running"
         and current.get("worker_id") == worker_id
+    )
+
+
+def publish_worker_state(
+    registry: LocalWorkerRegistry,
+    worker_id: str,
+    engine_registry: EngineRegistry,
+    running_jobs: int = 0,
+) -> dict:
+    caps = []
+    for engine in engine_registry.all():
+        caps.extend(engine.capabilities)
+    available_upscale_models = sorted(
+        get_available_upscale_backends(
+            settings.upscale_engine_dir,
+            settings.upscale_weights_dir,
+        ).keys()
+    )
+    return registry.upsert_worker(
+        worker_id,
+        {
+            "status": "online",
+            "capabilities": sorted(set(caps)),
+            "available_upscale_models": available_upscale_models,
+            "max_concurrent_jobs": settings.max_concurrent_jobs,
+            "running_jobs": running_jobs,
+        },
     )
 
 
@@ -74,20 +102,23 @@ def run_one_job(
 def main() -> None:
     worker_id = os.getenv("WORKER_ID", f"{socket.gethostname()}:{os.getpid()}")
     backend = LocalJobBackend(settings.job_store_path)
+    worker_registry = LocalWorkerRegistry(settings.worker_store_path)
     registry = build_registry()
 
     for engine in registry.all():
         engine.validate_runtime()
 
-    caps = []
-    for engine in registry.all():
-        caps.extend(engine.capabilities)
+    worker_state = publish_worker_state(worker_registry, worker_id, registry)
+    caps = worker_state["capabilities"]
+    upscale_models = worker_state["available_upscale_models"]
 
     print(
-        f"Worker started: id={worker_id} capabilities={','.join(caps)}",
+        f"Worker started: id={worker_id} capabilities={','.join(caps)} "
+        f"upscale_models={','.join(upscale_models) or 'none'}",
         flush=True,
     )
     while True:
+        publish_worker_state(worker_registry, worker_id, registry)
         worked = run_one_job(backend, registry, worker_id)
         if not worked:
             time.sleep(settings.worker_poll_interval_seconds)

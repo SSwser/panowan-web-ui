@@ -398,6 +398,53 @@ class UpscaleVideoTests(unittest.TestCase):
         self.assertEqual(result["scale"], 2)
         mock_popen.assert_called_once()
 
+    @patch("app.upscaler.os.makedirs")
+    @patch("app.upscaler.os.replace")
+    @patch("app.upscaler.os.path.isfile", return_value=True)
+    @patch("app.upscaler.os.listdir", return_value=["video_out.mp4"])
+    @patch("app.upscaler.os.path.exists")
+    @patch("app.upscaler.run_cancellable_process")
+    def test_upscale_video_relocates_realesrgan_output_to_expected_path(
+        self,
+        mock_run,
+        mock_exists,
+        mock_listdir,
+        mock_isfile,
+        mock_replace,
+        mock_makedirs,
+    ) -> None:
+        mock_result = SimpleNamespace(
+            process=SimpleNamespace(returncode=0),
+            stdout=b"ok",
+            stderr=b"",
+        )
+        mock_run.return_value = mock_result
+
+        def exists(path: str) -> bool:
+            if path == "/output/video.mp4":
+                return False
+            if path == "/output/video_out.mp4":
+                return True
+            return False
+
+        mock_exists.side_effect = exists
+
+        result = upscale_video(
+            input_path="/input/video.mp4",
+            output_path="/output/video.mp4",
+            model="realesrgan-animevideov3",
+            scale=2,
+            engine_dir="/engines/upscale",
+            weights_dir="/models",
+        )
+
+        self.assertEqual(result["output_path"], "/output/video.mp4")
+        expected_candidate = os.path.join("/output", "video_out.mp4")
+        mock_replace.assert_called_once_with(
+            expected_candidate,
+            "/output/video.mp4",
+        )
+
     @patch("app.process_runner.subprocess.Popen")
     def test_upscale_video_raises_on_nonzero_returncode(self, mock_popen) -> None:
         mock_proc = MagicMock()

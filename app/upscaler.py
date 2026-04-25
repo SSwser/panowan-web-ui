@@ -317,6 +317,67 @@ def get_available_upscale_backends(
     }
 
 
+def _list_files(directory: str) -> set[str]:
+    try:
+        return {
+            os.path.join(directory, name)
+            for name in os.listdir(directory)
+            if os.path.isfile(os.path.join(directory, name))
+        }
+    except FileNotFoundError:
+        return set()
+
+
+def _expected_realesrgan_output_path(input_path: str, output_dir: str) -> str:
+    basename = os.path.splitext(os.path.basename(input_path))[0]
+    return os.path.join(output_dir, f"{basename}_out.mp4")
+
+
+def _expected_realbasicvsr_output_path(output_dir: str) -> str:
+    return os.path.join(output_dir, "output.mp4")
+
+
+def _discover_output_path(
+    backend: UpscalerBackend,
+    input_path: str,
+    output_path: str,
+    output_dir: str,
+    existing_files: set[str],
+) -> str | None:
+    if backend.name == "realbasicvsr":
+        candidate = _expected_realbasicvsr_output_path(output_dir)
+        if os.path.exists(candidate):
+            return candidate
+
+    if backend.name == "realesrgan-animevideov3":
+        candidate = _expected_realesrgan_output_path(input_path, output_dir)
+        if os.path.exists(candidate):
+            return candidate
+
+    candidates = {
+        os.path.join(output_dir, name)
+        for name in os.listdir(output_dir)
+        if os.path.isfile(os.path.join(output_dir, name))
+    }
+    new_files = sorted(
+        candidates - existing_files,
+        key=os.path.getmtime,
+        reverse=True,
+    )
+    if new_files:
+        return new_files[0]
+
+    video_files = [
+        path
+        for path in candidates
+        if path.lower().endswith((".mp4", ".mov", ".mkv", ".avi"))
+    ]
+    if len(video_files) == 1:
+        return video_files[0]
+
+    return None
+
+
 class UpscaleCancelledError(RuntimeError):
     """Raised when a running upscale subprocess is cancelled by the worker."""
 
@@ -372,6 +433,8 @@ def upscale_video(
         raise ValueError(validation_error)
 
     output_dir = os.path.dirname(output_path)
+    os.makedirs(output_dir, exist_ok=True)
+    pre_existing_files = _list_files(output_dir)
     cmd = backend.build_command(
         input_path=input_path,
         output_dir=output_dir,
@@ -408,7 +471,16 @@ def upscale_video(
         raise RuntimeError(f"Upscaling failed: {output_tail(stderr)}")
 
     if not os.path.exists(output_path):
-        raise FileNotFoundError(f"Output file not created at {output_path}")
+        candidate = _discover_output_path(
+            backend,
+            input_path=input_path,
+            output_path=output_path,
+            output_dir=output_dir,
+            existing_files=pre_existing_files,
+        )
+        if candidate is None:
+            raise FileNotFoundError(f"Output file not created at {output_path}")
+        os.replace(candidate, output_path)
 
     return {
         "output_path": output_path,

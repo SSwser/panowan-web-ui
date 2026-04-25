@@ -42,27 +42,83 @@ panowan_env_tool_defaults() {
   export PYTHON="${PYTHON:-python3}"
 }
 
+panowan_log_option() {
+  printf '[Options]  %-12s = %s\n' "$1" "${2:-}"
+}
+
+panowan_log_group() {
+  echo "[Options]"
+  echo "[Options]  ─── $1 ─────────────────────────────────────────"
+}
+
+panowan_log_section() {
+  local group="$1"
+  shift
+  panowan_log_group "$group"
+  for item in "$@"; do
+    local label="${item%%:*}"
+    local var="${item#*:}"
+    panowan_log_option "$label" "${!var}"
+  done
+}
+
 panowan_log_config() {
-  local role="${SERVICE_ROLE:-unknown}"
-  local banner="[config] role=${role}"
-  banner="${banner} | runtime=${RUNTIME_DIR}"
-  banner="${banner} | model_root=${MODEL_ROOT}"
-  banner="${banner} | wan_model=${WAN_MODEL_PATH}"
-  banner="${banner} | lora=${LORA_CHECKPOINT_PATH}"
-  if [[ "${role}" == "worker" ]]; then
-    banner="${banner} | engine=${PANOWAN_ENGINE_DIR}"
-    banner="${banner} | gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'none/unavailable')"
-    banner="${banner} | vmtouch=${VMTOUCH_MODELS:-0}"
-    banner="${banner} | timeout=${GENERATION_TIMEOUT_SECONDS:-1800}s"
-    banner="${banner} | max_concurrent=${MAX_CONCURRENT_JOBS:-1}"
+  local service_role="${SERVICE_ROLE:-unknown}"
+  local runtime="${RUNTIME_DIR}"
+  local model_root="${MODEL_ROOT}"
+  local wan_model="${WAN_MODEL_PATH}"
+  local lora="${LORA_CHECKPOINT_PATH}"
+  local upscale_dir="${UPSCALE_ENGINE_DIR}"
+  local upscale_wt="${UPSCALE_WEIGHTS_DIR}"
+  local upscale_out="${UPSCALE_OUTPUT_DIR}"
+  local worker_db="${WORKER_STORE_PATH}"
+  local engine="${PANOWAN_ENGINE_DIR}"
+  local output_dir="${OUTPUT_DIR}"
+  local gpu="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'none/unavailable')"
+  local vmtouch="${VMTOUCH_MODELS:-0}"
+  local timeout="${GENERATION_TIMEOUT_SECONDS:-1800}s"
+  local ups_timeout="${UPSCALE_TIMEOUT_SECONDS:-1800}s"
+  local max_concurrent="${MAX_CONCURRENT_JOBS:-1}"
+  local host="${HOST:-0.0.0.0}"
+  local port="${PORT:-8000}"
+  local job_store="${JOB_STORE_PATH}"
+  local stale_sec="${WORKER_STALE_SECONDS:-60}"
+  local dev_mode="${DEV_MODE:-0}"
+
+  echo "[Options] ────────────────────────────────────────────"
+
+  panowan_log_section "Common" \
+    role:service_role \
+    runtime:runtime \
+    model_root:model_root \
+    worker_db:worker_db
+
+  panowan_log_section "Model" \
+    wan_model:wan_model \
+    lora:lora \
+    upscale_dir:upscale_dir \
+    upscale_wt:upscale_wt \
+    upscale_out:upscale_out
+
+  if [[ "${service_role}" == "worker" ]]; then
+    panowan_log_section "Worker" \
+      engine:engine \
+      gpu:gpu \
+      output_dir:output_dir \
+      vmtouch:vmtouch \
+      timeout:timeout \
+      ups_timeout:ups_timeout \
+      max_concurrent:max_concurrent
+  elif [[ "${service_role}" == "api" ]]; then
+    panowan_log_section "API" \
+      host:host \
+      port:port \
+      job_store:job_store \
+      stale_sec:stale_sec \
+      dev_mode:dev_mode
   fi
-  if [[ "${role}" == "api" ]]; then
-    banner="${banner} | host=${HOST:-0.0.0.0}"
-    banner="${banner} | port=${PORT:-8000}"
-    banner="${banner} | job_store=${JOB_STORE_PATH}"
-    banner="${banner} | dev_mode=${DEV_MODE:-0}"
-  fi
-  echo "${banner}"
+
+  echo "[Options] ────────────────────────────────────────────"
 }
 
 panowan_env_runtime() {
@@ -76,10 +132,13 @@ panowan_env_runtime() {
   export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-${MODEL_ROOT}/PanoWan/latest-lora.ckpt}"
   export OUTPUT_DIR="${OUTPUT_DIR:-${RUNTIME_DIR}/outputs}"
   export JOB_STORE_PATH="${JOB_STORE_PATH:-${RUNTIME_DIR}/jobs.json}"
+  export WORKER_STORE_PATH="${WORKER_STORE_PATH:-${RUNTIME_DIR}/workers.json}"
+  export WORKER_STALE_SECONDS="${WORKER_STALE_SECONDS:-60}"
   export UPSCALE_ENGINE_DIR="${UPSCALE_ENGINE_DIR:-/engines/upscale}"
   # ADR 0003: backend weights live under model-family folders directly under
   # MODEL_ROOT (e.g. ${MODEL_ROOT}/Real-ESRGAN/...), not under a functional
   # upscale/ grouping. Default = MODEL_ROOT.
   export UPSCALE_WEIGHTS_DIR="${UPSCALE_WEIGHTS_DIR:-${MODEL_ROOT}}"
   export UPSCALE_OUTPUT_DIR="${UPSCALE_OUTPUT_DIR:-${OUTPUT_DIR}}"
+  export UPSCALE_TIMEOUT_SECONDS="${UPSCALE_TIMEOUT_SECONDS:-1800}"
 }

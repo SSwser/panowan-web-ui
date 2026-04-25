@@ -15,6 +15,7 @@ class Settings:
     runtime_dir: str
     output_dir: str
     job_store_path: str
+    worker_store_path: str
     default_prompt: str
     generation_timeout_seconds: int
     default_num_inference_steps: int
@@ -28,6 +29,7 @@ class Settings:
     host: str
     port: int
     worker_poll_interval_seconds: float
+    worker_stale_seconds: float
 
     @property
     def wan_model_absolute_path(self) -> str:
@@ -73,6 +75,9 @@ def load_settings() -> Settings:
         job_store_path=os.getenv(
             "JOB_STORE_PATH", container_child(runtime_dir, "jobs.json")
         ),
+        worker_store_path=os.getenv(
+            "WORKER_STORE_PATH", container_child(runtime_dir, "workers.json")
+        ),
         default_prompt=os.getenv(
             "DEFAULT_PROMPT", "A beautiful mountain landscape at sunset"
         ),
@@ -93,6 +98,7 @@ def load_settings() -> Settings:
         worker_poll_interval_seconds=float(
             os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")
         ),
+        worker_stale_seconds=float(os.getenv("WORKER_STALE_SECONDS", "60")),
     )
 
 
