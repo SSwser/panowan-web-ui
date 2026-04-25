@@ -1,9 +1,11 @@
 """Upscaler module: Protocol-based backend registry for video upscaling."""
 
 import os
+import shutil
 import subprocess
 import sys
-from typing import Any, Callable, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
 from app.paths import container_join
 from app.process_runner import (
@@ -11,6 +13,15 @@ from app.process_runner import (
     output_tail,
     run_cancellable_process,
 )
+
+
+@dataclass(frozen=True)
+class UpscaleBackendAssets:
+    """Files and commands a backend needs to be considered available."""
+
+    engine_files: tuple[str, ...]
+    weight_files: tuple[str, ...]
+    required_commands: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -21,6 +32,7 @@ class UpscalerBackend(Protocol):
     display_name: str
     default_scale: int
     max_scale: int
+    assets: UpscaleBackendAssets
 
     def build_command(
         self,
@@ -48,6 +60,13 @@ class RealESRGANBackend:
     display_name: str = "Real-ESRGAN (Fast)"
     default_scale: int = 2
     max_scale: int = 4
+    assets: UpscaleBackendAssets = UpscaleBackendAssets(
+        engine_files=(
+            "realesrgan/adapter.py",
+            "realesrgan/vendor/inference_realesrgan_video.py",
+        ),
+        weight_files=("realesrgan/realesr-animevideov3.pth",),
+    )
 
     def build_command(
         self,
@@ -59,9 +78,7 @@ class RealESRGANBackend:
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
-        script = container_join(
-            engine_dir, "realesrgan", "inference_realesrgan_video.py"
-        )
+        script = container_join(engine_dir, "realesrgan", "adapter.py")
         return [
             sys.executable,
             script,
@@ -97,6 +114,13 @@ class RealBasicVSRBackend:
     display_name: str = "RealBasicVSR (High Quality)"
     default_scale: int = 4
     max_scale: int = 4
+    assets: UpscaleBackendAssets = UpscaleBackendAssets(
+        engine_files=(
+            "realbasicvsr/adapter.py",
+            "realbasicvsr/configs/realbasicvsr_x4.py",
+        ),
+        weight_files=("realbasicvsr/RealBasicVSR_x4.pth",),
+    )
 
     def build_command(
         self,
@@ -144,6 +168,16 @@ class SeedVR2Backend:
     display_name: str = "SeedVR2-3B (SOTA)"
     default_scale: int = 2
     max_scale: int = 4
+    assets: UpscaleBackendAssets = UpscaleBackendAssets(
+        engine_files=("seedvr2/projects/inference_seedvr2_3b.py",),
+        weight_files=(
+            "seedvr2/seedvr2_ema_3b.pth",
+            "seedvr2/ema_vae.pth",
+            "seedvr2/pos_emb.pt",
+            "seedvr2/neg_emb.pt",
+        ),
+        required_commands=("torchrun",),
+    )
 
     def build_command(
         self,
@@ -206,6 +240,36 @@ UPSCALE_BACKENDS: dict[str, UpscalerBackend] = {
     "realbasicvsr": RealBasicVSRBackend(),
     "seedvr2-3b": SeedVR2Backend(),
 }
+
+
+def _has_backend_assets(
+    backend: UpscalerBackend,
+    engine_dir: str,
+    weights_dir: str,
+) -> bool:
+    for relative_path in backend.assets.engine_files:
+        if not os.path.exists(container_join(engine_dir, relative_path)):
+            return False
+    for relative_path in backend.assets.weight_files:
+        if not os.path.exists(container_join(weights_dir, relative_path)):
+            return False
+    for command in backend.assets.required_commands:
+        if shutil.which(command) is None:
+            return False
+    return True
+
+
+def get_available_upscale_backends(
+    engine_dir: str,
+    weights_dir: str,
+    backends: Mapping[str, UpscalerBackend] = UPSCALE_BACKENDS,
+) -> dict[str, UpscalerBackend]:
+    """Return registered backends whose declared assets/commands are present."""
+    return {
+        name: backend
+        for name, backend in backends.items()
+        if _has_backend_assets(backend, engine_dir, weights_dir)
+    }
 
 
 class UpscaleCancelledError(RuntimeError):

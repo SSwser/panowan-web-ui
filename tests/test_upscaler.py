@@ -1,6 +1,8 @@
 import os
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +12,7 @@ from app.upscaler import (
     UpscaleCancelledError,
     RealESRGANBackend,
     SeedVR2Backend,
+    get_available_upscale_backends,
     upscale_video,
 )
 
@@ -31,6 +34,69 @@ class UpscalerRegistryTests(unittest.TestCase):
             self.assertGreaterEqual(backend.max_scale, backend.default_scale)
 
 
+class UpscalerAvailabilityTests(unittest.TestCase):
+    def test_registered_backends_declare_assets(self) -> None:
+        for backend in UPSCALE_BACKENDS.values():
+            self.assertTrue(backend.assets.engine_files)
+            self.assertIsInstance(backend.assets.weight_files, tuple)
+            self.assertIsInstance(backend.assets.required_commands, tuple)
+
+    def test_backend_unavailable_when_engine_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+            Path(weights_dir, "realesrgan").mkdir(parents=True)
+            Path(weights_dir, "realesrgan", "realesr-animevideov3.pth").write_text("x")
+
+            available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertNotIn("realesrgan-animevideov3", available)
+
+    def test_backend_unavailable_when_weight_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+            Path(engine_dir, "realesrgan", "vendor").mkdir(parents=True)
+            Path(engine_dir, "realesrgan", "adapter.py").write_text("x")
+            Path(
+                engine_dir, "realesrgan", "vendor", "inference_realesrgan_video.py"
+            ).write_text("x")
+
+            available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertNotIn("realesrgan-animevideov3", available)
+
+    def test_backend_available_when_assets_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+            Path(engine_dir, "realesrgan", "vendor").mkdir(parents=True)
+            Path(engine_dir, "realesrgan", "adapter.py").write_text("x")
+            Path(
+                engine_dir, "realesrgan", "vendor", "inference_realesrgan_video.py"
+            ).write_text("x")
+            Path(weights_dir, "realesrgan").mkdir(parents=True)
+            Path(weights_dir, "realesrgan", "realesr-animevideov3.pth").write_text("x")
+
+            available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertIn("realesrgan-animevideov3", available)
+
+    def test_backend_unavailable_when_required_command_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+            Path(engine_dir, "seedvr2", "projects").mkdir(parents=True)
+            Path(
+                engine_dir, "seedvr2", "projects", "inference_seedvr2_3b.py"
+            ).write_text("x")
+            Path(weights_dir, "seedvr2").mkdir(parents=True)
+            for filename in (
+                "seedvr2_ema_3b.pth",
+                "ema_vae.pth",
+                "pos_emb.pt",
+                "neg_emb.pt",
+            ):
+                Path(weights_dir, "seedvr2", filename).write_text("x")
+
+            with patch("app.upscaler.shutil.which", return_value=None):
+                available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertNotIn("seedvr2-3b", available)
+
+
 class RealESRGANBackendTests(unittest.TestCase):
     def setUp(self) -> None:
         self.backend = RealESRGANBackend()
@@ -44,8 +110,7 @@ class RealESRGANBackendTests(unittest.TestCase):
             scale=2,
         )
         cmd_str = " ".join(cmd)
-        self.assertIn("inference_realesrgan_video.py", cmd_str)
-        self.assertIn("/engines/upscale/realesrgan", cmd_str)
+        self.assertIn("/engines/upscale/realesrgan/adapter.py", cmd_str)
         self.assertIn("-i", cmd_str)
         self.assertIn("/input/video.mp4", cmd_str)
         self.assertIn("-o", cmd_str)
