@@ -32,8 +32,10 @@ PanoWan Worker 的发展目标是成为一个 engine-oriented video generation p
 
 详细架构说明见：
 
-- [Product Runtime Architecture](docs/architecture/product-runtime.md)
-- [ADR 0001: Engine-oriented Product Runtime](docs/architecture/adr/0001-engine-oriented-product-runtime.md)
+- [Runtime Architecture](docs/runtime-architecture.md)
+- [ADR 0001: Engine-oriented Product Runtime](docs/adr/0001-engine-oriented-product-runtime.md)
+- [ADR 0002: Model Download Manager](docs/adr/0002-model-download-manager.md)
+- [ADR 0003: Backend Runtime Contracts](docs/adr/0003-backend-runtime-contract.md)
 
 ---
 

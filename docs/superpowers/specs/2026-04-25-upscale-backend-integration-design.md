@@ -4,23 +4,27 @@
 
 `UpscaleEngine` is the product-level engine for all video upscaling. Individual model families such as RealESRGAN, RealBasicVSR, and SeedVR2 are backend implementations under that engine, not separate top-level engines.
 
-This spec defines the target design for integrating multiple upscale backends without preserving temporary bridge behavior or exposing models that cannot run. It complements `2026-04-25-model-download-manager-design.md`; it does not replace the general Model Download Manager.
+This spec defines the long-lived target design for integrating upscale backends without preserving temporary bridge behavior or exposing models that cannot run. It complements `2026-04-25-model-download-manager-design.md` and ADR 0003; it does not replace the general Model Download Manager.
 
 ## Goals
 
 - Keep one stable product-level engine path: `third_party/Upscale` in the repository and `/engines/upscale` in the container.
-- Keep one stable weights root: `/models/upscale`.
-- Store each backend under a deterministic backend subdirectory.
+- Keep one stable weights root: `MODEL_ROOT` (`/models` in containers).
+- Store each backend under a deterministic backend subdirectory inside UpscaleEngine.
+- Store model weights directly by model family under `MODEL_ROOT`, not under a functional `upscale/` grouping.
 - Separate registered backend metadata from runtime-available backend choices.
-- Prevent API/UI from offering an upscale model unless its scripts, weights, and runtime dependencies are available.
+- Prevent API/UI from offering an upscale model unless its scripts, weights, commands, and backend runtime dependencies are available.
 - Make RealESRGAN the first fully supported backend, while allowing RealBasicVSR and SeedVR2 to be integrated later without changing the public engine contract.
 
 ## Non-goals
 
 - Do not support legacy top-level `third_party/RealESRGAN`, `/engines/realesrgan`, or `REALESRGAN_*` runtime names.
 - Do not keep compatibility shims for `upscale_model_dir`.
+- Do not keep `/models/upscale/<backend>` as the long-term weight layout.
+- Do not keep `realesrgan/adapter.py` as a permanent bridge.
+- Do not keep an extra `vendor/Real-ESRGAN/` nesting layer inside the RealESRGAN backend.
+- Do not introduce external backend manifests until multiple backend profiles are production-ready or non-Python tooling needs to consume backend metadata.
 - Do not force RealBasicVSR and SeedVR2 into the default runtime image before their dependency and GPU requirements are fully validated.
-- Do not treat a bridge launcher as sufficient runtime readiness.
 
 ## Directory Contract
 
@@ -32,8 +36,16 @@ third_party/
 └── Upscale/
     ├── README.md
     ├── realesrgan/
-    │   ├── adapter.py
+    │   ├── requirements.txt
     │   └── vendor/
+    │       ├── __main__.py
+    │       ├── inference_realesrgan_video.py
+    │       └── realesrgan/
+    │           ├── __init__.py
+    │           ├── utils.py
+    │           └── archs/
+    │               ├── __init__.py
+    │               └── srvgg_arch.py
     ├── realbasicvsr/
     │   ├── adapter.py
     │   ├── configs/
@@ -50,14 +62,18 @@ Container layout:
 ├── panowan/
 └── upscale/
     ├── realesrgan/
+    │   └── vendor/
+    │       ├── __main__.py
+    │       ├── inference_realesrgan_video.py
+    │       └── realesrgan/
     ├── realbasicvsr/
     └── seedvr2/
 
 /models/
-└── upscale/
-    ├── realesrgan/
-    ├── realbasicvsr/
-    └── seedvr2/
+├── Wan-AI/
+├── PanoWan/
+└── Real-ESRGAN/
+    └── realesr-animevideov3.pth
 ```
 
 The top-level `third_party/Upscale` directory is repository-managed. Individual backend directories may contain vendored source snapshots, thin adapters, or future submodules, but callers must only depend on the stable `/engines/upscale/<backend>` contract.
@@ -101,14 +117,14 @@ class UpscalerBackend(Protocol):
     ) -> str | None: ...
 ```
 
-`engine_files` are relative to `/engines/upscale`. `weight_files` are relative to `/models/upscale`. This keeps backend checks independent of host/container path differences.
+`engine_files` are relative to `/engines/upscale`. `weight_files` are relative to `UPSCALE_WEIGHTS_DIR`, which defaults to `/models`. This keeps backend checks independent of host/container path differences while allowing model-family directories directly under `MODEL_ROOT`.
 
 ## Registry Semantics
 
 There are two backend sets:
 
 1. **Registered backends** — all backend implementations known to the codebase.
-2. **Available backends** — registered backends whose runtime assets and required commands pass validation in the current environment.
+2. **Available backends** — registered backends whose runtime assets, commands, and Python runtime probes pass validation in the current environment.
 
 `UPSCALE_BACKENDS` remains the registered catalog. API and UI must use available backends, not the raw catalog, when accepting or presenting model choices.
 
@@ -128,7 +144,16 @@ A backend is available only when:
 - every required engine file exists under `engine_dir`,
 - every required weight file exists under `weights_dir`,
 - every required command is discoverable with `shutil.which`,
-- and any backend-specific runtime probe passes.
+- backend runtime Python exists when declared,
+- and backend-specific import probes pass when declared.
+
+## Backend Manifest Decision
+
+External backend manifests are intentionally deferred.
+
+A manifest could eventually move metadata such as files, weights, commands, runtime Python, required modules, display name, and scale limits into backend-local config files. That is not yet necessary because RealESRGAN is currently the only backend close to production-ready, and command construction remains backend-specific Python logic.
+
+Revisit manifests when at least three backend profiles are production-ready, or when Docker/CI/non-Python tooling must consume backend metadata directly.
 
 ## Backend Contracts
 
@@ -139,38 +164,45 @@ Backend name: `realesrgan-animevideov3`
 Required engine files:
 
 ```text
-realesrgan/adapter.py
-realesrgan/vendor/Real-ESRGAN/inference_realesrgan_video.py
-realesrgan/vendor/Real-ESRGAN/realesrgan/__init__.py
-realesrgan/vendor/Real-ESRGAN/realesrgan/utils.py
-realesrgan/vendor/Real-ESRGAN/realesrgan/archs/__init__.py
-realesrgan/vendor/Real-ESRGAN/realesrgan/archs/srvgg_arch.py
+realesrgan/vendor/__main__.py
+realesrgan/vendor/inference_realesrgan_video.py
+realesrgan/vendor/realesrgan/__init__.py
+realesrgan/vendor/realesrgan/utils.py
+realesrgan/vendor/realesrgan/archs/__init__.py
+realesrgan/vendor/realesrgan/archs/srvgg_arch.py
 ```
 
 Required weight files:
 
 ```text
-realesrgan/realesr-animevideov3.pth
+Real-ESRGAN/realesr-animevideov3.pth
 ```
 
-RealESRGAN is the first backend to make fully available. The deterministic adapter executes a trimmed vendored runtime bundle from the backend directory. The vendored package keeps only the anime-video inference path and slim `__init__.py` files so importing `realesrgan` does not pull training/data/version modules.
+RealESRGAN is the first backend to make fully available. The deterministic entrypoint is `vendor/__main__.py`, which prepends the flat vendored runtime bundle to `sys.path` and imports `inference_realesrgan_video.main()`. The vendored package keeps only the anime-video inference path and slim `__init__.py` files so importing `realesrgan` does not pull training/data/version modules.
 
 Command shape:
 
 ```text
-/opt/venvs/upscale-realesrgan/bin/python /engines/upscale/realesrgan/adapter.py \
+/opt/venvs/upscale-realesrgan/bin/python /engines/upscale/realesrgan/vendor/__main__.py \
   -i <input_path> \
   -o <output_dir> \
   -n realesr-animevideov3 \
-    --model_path /models/upscale/realesrgan/realesr-animevideov3.pth \
-    -s <scale>
+  --model_path /models/Real-ESRGAN/realesr-animevideov3.pth \
+  -s <scale>
 ```
 
 Runtime availability probe:
 
 - runtime python: `/opt/venvs/upscale-realesrgan/bin/python`
-- required modules: `cv2`, `ffmpeg`, `tqdm`
-- required command: `ffmpeg`
+- required Python modules: `cv2`, `ffmpeg`, `tqdm`
+- required system command: `ffmpeg`
+
+Runtime dependency policy:
+
+- Dependencies are installed during Docker build from `third_party/Upscale/realesrgan/requirements.txt`.
+- Runtime `pip install` is not allowed.
+- `torch` is reused from the worker runtime through the backend venv configuration.
+- `basicsr` is not installed when the vendored runner is trimmed to avoid `basicsr` imports.
 
 ### RealBasicVSR
 
@@ -186,7 +218,7 @@ realbasicvsr/configs/realbasicvsr_x4.py
 Required weight files:
 
 ```text
-realbasicvsr/RealBasicVSR_x4.pth
+RealBasicVSR/RealBasicVSR_x4.pth
 ```
 
 RealBasicVSR is not available until its OpenMMLab dependency stack is validated in the worker image. It may remain registered but unavailable.
@@ -196,7 +228,7 @@ Command shape:
 ```text
 python /engines/upscale/realbasicvsr/adapter.py \
   /engines/upscale/realbasicvsr/configs/realbasicvsr_x4.py \
-  /models/upscale/realbasicvsr/RealBasicVSR_x4.pth \
+  /models/RealBasicVSR/RealBasicVSR_x4.pth \
   <input_path> \
   <output_path> \
   --max-seq-len 30
@@ -215,10 +247,10 @@ seedvr2/projects/inference_seedvr2_3b.py
 Required weight files:
 
 ```text
-seedvr2/seedvr2_ema_3b.pth
-seedvr2/ema_vae.pth
-seedvr2/pos_emb.pt
-seedvr2/neg_emb.pt
+SeedVR2/seedvr2_ema_3b.pth
+SeedVR2/ema_vae.pth
+SeedVR2/pos_emb.pt
+SeedVR2/neg_emb.pt
 ```
 
 Required commands:
@@ -253,8 +285,12 @@ ModelSpec(
     source_ref="",
     target_dir=settings.upscale_engine_dir,
     files=[
-        FileCheck(path="realesrgan/adapter.py"),
+        FileCheck(path="realesrgan/vendor/__main__.py"),
         FileCheck(path="realesrgan/vendor/inference_realesrgan_video.py"),
+        FileCheck(path="realesrgan/vendor/realesrgan/__init__.py"),
+        FileCheck(path="realesrgan/vendor/realesrgan/utils.py"),
+        FileCheck(path="realesrgan/vendor/realesrgan/archs/__init__.py"),
+        FileCheck(path="realesrgan/vendor/realesrgan/archs/srvgg_arch.py"),
     ],
 )
 
@@ -262,7 +298,7 @@ ModelSpec(
     name="upscale-realesrgan-weights",
     source_type="http",
     source_ref="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
-    target_dir=container_child(settings.upscale_weights_dir, "realesrgan"),
+    target_dir=container_child(settings.upscale_weights_dir, "Real-ESRGAN"),
     files=[FileCheck(path="realesr-animevideov3.pth", sha256="<verified-sha256>")],
 )
 ```
@@ -301,8 +337,10 @@ upscale_models=realesrgan-animevideov3,seedvr2-3b
 ## Error Handling
 
 - Missing backend engine files produce a setup-oriented error pointing to `/engines/upscale/<backend>`.
-- Missing weights produce a setup-oriented error pointing to `/models/upscale/<backend>` and `make setup-models`.
+- Missing weights produce a setup-oriented error pointing to `/models/<ModelFamily>` and `make setup-models`.
 - Missing commands produce a dependency-oriented error naming the command and backend.
+- Missing backend runtime Python produces a dependency-oriented error naming the expected interpreter.
+- Failed module probes produce a dependency-oriented error naming the backend runtime.
 - Parameter validation remains backend-specific and happens before job creation.
 - Subprocess failure remains a runtime error with stderr tail preserved.
 
@@ -313,13 +351,15 @@ Update tests around three distinct concepts:
 1. **Registered catalog tests**
    - all intended backend classes can be instantiated,
    - each backend declares assets,
-   - command construction uses `/engines/upscale/<backend>` and `/models/upscale/<backend>`.
+   - command construction uses `/engines/upscale/<backend>` and `/models/<ModelFamily>`.
 
 2. **Availability tests**
    - backend is unavailable when an engine file is missing,
    - backend is unavailable when a weight file is missing,
    - backend is unavailable when a required command is missing,
-   - backend is available when all declared assets exist.
+   - backend is unavailable when runtime Python is missing,
+   - backend is unavailable when the module probe fails,
+   - backend is available when all declared assets and runtime probes pass.
 
 3. **API / worker tests**
    - `/upscale` rejects registered-but-unavailable models,
@@ -333,30 +373,33 @@ Existing tests that assert all three backend names are directly usable should be
 
 This is a breaking internal cleanup.
 
-- Replace the current RealESRGAN bridge launcher with `realesrgan/adapter.py` plus deterministic vendored runner path.
+- Replace the current RealESRGAN bridge launcher with `realesrgan/vendor/__main__.py` plus deterministic vendored runner path.
 - Remove environment-variable runner discovery from the target RealESRGAN execution path.
-- Change `RealESRGANBackend.build_command()` to call `realesrgan/adapter.py`.
+- Remove `realesrgan/adapter.py` once `build_command()` targets `vendor/__main__.py`.
+- Flatten `realesrgan/vendor/Real-ESRGAN/*` into `realesrgan/vendor/*`.
+- Change `RealESRGANBackend.build_command()` to call `realesrgan/vendor/__main__.py` with the backend venv Python.
+- Change RealESRGAN model path to `/models/Real-ESRGAN/realesr-animevideov3.pth`.
 - Add backend asset declarations to each backend class.
 - Add availability filtering and use it in API validation.
 - Change `UpscaleEngine.validate_runtime()` to require at least one available backend.
-- Update `app/models/specs.py` to verify RealESRGAN adapter and vendored runner, not just the old bridge file.
-- Fix stale plan text that still points `UPSCALE_WEIGHTS_DIR` to `${MODEL_ROOT}/realesrgan`.
-- Update the model-download-manager spec line about RealBasicVSR and SeedVR2 so they use backend subdirectories under `upscale_engine_dir` and `upscale_weights_dir`, not separate top-level engine dirs.
+- Update `app/models/specs.py` to verify RealESRGAN `vendor/__main__.py` and the flattened vendored runner/package files.
+- Update runtime environment defaults so `UPSCALE_WEIGHTS_DIR` defaults to `MODEL_ROOT`.
 
 ## Recommended Implementation Order
 
 1. Introduce backend asset metadata and availability filtering.
 2. Update API and worker validation to use available backends.
-3. Convert RealESRGAN from bridge launcher to deterministic adapter + vendored runner contract.
-4. Update ModelSpec declarations for RealESRGAN engine and weights.
-5. Rewrite tests to separate registered catalog from available runtime.
-6. Keep RealBasicVSR and SeedVR2 registered only if they have complete asset metadata; otherwise remove them from user-facing availability until their profiles are implemented.
+3. Convert RealESRGAN from bridge launcher to deterministic `vendor/__main__.py` + flat vendored runner contract.
+4. Flatten weights from `/models/upscale/realesrgan/` to `/models/Real-ESRGAN/`.
+5. Update ModelSpec declarations for RealESRGAN engine and weights.
+6. Rewrite tests to separate registered catalog from available runtime.
+7. Keep RealBasicVSR and SeedVR2 registered only if they have complete asset metadata; otherwise remove them from user-facing availability until their profiles are implemented.
 
 ## Open Verification Items
 
 These are not design choices; they must be verified during implementation:
 
 - the authoritative RealESRGAN weight source and expected checksum,
-- the exact upstream RealESRGAN video runner file set needed by the adapter,
+- the exact trimmed RealESRGAN video runner file set needed by `vendor/__main__.py`,
 - the RealBasicVSR dependency versions compatible with the worker image,
 - SeedVR2 runtime requirements for the target GPU environment.

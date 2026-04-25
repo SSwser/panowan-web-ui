@@ -69,4 +69,4 @@ The initial implementation uses Dockerfile targets `api`, `worker-panowan`, `dev
 
 ## Related Documents
 
-- [Product Runtime Architecture](../product-runtime.md)
+- [Runtime Architecture](../runtime-architecture.md)
