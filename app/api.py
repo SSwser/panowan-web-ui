@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from .sse import broadcast_job_event, subscribe, unsubscribe
 
 from .generator import extract_prompt, resolve_inference_params
-from .upscaler import UPSCALE_BACKENDS
+from .upscaler import UPSCALE_BACKENDS, get_available_upscale_backends
 from .jobs import LocalJobBackend, now_iso
 from .settings import settings
 
@@ -143,9 +143,23 @@ def _resolve_upscale_params(
     source_job: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, Any]:
     model_name = payload.get("model", "realesrgan-animevideov3")
-    backend = UPSCALE_BACKENDS.get(model_name)
-    if backend is None:
+    if model_name not in UPSCALE_BACKENDS:
         raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
+
+    available_backends = get_available_upscale_backends(
+        settings.upscale_engine_dir,
+        settings.upscale_weights_dir,
+    )
+    backend = available_backends.get(model_name)
+    if backend is None:
+        available = ", ".join(available_backends.keys()) or "none"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Model '{model_name}' is not available in this worker runtime. "
+                f"Available models: {available}"
+            ),
+        )
 
     target_width = payload.get("target_width")
     target_height = payload.get("target_height")

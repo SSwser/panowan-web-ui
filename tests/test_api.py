@@ -16,6 +16,7 @@ if FASTAPI_AVAILABLE:
     from fastapi.responses import FileResponse
     from fastapi.testclient import TestClient
     from app import api
+    from app.upscaler import UPSCALE_BACKENDS
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
@@ -35,6 +36,15 @@ class ApiTests(unittest.TestCase):
         # Backend state lives on the per-test tmpdir job store; no module
         # globals to clear.
         self.client = TestClient(api.app)
+
+        # Default: assume all registered upscale backends are available.
+        # Individual tests override via patch("app.api.get_available_upscale_backends", ...).
+        self.available_backends_patch = patch(
+            "app.api.get_available_upscale_backends",
+            return_value=dict(UPSCALE_BACKENDS),
+        )
+        self.available_backends_patch.start()
+        self.addCleanup(self.available_backends_patch.stop)
 
     def test_healthcheck_reports_path_status(self) -> None:
         path_exists = {
@@ -388,6 +398,42 @@ class ApiTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 api.upscale({"source_job_id": "done-1", "model": "nonexistent"})
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_upscale_rejects_registered_but_unavailable_model(self) -> None:
+        self._seed_completed_source("done-unavail", output_path="/out.mp4")
+
+        # Override the setUp default to simulate no available backends.
+        with patch("app.api.get_available_upscale_backends", return_value={}), \
+             patch("app.api.os.path.exists", return_value=True):
+            with self.assertRaises(HTTPException) as ctx:
+                api.upscale(
+                    {
+                        "source_job_id": "done-unavail",
+                        "model": "realesrgan-animevideov3",
+                    }
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("not available", ctx.exception.detail)
+
+    def test_upscale_accepts_available_model(self) -> None:
+        self._seed_completed_source("done-avail", output_path="/out.mp4")
+
+        with patch(
+            "app.api.get_available_upscale_backends",
+            return_value={
+                "realesrgan-animevideov3": UPSCALE_BACKENDS["realesrgan-animevideov3"]
+            },
+        ), patch("app.api.os.path.exists", return_value=True):
+            response = api.upscale(
+                {
+                    "source_job_id": "done-avail",
+                    "model": "realesrgan-animevideov3",
+                }
+            )
+
+        self.assertEqual(response["type"], "upscale")
+        self.assertEqual(response["upscale_params"]["model"], "realesrgan-animevideov3")
 
     def test_upscale_rejects_invalid_seedvr2_target_dimensions(self) -> None:
         self._seed_completed_source(
