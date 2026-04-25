@@ -195,9 +195,10 @@
       .history-header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-start;
         padding: 18px 32px 12px;
         border-bottom: 1px solid var(--border);
+        gap: 12px;
       }
 
       .history-header h2 {
@@ -207,6 +208,7 @@
       }
 
       .history-header .auto-badge {
+        margin-left: auto;
         font-size: 0.78rem;
         color: var(--muted);
         display: flex;
@@ -227,6 +229,20 @@
       }
 
       .dot.idle { background: var(--muted); animation: none; }
+
+      .btn-clear-failed {
+        font-size: 0.76rem;
+        padding: 4px 12px;
+        border: 1px solid var(--error);
+        border-radius: 6px;
+        color: var(--error);
+        background: transparent;
+        cursor: pointer;
+        transition: background 150ms, color 150ms;
+        font-family: inherit;
+      }
+      .btn-clear-failed:hover { background: var(--error-soft); }
+      .btn-clear-failed:disabled { opacity: 0.4; cursor: default; }
 
       table {
         width: 100%;
@@ -284,7 +300,9 @@
       .badge-unknown { color: var(--muted);   background: rgba(31,41,55,0.07); }
 
       .download-btn, .preview-btn {
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
+        white-space: nowrap;
         text-decoration: none;
         font-size: 0.82rem;
         font-weight: 700;
@@ -294,6 +312,14 @@
         cursor: pointer;
         border: none;
         font-family: inherit;
+      }
+
+      .action-buttons {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 6px;
+        white-space: nowrap;
       }
 
       .download-btn {
@@ -527,6 +553,7 @@
       <div class="panel">
         <div class="history-header">
           <h2>历史任务</h2>
+          <button id="clear-failed-btn" class="btn-clear-failed">清理失败任务</button>
           <span class="auto-badge">
             <span id="poll-dot" class="dot"></span>
             <span id="poll-label">自动刷新中</span>
@@ -574,7 +601,6 @@
         constructor() {
           this.es = null;
           this.reconnectTimer = null;
-          this.fallbackPollTimer = null;
         }
 
         connect() {
@@ -597,10 +623,15 @@
             this._renderIncremental();
           });
 
+          this.es.addEventListener("job_deleted", (e) => {
+            const { job_id } = JSON.parse(e.data);
+            delete _jobCache[job_id];
+            this._renderIncremental();
+          });
+
           this.es.onerror = () => {
             this.es.close();
             this.es = null;
-            this.startFallbackPoll();
             this.scheduleReconnect();
           };
         }
@@ -613,18 +644,6 @@
           setPollingIndicator(busy);
         }
 
-        startFallbackPoll() {
-          if (this.fallbackPollTimer) return;
-          this.fallbackPollTimer = setInterval(refreshJobs, 5000);
-        }
-
-        stopFallbackPoll() {
-          if (this.fallbackPollTimer) {
-            clearInterval(this.fallbackPollTimer);
-            this.fallbackPollTimer = null;
-          }
-        }
-
         scheduleReconnect() {
           if (this.reconnectTimer) return;
           this.reconnectTimer = setTimeout(() => {
@@ -632,7 +651,6 @@
             fetchJobs().then(jobs => {
               if (jobs) {
                 renderTable(jobs);
-                this.stopFallbackPoll();
                 this.connect();
               }
             });
@@ -720,8 +738,9 @@
           parts.push(`${job.upscale_params.scale}x`);
         }
         let duration = "";
-        if (job.created_at && job.finished_at) {
-          const secs = Math.round((new Date(job.finished_at) - new Date(job.created_at)) / 1000);
+        const startedAt = durationStartTime(job);
+        if (startedAt && job.finished_at) {
+          const secs = Math.round((new Date(job.finished_at) - startedAt) / 1000);
           duration = formatDuration(secs);
         }
         dialogMeta.innerHTML =
@@ -995,6 +1014,23 @@
         }
       }
 
+      // ── clear failed jobs ──
+      const clearFailedBtn = document.getElementById("clear-failed-btn");
+      clearFailedBtn.addEventListener("click", async () => {
+        const failedCount = Object.values(_jobCache).filter(j => j.status === "failed").length;
+        if (failedCount === 0) { alert("没有失败任务需要清理"); return; }
+        if (!confirm(`确认清理全部 ${failedCount} 个失败任务？`)) return;
+        clearFailedBtn.disabled = true;
+        try {
+          const res = await fetch("/jobs/failed", { method: "DELETE" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        } catch (err) {
+          alert(`清理失败: ${err}`);
+        } finally {
+          clearFailedBtn.disabled = false;
+        }
+      });
+
       // ── utilities ──
       function formatTime(iso) {
         if (!iso) return "-";
@@ -1014,12 +1050,16 @@
         return formatTime(job.created_at);
       }
 
-      function durationCell(job) {
-        if (!job.created_at) return "-";
+      function durationStartTime(job) {
+        return job.started_at ? new Date(job.started_at) : null;
+      }
 
-        const createdTime = new Date(job.created_at);
+      function durationCell(job) {
+        const startTime = durationStartTime(job);
+        if (!startTime) return "-";
+
         const endTime = job.finished_at ? new Date(job.finished_at) : new Date();
-        const secs = Math.round((endTime - createdTime) / 1000);
+        const secs = Math.round((endTime - startTime) / 1000);
 
         if (job.status === "completed" || job.status === "failed") {
           return formatDuration(secs);
@@ -1068,7 +1108,7 @@
         if (job.type === "upscale" && job.source_job_id) {
           parts.unshift(`<span style="font-size:0.72rem;color:var(--muted);">↑ ${escapeHtml(job.source_job_id.slice(0,6))}…</span>`);
         }
-        return parts.length ? parts.join(" ") : "-";
+        return parts.length ? `<span class="action-buttons">${parts.join(" ")}</span>` : "-";
       }
 
       function escapeHtml(str) {

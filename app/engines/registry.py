@@ -14,3 +14,6 @@ class EngineRegistry:
         if name not in self._engines:
             raise KeyError(f"Unknown engine: {name}")
         return self._engines[name]
+
+    def all(self) -> tuple[EngineAdapter, ...]:
+        return tuple(self._engines.values())

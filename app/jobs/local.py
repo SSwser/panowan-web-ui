@@ -26,6 +26,13 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _env_flag(name: str) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class LocalJobBackend:
     _ALLOWED_UPDATE_KEYS = frozenset(
         {
@@ -52,9 +59,12 @@ class LocalJobBackend:
         self._load_from_disk()
 
     def restore(self) -> None:
+        dev_mode = _env_flag("DEV_MODE")
         with self._locked_store():
             self._jobs = {
-                str(job_id): self._normalize_job_record(str(job_id), record)
+                str(job_id): self._normalize_job_record(
+                    str(job_id), record, restore=not dev_mode
+                )
                 for job_id, record in self._jobs.items()
                 if isinstance(record, dict)
             }
@@ -115,6 +125,30 @@ class LocalJobBackend:
         return self.update_job(
             job_id, status="failed", finished_at=now_iso(), error=error
         )
+
+    def delete_failed_jobs(self) -> list[str]:
+        """Remove all failed jobs from the store. Returns the deleted job IDs."""
+        with self._locked_store():
+            failed_ids = [
+                job_id
+                for job_id, job in self._jobs.items()
+                if job.get("status") == "failed"
+            ]
+            for job_id in failed_ids:
+                self._delete_job_artifacts_unlocked(self._jobs[job_id])
+                del self._jobs[job_id]
+            if failed_ids:
+                self._persist_unlocked()
+        return failed_ids
+
+    def _delete_job_artifacts_unlocked(self, job: dict[str, Any]) -> None:
+        output_path = job.get("output_path")
+        if not output_path or not os.path.isfile(output_path):
+            return
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
 
     def complete_job(self, job_id: str, output_path: str) -> dict[str, Any]:
         return self.update_job(

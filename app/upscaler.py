@@ -3,7 +3,14 @@
 import os
 import subprocess
 import sys
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
+
+from app.paths import container_join
+from app.process_runner import (
+    ProcessCancelledError,
+    output_tail,
+    run_cancellable_process,
+)
 
 
 @runtime_checkable
@@ -19,7 +26,8 @@ class UpscalerBackend(Protocol):
         self,
         input_path: str,
         output_dir: str,
-        model_dir: str,
+        engine_dir: str,
+        weights_dir: str,
         scale: int,
         target_width: int | None = None,
         target_height: int | None = None,
@@ -45,12 +53,15 @@ class RealESRGANBackend:
         self,
         input_path: str,
         output_dir: str,
-        model_dir: str,
+        engine_dir: str,
+        weights_dir: str,
         scale: int,
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
-        script = os.path.join(model_dir, "realesrgan", "inference_realesrgan_video.py")
+        script = container_join(
+            engine_dir, "realesrgan", "inference_realesrgan_video.py"
+        )
         return [
             sys.executable,
             script,
@@ -91,19 +102,17 @@ class RealBasicVSRBackend:
         self,
         input_path: str,
         output_dir: str,
-        model_dir: str,
+        engine_dir: str,
+        weights_dir: str,
         scale: int,
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
-        script = os.path.join(model_dir, "realbasicvsr", "inference_realbasicvsr.py")
-        config = os.path.join(
-            model_dir, "realbasicvsr", "configs", "realbasicvsr_x4.py"
-        )
-        checkpoint = os.path.join(
-            model_dir, "realbasicvsr", "experiments", "RealBasicVSR_x4.pth"
-        )
-        output_path = os.path.join(output_dir, "output.mp4")
+        backend_dir = container_join(engine_dir, "realbasicvsr")
+        script = container_join(backend_dir, "inference_realbasicvsr.py")
+        config = container_join(backend_dir, "configs", "realbasicvsr_x4.py")
+        checkpoint = container_join(weights_dir, "realbasicvsr", "RealBasicVSR_x4.pth")
+        output_path = container_join(output_dir, "output.mp4")
         return [
             sys.executable,
             script,
@@ -123,8 +132,7 @@ class RealBasicVSRBackend:
     ) -> str | None:
         if scale != 4:
             return (
-                f"{self.display_name} only supports 4x upscaling, "
-                f"got scale={scale}"
+                f"{self.display_name} only supports 4x upscaling, " f"got scale={scale}"
             )
         return None
 
@@ -141,20 +149,21 @@ class SeedVR2Backend:
         self,
         input_path: str,
         output_dir: str,
-        model_dir: str,
+        engine_dir: str,
+        weights_dir: str,
         scale: int,
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
-        script = os.path.join(
-            model_dir, "seedvr2", "projects", "inference_seedvr2_3b.py"
+        script = container_join(
+            engine_dir, "seedvr2", "projects", "inference_seedvr2_3b.py"
         )
         input_dir = os.path.dirname(input_path)
         res_w = str(target_width) if target_width else "896"
         res_h = str(target_height) if target_height else "448"
         return [
             "torchrun",
-            f"--nproc_per_node=1",
+            "--nproc_per_node=1",
             script,
             "--video_path",
             input_dir,
@@ -199,6 +208,10 @@ UPSCALE_BACKENDS: dict[str, UpscalerBackend] = {
 }
 
 
+class UpscaleCancelledError(RuntimeError):
+    """Raised when a running upscale subprocess is cancelled by the worker."""
+
+
 def upscale_video(
     input_path: str,
     output_path: str,
@@ -206,8 +219,10 @@ def upscale_video(
     scale: int = 2,
     target_width: int | None = None,
     target_height: int | None = None,
-    model_dir: str = "/app/data/models/upscale",
+    engine_dir: str = "/engines/upscale",
+    weights_dir: str = "/models/upscale",
     timeout_seconds: int = 1800,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Run a video upscaler backend as a subprocess.
 
@@ -218,8 +233,10 @@ def upscale_video(
         scale: Upscaling factor.
         target_width: Target output width (used by SeedVR2).
         target_height: Target output height (used by SeedVR2).
-        model_dir: Root directory containing model scripts and weights.
+        engine_dir: Root directory containing backend-specific inference scripts.
+        weights_dir: Root directory containing backend-specific model weight files.
         timeout_seconds: Maximum seconds to wait before killing the process.
+        should_cancel: Optional callback used by the worker to abort a running job.
 
     Returns:
         Dict with output_path, model, and scale.
@@ -249,7 +266,8 @@ def upscale_video(
     cmd = backend.build_command(
         input_path=input_path,
         output_dir=output_dir,
-        model_dir=model_dir,
+        engine_dir=engine_dir,
+        weights_dir=weights_dir,
         scale=scale,
         target_width=target_width,
         target_height=target_height,
@@ -257,24 +275,31 @@ def upscale_video(
 
     print(f"Upscaling: {' '.join(cmd)}", flush=True)
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        stdout, stderr = proc.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
-        raise TimeoutError(
-            f"Upscaling timed out after {timeout_seconds} seconds"
+        result = run_cancellable_process(
+            cmd,
+            timeout_seconds=timeout_seconds,
+            should_cancel=should_cancel,
+            text=False,
         )
+    except subprocess.TimeoutExpired:
+        raise TimeoutError(f"Upscaling timed out after {timeout_seconds} seconds")
+    except ProcessCancelledError as exc:
+        raise UpscaleCancelledError(
+            "Upscaling cancelled by user\n"
+            f"STDOUT:{output_tail(exc.stdout)}\n"
+            f"STDERR:{output_tail(exc.stderr)}"
+        ) from exc
+
+    proc = result.process
+    stdout = result.stdout
+    stderr = result.stderr
 
     if proc.returncode != 0:
-        stderr_tail = stderr[-500:].decode(errors="replace") if stderr else ""
-        raise RuntimeError(f"Upscaling failed: {stderr_tail}")
+        raise RuntimeError(f"Upscaling failed: {output_tail(stderr)}")
 
     if not os.path.exists(output_path):
-        raise FileNotFoundError(
-            f"Output file not created at {output_path}"
-        )
+        raise FileNotFoundError(f"Output file not created at {output_path}")
 
     return {
         "output_path": output_path,

@@ -1,7 +1,9 @@
 import asyncio
 import json
+import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -15,14 +17,63 @@ from .jobs import LocalJobBackend, now_iso
 from .settings import settings
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        get_job_backend().restore()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"WARNING: could not restore jobs from disk: {exc}", flush=True)
+    yield
+
+
 app = FastAPI(
     title=settings.service_title,
     description="Run PanoWan video generation inside a local Docker container.",
     version=settings.service_version,
+    lifespan=lifespan,
 )
 
 
+class _HealthCheckAccessFilter(logging.Filter):
+    """Suppress successful health probe access log lines from uvicorn."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return '"GET /health HTTP/1.1" 200' not in msg
+
+
+def _configure_access_log_filter() -> None:
+    logger = logging.getLogger("uvicorn.access")
+    if any(isinstance(flt, _HealthCheckAccessFilter) for flt in logger.filters):
+        return
+    logger.addFilter(_HealthCheckAccessFilter())
+
+
+_configure_access_log_filter()
+
+
 _job_backend: LocalJobBackend | None = None
+_JOB_EVENT_FIELDS = (
+    "job_id",
+    "status",
+    "type",
+    "prompt",
+    "params",
+    "output_path",
+    "created_at",
+    "started_at",
+    "finished_at",
+    "error",
+    "source_job_id",
+    "upscale_params",
+    "source_output_path",
+    "worker_id",
+    "download_url",
+)
+
+
+def _sse_event(event: str, payload: dict[str, Any]) -> dict[str, str]:
+    return {"event": event, "data": json.dumps(payload, ensure_ascii=False)}
 
 
 def get_job_backend() -> LocalJobBackend:
@@ -76,7 +127,7 @@ def _create_job_record(
 
 def _update_job(job_id: str, **updates: Any) -> dict[str, Any]:
     updated = get_job_backend().update_job(job_id, **updates)
-    broadcast_job_event("job_updated", {**updates, "job_id": job_id})
+    broadcast_job_event("job_updated", updated)
     return updated
 
 
@@ -84,12 +135,82 @@ def _get_job(job_id: str) -> dict[str, Any] | None:
     return get_job_backend().get_job(job_id)
 
 
-@app.on_event("startup")
-def on_startup() -> None:
-    try:
-        get_job_backend().restore()
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(f"WARNING: could not restore jobs from disk: {exc}", flush=True)
+def _job_event_snapshot(job: dict[str, Any]) -> dict[str, Any]:
+    return {field: job.get(field) for field in _JOB_EVENT_FIELDS}
+
+
+def _resolve_upscale_params(
+    source_job: dict[str, Any], payload: dict[str, Any]
+) -> dict[str, Any]:
+    model_name = payload.get("model", "realesrgan-animevideov3")
+    backend = UPSCALE_BACKENDS.get(model_name)
+    if backend is None:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
+
+    target_width = payload.get("target_width")
+    target_height = payload.get("target_height")
+    scale = payload.get("scale")
+
+    src_params = source_job.get("params", {})
+    src_w = src_params.get("width", 896)
+    src_h = src_params.get("height", 448)
+
+    if not scale and not target_width and not target_height:
+        scale = backend.default_scale
+    elif not scale:
+        if target_width:
+            scale = target_width // src_w
+        elif target_height:
+            scale = target_height // src_h
+        if scale and scale < 1:
+            scale = 1
+
+    if not scale:
+        scale = backend.default_scale
+
+    if target_width is None and target_height is None:
+        target_width = src_w * scale
+        target_height = src_h * scale
+
+    validation_error = backend.validate_params(
+        scale=scale,
+        target_width=target_width,
+        target_height=target_height,
+    )
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+
+    return {
+        "model": model_name,
+        "scale": scale,
+        "target_width": target_width,
+        "target_height": target_height,
+    }
+
+
+def _collect_job_store_events(
+    previous_snapshots: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
+    current_snapshots: dict[str, dict[str, Any]] = {}
+    events: list[dict[str, str]] = []
+
+    for job in get_job_backend().list_jobs():
+        job_id = str(job["job_id"])
+        snapshot = _job_event_snapshot(job)
+        current_snapshots[job_id] = snapshot
+
+        if job_id not in previous_snapshots:
+            events.append(_sse_event("job_created", job))
+            continue
+
+        if previous_snapshots[job_id] != snapshot:
+            events.append(_sse_event("job_updated", job))
+
+    for job_id in previous_snapshots:
+        if job_id not in current_snapshots:
+            events.append(_sse_event("job_deleted", {"job_id": job_id}))
+
+    return current_snapshots, events
 
 
 @app.get("/")
@@ -112,7 +233,6 @@ def healthcheck() -> dict:
         "service_started": True,
         "model_ready": model_ready,
         "panowan_engine_dir_exists": panowan_engine_dir_exists,
-        "panowan_app_dir_exists": panowan_engine_dir_exists,
         "wan_model_exists": wan_model_ready,
         "lora_exists": lora_exists,
     }
@@ -152,50 +272,10 @@ def upscale(payload: dict) -> dict:
     if not os.path.exists(source_job["output_path"]):
         raise HTTPException(status_code=400, detail="Source video file not found")
 
-    model_name = payload.get("model", "realesrgan-animevideov3")
-    backend = UPSCALE_BACKENDS.get(model_name)
-    if backend is None:
-        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
-
-    # Resolve scale
-    target_width = payload.get("target_width")
-    target_height = payload.get("target_height")
-    scale = payload.get("scale")
-
-    src_params = source_job.get("params", {})
-    src_w = src_params.get("width", 896)
-    src_h = src_params.get("height", 448)
-
-    if not scale and not target_width and not target_height:
-        scale = backend.default_scale
-    elif not scale:
-        if target_width:
-            scale = target_width // src_w
-        elif target_height:
-            scale = target_height // src_h
-        if scale and scale < 1:
-            scale = 1
-    if not scale:
-        scale = backend.default_scale
-
-    # Validate
-    validation_error = backend.validate_params(scale, src_w, src_h)
-    if validation_error:
-        raise HTTPException(status_code=400, detail=validation_error)
-
-    # Calculate target dimensions if not provided
-    if target_width is None and target_height is None:
-        target_width = src_w * scale
-        target_height = src_h * scale
+    upscale_params = _resolve_upscale_params(source_job, payload)
 
     job_id = str(uuid.uuid4())
     output_path = os.path.join(settings.upscale_output_dir, f"output_{job_id}.mp4")
-    upscale_params = {
-        "model": model_name,
-        "scale": scale,
-        "target_width": target_width,
-        "target_height": target_height,
-    }
     source_output_path = source_job["output_path"]
     job_payload = {
         "source_job_id": source_job_id,
@@ -238,18 +318,45 @@ async def job_events(request: Request) -> Any:
 
     async def event_generator():
         queue = subscribe()
+        known_jobs = {
+            job["job_id"]: _job_event_snapshot(job)
+            for job in get_job_backend().list_jobs()
+        }
+        loop = asyncio.get_running_loop()
+        last_heartbeat = loop.time()
         try:
             while True:
                 if await request.is_disconnected():
                     break
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                    event = await asyncio.wait_for(queue.get(), timeout=1)
+                    event_name = event.get("event")
+                    try:
+                        payload = json.loads(event.get("data", "{}"))
+                    except json.JSONDecodeError:
+                        payload = None
+
+                    if isinstance(payload, dict) and payload.get("job_id"):
+                        job_id = str(payload["job_id"])
+                        if event_name == "job_deleted":
+                            known_jobs.pop(job_id, None)
+                        elif event_name in {"job_created", "job_updated"}:
+                            known_jobs[job_id] = _job_event_snapshot(payload)
+
                     yield event
                 except asyncio.TimeoutError:
-                    yield {
-                        "event": "heartbeat",
-                        "data": json.dumps({"ts": now_iso()}),
-                    }
+                    known_jobs, store_events = _collect_job_store_events(known_jobs)
+                    if store_events:
+                        for event in store_events:
+                            yield event
+                        continue
+
+                    if loop.time() - last_heartbeat >= 30:
+                        last_heartbeat = loop.time()
+                        yield {
+                            "event": "heartbeat",
+                            "data": json.dumps({"ts": now_iso()}),
+                        }
         finally:
             unsubscribe(queue)
 
@@ -317,9 +424,9 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
                 ),
                 "pid": None,
             }
-        # TODO(task6): coordinate force-cancel signal with worker process.
-        # The API process no longer owns the inference subprocess; the worker
-        # must observe the status flip and abort its own run.
+        # Force-cancel is worker-driven: flip the persisted job status and let
+        # the polling worker observe `_should_cancel()` and terminate its own
+        # subprocess tree on the next cancellation check.
         return _update_job(
             job_id,
             status="failed",
@@ -341,3 +448,12 @@ def cancel_job_endpoint(job_id: str, payload: dict = None) -> dict:
     if result.get("warning"):
         return JSONResponse(content=result, status_code=202)
     return result
+
+
+@app.delete("/jobs/failed")
+def delete_failed_jobs_endpoint() -> dict:
+    """Delete all failed jobs from the store and notify SSE subscribers."""
+    deleted = get_job_backend().delete_failed_jobs()
+    for job_id in deleted:
+        broadcast_job_event("job_deleted", {"job_id": job_id})
+    return {"deleted": deleted, "count": len(deleted)}

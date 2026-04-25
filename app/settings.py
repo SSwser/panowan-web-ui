@@ -20,17 +20,14 @@ class Settings:
     default_num_inference_steps: int
     default_width: int
     default_height: int
-    upscale_model_dir: str
+    upscale_engine_dir: str
+    upscale_weights_dir: str
     upscale_output_dir: str
     upscale_timeout_seconds: int
     max_concurrent_jobs: int
     host: str
     port: int
     worker_poll_interval_seconds: float
-
-    @property
-    def panowan_app_dir(self) -> str:
-        return self.panowan_engine_dir
 
     @property
     def wan_model_absolute_path(self) -> str:
@@ -57,9 +54,7 @@ def load_settings() -> Settings:
     runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime")
     model_root = os.getenv("MODEL_ROOT", "/models")
     output_dir = os.getenv("OUTPUT_DIR", container_child(runtime_dir, "outputs"))
-    panowan_engine_dir = os.getenv("PANOWAN_ENGINE_DIR") or os.getenv(
-        "PANOWAN_APP_DIR", "/engines/panowan"
-    )
+    panowan_engine_dir = os.getenv("PANOWAN_ENGINE_DIR", "/engines/panowan")
     return Settings(
         service_title="PanoWan Product Runtime API",
         service_version="1.0.0",
@@ -85,8 +80,9 @@ def load_settings() -> Settings:
         default_num_inference_steps=int(os.getenv("DEFAULT_NUM_INFERENCE_STEPS", "50")),
         default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
         default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
-        upscale_model_dir=os.getenv(
-            "UPSCALE_MODEL_DIR", container_child(model_root, "upscale")
+        upscale_engine_dir=os.getenv("UPSCALE_ENGINE_DIR", "/engines/upscale"),
+        upscale_weights_dir=os.getenv(
+            "UPSCALE_WEIGHTS_DIR", container_child(model_root, "upscale")
         ),
         upscale_output_dir=os.getenv("UPSCALE_OUTPUT_DIR", output_dir),
         upscale_timeout_seconds=int(os.getenv("UPSCALE_TIMEOUT_SECONDS", "1800")),

@@ -1,6 +1,7 @@
 from dataclasses import replace
 import importlib.util
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -53,7 +54,6 @@ class ApiTests(unittest.TestCase):
                 "service_started": True,
                 "model_ready": False,
                 "panowan_engine_dir_exists": True,
-                "panowan_app_dir_exists": True,
                 "wan_model_exists": False,
                 "lora_exists": False,
             },
@@ -68,6 +68,97 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(result["model_ready"])
         self.assertTrue(result["wan_model_exists"])
         self.assertTrue(result["lora_exists"])
+
+    def test_access_log_filter_is_registered_once(self) -> None:
+        logger = logging.getLogger("uvicorn.access")
+        before = [
+            flt
+            for flt in logger.filters
+            if isinstance(flt, api._HealthCheckAccessFilter)
+        ]
+
+        api._configure_access_log_filter()
+
+        after = [
+            flt
+            for flt in logger.filters
+            if isinstance(flt, api._HealthCheckAccessFilter)
+        ]
+        self.assertGreaterEqual(len(before), 1)
+        self.assertEqual(len(after), len(before))
+
+    def test_collect_job_store_events_detects_worker_completion(self) -> None:
+        record = api._create_job_record(
+            "job-1",
+            "prompt",
+            os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
+            {"num_inference_steps": 10, "width": 448, "height": 224},
+        )
+        snapshots = {record["job_id"]: api._job_event_snapshot(record)}
+
+        api.get_job_backend().claim_next_job(worker_id="worker-1")
+        api.get_job_backend().complete_job(
+            "job-1",
+            os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
+        )
+
+        snapshots, events = api._collect_job_store_events(snapshots)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "job_updated")
+        payload = json.loads(events[0]["data"])
+        self.assertEqual(payload["job_id"], "job-1")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(snapshots["job-1"]["status"], "completed")
+
+    def test_update_job_broadcasts_full_snapshot(self) -> None:
+        record = api._create_job_record(
+            "job-1",
+            "prompt",
+            os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
+            {"num_inference_steps": 10, "width": 448, "height": 224},
+        )
+
+        with unittest.mock.patch.object(api, "broadcast_job_event") as broadcast:
+            updated = api._update_job(
+                record["job_id"],
+                status="failed",
+                finished_at="done",
+                error="boom",
+            )
+
+        broadcast.assert_called_once_with("job_updated", updated)
+
+    def test_collect_job_store_events_detects_deleted_jobs(self) -> None:
+        record = api._create_job_record(
+            "job-1",
+            "prompt",
+            os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
+            {"num_inference_steps": 10, "width": 448, "height": 224},
+        )
+        snapshots = {record["job_id"]: api._job_event_snapshot(record)}
+
+        api.get_job_backend().delete_failed_jobs()
+        api.get_job_backend().update_job(
+            "job-1",
+            status="failed",
+            finished_at="done",
+            error="boom",
+        )
+        api.get_job_backend().delete_failed_jobs()
+
+        snapshots, events = api._collect_job_store_events(snapshots)
+
+        self.assertEqual(
+            events,
+            [
+                {
+                    "event": "job_deleted",
+                    "data": json.dumps({"job_id": "job-1"}, ensure_ascii=False),
+                }
+            ],
+        )
+        self.assertEqual(snapshots, {})
 
     def test_generate_returns_queued_job_metadata(self) -> None:
         response = api.generate({"prompt": "test"})
@@ -297,6 +388,27 @@ class ApiTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 api.upscale({"source_job_id": "done-1", "model": "nonexistent"})
         self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_upscale_rejects_invalid_seedvr2_target_dimensions(self) -> None:
+        self._seed_completed_source(
+            "done-seedvr2",
+            output_path="/out.mp4",
+            params={"width": 896, "height": 448},
+        )
+
+        with patch("app.api.os.path.exists", return_value=True):
+            with self.assertRaises(HTTPException) as ctx:
+                api.upscale(
+                    {
+                        "source_job_id": "done-seedvr2",
+                        "model": "seedvr2-3b",
+                        "target_width": 1345,
+                        "target_height": 896,
+                    }
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("multiple of 32", ctx.exception.detail)
 
     def test_upscale_rejects_missing_source_job(self) -> None:
         with self.assertRaises(HTTPException) as ctx:

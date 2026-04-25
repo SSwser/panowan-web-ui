@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from app.upscaler import (
     UPSCALE_BACKENDS,
     RealBasicVSRBackend,
+    UpscaleCancelledError,
     RealESRGANBackend,
     SeedVR2Backend,
     upscale_video,
@@ -38,11 +39,13 @@ class RealESRGANBackendTests(unittest.TestCase):
         cmd = self.backend.build_command(
             input_path="/input/video.mp4",
             output_dir="/output",
-            model_dir="/models/upscale",
+            engine_dir="/engines/upscale",
+            weights_dir="/models/upscale",
             scale=2,
         )
         cmd_str = " ".join(cmd)
         self.assertIn("inference_realesrgan_video.py", cmd_str)
+        self.assertIn("/engines/upscale/realesrgan", cmd_str)
         self.assertIn("-i", cmd_str)
         self.assertIn("/input/video.mp4", cmd_str)
         self.assertIn("-o", cmd_str)
@@ -66,7 +69,8 @@ class RealESRGANBackendTests(unittest.TestCase):
         cmd = self.backend.build_command(
             input_path="/input/video.mp4",
             output_dir="/output",
-            model_dir="/models/upscale",
+            engine_dir="/engines/upscale",
+            weights_dir="/models/upscale",
             scale=2,
         )
         cmd_str = " ".join(cmd)
@@ -90,11 +94,14 @@ class RealBasicVSRBackendTests(unittest.TestCase):
         cmd = self.backend.build_command(
             input_path="/input/video.mp4",
             output_dir="/output",
-            model_dir="/models/upscale",
+            engine_dir="/engines/upscale",
+            weights_dir="/models/upscale",
             scale=4,
         )
         cmd_str = " ".join(cmd)
         self.assertIn("inference_realbasicvsr.py", cmd_str)
+        self.assertIn("/engines/upscale/realbasicvsr", cmd_str)
+        self.assertIn("/models/upscale/realbasicvsr", cmd_str)
         self.assertIn("--max-seq-len", cmd_str)
         self.assertIn("30", cmd_str)
 
@@ -119,14 +126,17 @@ class SeedVR2BackendTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_validate_params_rejects_scale_over_max(self) -> None:
-        result = self.backend.validate_params(scale=8, target_width=3584, target_height=3584)
+        result = self.backend.validate_params(
+            scale=8, target_width=3584, target_height=3584
+        )
         self.assertIsNotNone(result)
 
     def test_build_command_contains_torchrun(self) -> None:
         cmd = self.backend.build_command(
             input_path="/input/video.mp4",
             output_dir="/output",
-            model_dir="/models/upscale",
+            engine_dir="/engines/upscale",
+            weights_dir="/models/upscale",
             scale=2,
             target_width=896,
             target_height=448,
@@ -148,7 +158,7 @@ class UpscaleVideoTests(unittest.TestCase):
                 model="nonexistent",
             )
 
-    @patch("app.upscaler.subprocess.Popen")
+    @patch("app.process_runner.subprocess.Popen")
     @patch("app.upscaler.os.path.exists", return_value=True)
     def test_upscale_video_calls_popen_and_returns_result(
         self, mock_exists, mock_popen
@@ -163,6 +173,8 @@ class UpscaleVideoTests(unittest.TestCase):
             output_path="/output/video.mp4",
             model="realesrgan-animevideov3",
             scale=2,
+            engine_dir="/engines/upscale",
+            weights_dir="/models/upscale",
         )
 
         self.assertEqual(result["output_path"], "/output/video.mp4")
@@ -170,7 +182,7 @@ class UpscaleVideoTests(unittest.TestCase):
         self.assertEqual(result["scale"], 2)
         mock_popen.assert_called_once()
 
-    @patch("app.upscaler.subprocess.Popen")
+    @patch("app.process_runner.subprocess.Popen")
     def test_upscale_video_raises_on_nonzero_returncode(self, mock_popen) -> None:
         mock_proc = MagicMock()
         mock_proc.communicate.return_value = (b"", b"error details here")
@@ -185,29 +197,28 @@ class UpscaleVideoTests(unittest.TestCase):
                 scale=2,
             )
 
-    @patch("app.upscaler.subprocess.Popen")
+    @patch("app.process_runner.subprocess.Popen")
     def test_upscale_video_raises_on_timeout(self, mock_popen) -> None:
         mock_proc = MagicMock()
-        # First communicate() raises TimeoutExpired; second (after kill) succeeds
-        mock_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd="python", timeout=1800),
-            (b"", b""),
-        ]
+        mock_proc.communicate.return_value = (b"", b"")
         mock_proc.kill = MagicMock()
         mock_popen.return_value = mock_proc
 
-        with self.assertRaises(TimeoutError):
-            upscale_video(
-                input_path="/input/video.mp4",
-                output_path="/output/video.mp4",
-                model="realesrgan-animevideov3",
-                scale=2,
-            )
+        with patch("app.process_runner.time.monotonic", side_effect=[0.0, 1801.0]):
+            with self.assertRaises(TimeoutError):
+                upscale_video(
+                    input_path="/input/video.mp4",
+                    output_path="/output/video.mp4",
+                    model="realesrgan-animevideov3",
+                    scale=2,
+                )
         mock_proc.kill.assert_called()
 
-    @patch("app.upscaler.subprocess.Popen")
+    @patch("app.process_runner.subprocess.Popen")
     @patch("app.upscaler.os.path.exists", return_value=False)
-    def test_upscale_video_raises_on_missing_output(self, mock_exists, mock_popen) -> None:
+    def test_upscale_video_raises_on_missing_output(
+        self, mock_exists, mock_popen
+    ) -> None:
         mock_proc = MagicMock()
         mock_proc.communicate.return_value = (b"ok", b"")
         mock_proc.returncode = 0
@@ -220,6 +231,29 @@ class UpscaleVideoTests(unittest.TestCase):
                 model="realesrgan-animevideov3",
                 scale=2,
             )
+
+    @patch("app.process_runner.subprocess.Popen")
+    def test_upscale_video_cancels_when_worker_requests_abort(self, mock_popen) -> None:
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd="python", timeout=1800),
+            (b"", b""),
+        ]
+        mock_proc.kill = MagicMock()
+        mock_popen.return_value = mock_proc
+
+        cancel_checks = iter([False, True])
+
+        with self.assertRaises(UpscaleCancelledError):
+            upscale_video(
+                input_path="/input/video.mp4",
+                output_path="/output/video.mp4",
+                model="realesrgan-animevideov3",
+                scale=2,
+                should_cancel=lambda: next(cancel_checks),
+            )
+
+        mock_proc.kill.assert_called_once()
 
 
 if __name__ == "__main__":

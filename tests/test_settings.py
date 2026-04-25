@@ -23,7 +23,6 @@ class SettingsTests(unittest.TestCase):
             loaded = load_settings()
 
         self.assertEqual(loaded.panowan_engine_dir, "/workspace/PanoWan")
-        self.assertEqual(loaded.panowan_app_dir, "/workspace/PanoWan")
         self.assertEqual(loaded.wan_model_path, "/workspace/models/custom-wan")
         self.assertEqual(loaded.lora_checkpoint_path, "/models/custom-lora.ckpt")
         self.assertEqual(loaded.default_prompt, "custom prompt")
@@ -38,27 +37,29 @@ class SettingsTests(unittest.TestCase):
     def test_load_settings_includes_upscale_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             loaded = load_settings()
-        self.assertEqual(loaded.upscale_model_dir, "/models/upscale")
+        self.assertEqual(loaded.upscale_engine_dir, "/engines/upscale")
+        self.assertEqual(loaded.upscale_weights_dir, "/models/upscale")
         self.assertEqual(loaded.upscale_output_dir, "/app/runtime/outputs")
         self.assertEqual(loaded.upscale_timeout_seconds, 1800)
 
-    def test_load_settings_falls_back_to_legacy_panowan_app_dir(self) -> None:
+    def test_load_settings_ignores_removed_legacy_panowan_app_dir(self) -> None:
         env = {"PANOWAN_APP_DIR": "/legacy/PanoWan"}
         with patch.dict(os.environ, env, clear=True):
             loaded = load_settings()
 
-        self.assertEqual(loaded.panowan_engine_dir, "/legacy/PanoWan")
-        self.assertEqual(loaded.panowan_app_dir, "/legacy/PanoWan")
+        self.assertEqual(loaded.panowan_engine_dir, "/engines/panowan")
 
     def test_load_settings_upscale_from_environment(self) -> None:
         env = {
-            "UPSCALE_MODEL_DIR": "/custom/models",
+            "UPSCALE_ENGINE_DIR": "/custom/upscale-engine",
+            "UPSCALE_WEIGHTS_DIR": "/custom/upscale-weights",
             "UPSCALE_OUTPUT_DIR": "/custom/outputs",
             "UPSCALE_TIMEOUT_SECONDS": "900",
         }
         with patch.dict(os.environ, env, clear=False):
             loaded = load_settings()
-        self.assertEqual(loaded.upscale_model_dir, "/custom/models")
+        self.assertEqual(loaded.upscale_engine_dir, "/custom/upscale-engine")
+        self.assertEqual(loaded.upscale_weights_dir, "/custom/upscale-weights")
         self.assertEqual(loaded.upscale_output_dir, "/custom/outputs")
         self.assertEqual(loaded.upscale_timeout_seconds, 900)
 

@@ -1,5 +1,7 @@
+import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app.jobs.local import LocalJobBackend
 
@@ -73,6 +75,49 @@ class LocalJobBackendTests(unittest.TestCase):
             self.assertEqual(failed["status"], "failed")
             self.assertEqual(failed["error"], "boom")
             self.assertIsNotNone(failed["finished_at"])
+
+    def test_delete_failed_jobs_removes_records_and_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = f"{tmp}/outputs/output_j1.mp4"
+            os.makedirs(f"{tmp}/outputs", exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as handle:
+                handle.write("partial")
+
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {
+                    "job_id": "j1",
+                    "status": "failed",
+                    "type": "generate",
+                    "output_path": output_path,
+                }
+            )
+            backend.create_job(
+                {"job_id": "j2", "status": "completed", "type": "generate"}
+            )
+
+            deleted = backend.delete_failed_jobs()
+
+            self.assertEqual(deleted, ["j1"])
+            self.assertIsNone(backend.get_job("j1"))
+            self.assertIsNotNone(backend.get_job("j2"))
+            self.assertFalse(os.path.exists(output_path))
+
+    def test_restore_keeps_incomplete_jobs_in_dev_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/jobs.json"
+            backend = LocalJobBackend(path)
+            backend.create_job(
+                {"job_id": "job-1", "status": "running", "type": "generate"}
+            )
+
+            restored = LocalJobBackend(path)
+            with patch.dict("os.environ", {"DEV_MODE": "1"}, clear=False):
+                restored.restore()
+            job = restored.get_job("job-1")
+
+            self.assertEqual(job["status"], "running")
+            self.assertIsNone(job["error"])
 
     def test_update_job_unknown_key_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
