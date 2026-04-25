@@ -9,6 +9,23 @@ class ScriptBoundaryTests(unittest.TestCase):
     def read_script(self, name):
         return (ROOT / "scripts" / name).read_text(encoding="utf-8")
 
+    def test_dockerfile_builds_realesrgan_backend_venv(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("AS upscale-realesrgan-deps", dockerfile)
+        self.assertIn("/opt/venvs/upscale-realesrgan", dockerfile)
+        self.assertIn(
+            "third_party/Upscale/realesrgan/requirements.txt",
+            dockerfile,
+        )
+        self.assertIn(
+            "COPY --from=upscale-realesrgan-deps /opt/venvs/upscale-realesrgan /opt/venvs/upscale-realesrgan",
+            dockerfile,
+        )
+
+    def test_dockerfile_installs_ffmpeg_system_command(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("ffmpeg", dockerfile)
+
     def test_realesrgan_adapter_uses_vendored_snapshot_without_runtime_pip(self):
         adapter = (
             ROOT / "third_party" / "Upscale" / "realesrgan" / "adapter.py"

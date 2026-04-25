@@ -1,0 +1,4 @@
+# Vendored runtime keeps the BasicSR pieces it needs locally.
+ffmpeg-python==0.2.0
+opencv-python-headless==4.10.0.84
+tqdm==4.67.1

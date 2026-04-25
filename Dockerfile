@@ -22,7 +22,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
     fi && \
     apt-get update && apt-get install -y \
+    ffmpeg \
     python3 \
+    python3-venv \
     vmtouch \
     && rm -rf /var/lib/apt/lists/*
 
@@ -47,6 +49,19 @@ WORKDIR /tmp/PanoWan
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project --link-mode=copy
 
+FROM engine-panowan-deps AS upscale-realesrgan-deps
+
+ARG PYPI_INDEX=
+ENV PIP_INDEX_URL=${PYPI_INDEX:-}
+
+COPY third_party/Upscale/realesrgan/requirements.txt /tmp/upscale-realesrgan-requirements.txt
+RUN /opt/venv/bin/python -m venv /opt/venvs/upscale-realesrgan \
+    && MAIN_SITE=$(/opt/venv/bin/python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
+    && INNER_SITE=$(/opt/venvs/upscale-realesrgan/bin/python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
+    && printf '%s\n' "$MAIN_SITE" > "$INNER_SITE/panowan_worker_site.pth" \
+    && /opt/venvs/upscale-realesrgan/bin/python -m pip install --upgrade pip \
+    && /opt/venvs/upscale-realesrgan/bin/python -m pip install -r /tmp/upscale-realesrgan-requirements.txt
+
 FROM api-deps AS api
 
 WORKDIR /app
@@ -59,6 +74,7 @@ CMD ["bash", "/app/scripts/start-api.sh"]
 FROM engine-panowan-deps AS worker-panowan
 
 WORKDIR /app
+COPY --from=upscale-realesrgan-deps /opt/venvs/upscale-realesrgan /opt/venvs/upscale-realesrgan
 COPY app /app/app
 COPY scripts /app/scripts
 COPY third_party/PanoWan /engines/panowan
@@ -80,6 +96,7 @@ CMD ["bash", "/app/scripts/start-api.sh"]
 FROM engine-panowan-deps AS dev-worker-panowan
 
 WORKDIR /app
+COPY --from=upscale-realesrgan-deps /opt/venvs/upscale-realesrgan /opt/venvs/upscale-realesrgan
 COPY app /app/app
 COPY scripts /app/scripts
 COPY third_party/PanoWan /engines/panowan
