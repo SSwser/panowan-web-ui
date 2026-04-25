@@ -114,11 +114,9 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertIn("python -m app.worker_service", script)
         self.assertNotIn("hf download", script)
 
-    def test_model_setup_owns_downloads(self):
-        script = self.read_script("model-setup.sh")
-        self.assertIn("python -m app.models ensure", script)
-        self.assertNotIn("hf download", script)
-        self.assertNotIn("download-panowan.sh", script)
+    def test_check_runtime_invokes_backends_verify(self):
+        script = self.read_script("check-runtime.sh")
+        self.assertIn("python -m app.backends verify", script)
 
     def test_start_worker_supports_vmtouch(self):
         script = self.read_script("start-worker.sh")

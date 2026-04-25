@@ -11,7 +11,7 @@ class ComposeTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("api:", compose)
         self.assertIn("worker-panowan:", compose)
-        self.assertIn("model-setup:", compose)
+        self.assertNotIn("model-setup:", compose)
         self.assertIsNone(re.search(r"^  panowan:\s*$", compose, re.M))
 
     def test_api_service_has_no_gpu_or_model_mount(self):
@@ -23,9 +23,7 @@ class ComposeTests(unittest.TestCase):
 
     def test_worker_service_has_gpu_and_model_mount(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        worker_section = compose.split("  worker-panowan:", 1)[1].split(
-            "  model-setup:", 1
-        )[0]
+        worker_section = compose.split("  worker-panowan:", 1)[1]
         self.assertIn("target: worker-panowan", worker_section)
         self.assertIn("gpus: all", worker_section)
         self.assertIn(":/models", worker_section)
@@ -34,9 +32,7 @@ class ComposeTests(unittest.TestCase):
 
     def test_worker_service_waits_for_api_health(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-        worker_section = compose.split("  worker-panowan:", 1)[1].split(
-            "  model-setup:", 1
-        )[0]
+        worker_section = compose.split("  worker-panowan:", 1)[1]
         api_section = compose.split("  api:", 1)[1].split("  worker-panowan:", 1)[0]
         self.assertIn("depends_on:", worker_section)
         self.assertIn("condition: service_healthy", worker_section)

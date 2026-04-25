@@ -1,7 +1,9 @@
 # ADR 0003: Backend Runtime Contracts
 
 Date: 2026-04-25
-Status: Proposed
+Status: Accepted
+
+> ADR 0005 supersedes the acquisition/setup scope that may later move into a backend-local manifest/tooling workflow. Keep this ADR as the durable runtime-contract record.
 
 ## Context
 

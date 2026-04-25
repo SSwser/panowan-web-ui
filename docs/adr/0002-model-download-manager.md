@@ -1,9 +1,13 @@
 # ADR 0002: Unified Model Download Manager
 
 Date: 2026-04-25
-Status: Proposed
+Status: Superseded by ADR 0005: Backend Acquisition and Setup
 
 ## Context
+
+> Superseded by ADR 0005: Backend Acquisition and Setup.
+> Keep this record for historical context; do not treat the setup-model framing as current architecture.
+
 
 Model download logic is duplicated across three shell entrypoints: `download-models.sh` (host), `model-setup.sh` (container), and `start-local.sh` (inline). They each contain overlapping Wan/LoRA provisioning behavior with different environment variable contexts. None of them cover upscale model provisioning, which is why the upscale feature fails at runtime with missing files.
 
@@ -19,7 +23,7 @@ Replace all shell-based download logic with a unified Python model download mana
 4. **CLI** — `python -m app.models [ensure|verify]`
 5. **Shell scripts** — retained only as thin wrappers that call the Python CLI
 
-This replaces the shell-embedded provisioning logic in `download-models.sh`, `model-setup.sh`, `check-runtime.sh`, and `start-local.sh` with a single Python module, while preserving those script entrypoints as compatibility wrappers.
+This record is historical. The current architecture supersedes the module-only setup framing with a broader backend acquisition and setup boundary.
 
 Additionally, introduce an **UpscaleEngine** peer to PanoWanEngine, moving upscale capability out of PanoWanEngine. This aligns with ADR 0001's engine-oriented architecture and enables independent deployment and validation of upscale assets.
 

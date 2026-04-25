@@ -23,7 +23,7 @@ class PanoWanEngine:
         if missing:
             joined = "\n".join(f"- {path}" for path in missing)
             raise FileNotFoundError(
-                "PanoWan runtime assets are missing. Run `make setup-models` first:\n"
+                "PanoWan runtime assets are missing. Run `make setup-backends` first:\n"
                 f"{joined}"
             )
 

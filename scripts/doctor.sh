@@ -175,7 +175,7 @@ if [[ -f "$WAN_DIFFUSION_FILE" ]]; then
   ok "diffusion_pytorch_model.safetensors ($SIZE)"
 else
   fail "缺少: $WAN_DIFFUSION_FILE"
-  echo "       运行 make setup-models 下载"
+  echo "       运行 make setup-backends 下载"
 fi
 
 if [[ -f "$WAN_T5_FILE" ]]; then
@@ -183,7 +183,7 @@ if [[ -f "$WAN_T5_FILE" ]]; then
   ok "models_t5_umt5-xxl-enc-bf16.pth ($SIZE)"
 else
   fail "缺少: $WAN_T5_FILE"
-  echo "       运行 make setup-models 下载"
+  echo "       运行 make setup-backends 下载"
 fi
 
 if [[ -f "$LORA_CHECKPOINT_FILE" ]]; then
@@ -191,7 +191,7 @@ if [[ -f "$LORA_CHECKPOINT_FILE" ]]; then
   ok "latest-lora.ckpt ($SIZE)"
 else
   fail "缺少: $LORA_CHECKPOINT_FILE"
-  echo "       运行 make setup-models 下载"
+  echo "       运行 make setup-backends 下载"
 fi
 
 # ── 4. 环境变量 ──────────────────────────────────────────────────────────────

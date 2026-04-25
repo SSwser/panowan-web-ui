@@ -4,7 +4,7 @@ These values are the single source of truth for the RealESRGAN backend's
 runtime contract (engine files, weight files, required commands, backend
 runtime interpreter, required Python modules). They are consumed by both
 ``app.upscaler`` (for availability checks and command construction) and
-``app.models.specs`` (for model provisioning), so any path change here
+``app.backends.model_specs`` (for model provisioning), so any path change here
 must keep both in sync automatically.
 
 File-path conventions:

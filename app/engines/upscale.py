@@ -18,7 +18,7 @@ class UpscaleEngine:
         if missing:
             joined = "\n".join(f"- {path}" for path in missing)
             raise FileNotFoundError(
-                "Upscale runtime assets are missing. Run `make setup-models` first:\n"
+                "Upscale runtime assets are missing. Run `make setup-backends` first:\n"
                 f"{joined}"
             )
 
@@ -28,7 +28,7 @@ class UpscaleEngine:
         )
         if not available:
             raise FileNotFoundError(
-                "No available upscale backends. Run `make setup-models` and verify "
+                "No available upscale backends. Run `make setup-backends` and verify "
                 f"backend assets under {settings.upscale_engine_dir} and "
                 f"{settings.upscale_weights_dir}."
             )
