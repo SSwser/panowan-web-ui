@@ -4,6 +4,7 @@ from unittest import mock
 from app.engines.base import EngineResult
 from app.engines.panowan import PanoWanEngine
 from app.engines.registry import EngineRegistry
+from app.settings import settings
 
 
 class EngineRegistryTests(unittest.TestCase):
@@ -140,7 +141,7 @@ class UpscaleEngineTests(unittest.TestCase):
                 "target_width": None,
                 "target_height": None,
                 "engine_dir": "/engines/upscale",
-                "weights_dir": "/models",
+                "weights_dir": settings.upscale_weights_dir,
                 "timeout_seconds": 1800,
                 "should_cancel": cancel_probe,
             },

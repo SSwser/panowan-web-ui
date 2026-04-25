@@ -4,6 +4,24 @@ from dataclasses import dataclass
 from .paths import container_child, container_join
 
 
+def _in_container() -> bool:
+    """Best-effort detection of whether we're running inside a Docker container."""
+    # Docker sets these indicators; absence means host-side execution.
+    if os.path.isfile("/.dockerenv"):
+        return True
+    try:
+        return "docker" in os.readline("/proc/1/cgroup")
+    except (OSError, AttributeError):
+        pass
+    # SERVICE_ROLE is injected by docker-compose.yml environment blocks.
+    return bool(os.getenv("SERVICE_ROLE"))
+
+
+# Host-side defaults — used when running outside a container (e.g. make init).
+_HOST_MODEL_ROOT = os.path.join(os.getcwd(), "data", "models")
+_HOST_RUNTIME_DIR = os.path.join(os.getcwd(), "data", "runtime")
+
+
 @dataclass(frozen=True)
 class Settings:
     service_title: str
@@ -53,8 +71,13 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime")
-    model_root = os.getenv("MODEL_ROOT", "/models")
+    in_container = _in_container()
+    # When running on the host (e.g. make init → python -m app.backends install),
+    # MODEL_ROOT defaults to ./data/models so that file-existence checks find
+    # locally downloaded models. Inside a container the path is /models, which
+    # is the mount point mapped by docker-compose.yml.
+    runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime" if in_container else _HOST_RUNTIME_DIR)
+    model_root = os.getenv("MODEL_ROOT", "/models" if in_container else _HOST_MODEL_ROOT)
     output_dir = os.getenv("OUTPUT_DIR", container_child(runtime_dir, "outputs"))
     panowan_engine_dir = os.getenv("PANOWAN_ENGINE_DIR", "/engines/panowan")
     return Settings(

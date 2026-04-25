@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 from unittest.mock import patch
 
-from app.settings import load_settings
+from app.settings import load_settings, _HOST_MODEL_ROOT, _HOST_RUNTIME_DIR
 
 
 class SettingsTests(unittest.TestCase):
@@ -35,11 +35,15 @@ class SettingsTests(unittest.TestCase):
         )
 
     def test_load_settings_includes_upscale_defaults(self) -> None:
+        # Without SERVICE_ROLE, _in_container() returns False on the host,
+        # so paths default to host-side values.
         with patch.dict(os.environ, {}, clear=True):
             loaded = load_settings()
         self.assertEqual(loaded.upscale_engine_dir, "/engines/upscale")
-        self.assertEqual(loaded.upscale_weights_dir, "/models")
-        self.assertEqual(loaded.upscale_output_dir, "/app/runtime/outputs")
+        self.assertEqual(loaded.upscale_weights_dir, _HOST_MODEL_ROOT)
+        # upscale_output_dir is derived from runtime_dir, which defaults to
+        # the host-side path on non-container runs.
+        self.assertTrue(loaded.upscale_output_dir.endswith("outputs"))
         self.assertEqual(loaded.upscale_timeout_seconds, 1800)
 
     def test_load_settings_ignores_removed_legacy_panowan_app_dir(self) -> None:

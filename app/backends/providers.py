@@ -73,10 +73,24 @@ class HuggingFaceProvider:
                 f"to enable downloading {spec.name} from {spec.source_ref}"
             )
         # Note: revision is not pinned; integrity is enforced via FileCheck.sha256 when set.
-        snapshot_download(
-            repo_id=spec.source_ref,
-            local_dir=spec.target_dir,
-        )
+        # huggingface_hub uses background threads for downloads; KeyboardInterrupt
+        # only interrupts the main thread. Register a signal handler so Ctrl+C
+        # during make init actually terminates the process instead of hanging.
+        import signal
+
+        prev_handler = signal.getsignal(signal.SIGINT)
+
+        def _interrupt_on_sigint(signum: int, frame: object) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGINT, _interrupt_on_sigint)
+        try:
+            snapshot_download(
+                repo_id=spec.source_ref,
+                local_dir=spec.target_dir,
+            )
+        finally:
+            signal.signal(signal.SIGINT, prev_handler)
         if not self._all_files_present(spec):
             raise RuntimeError(
                 f"Download completed but files still missing for {spec.name}"

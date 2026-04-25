@@ -7,26 +7,52 @@ FastAPI + worker service for AI video generation (T2V/I2V via PanoWan) and upsca
 ## Commands
 
 ```bash
-# Dependencies (requires Python 3.13 exactly — not 3.12 or 3.14)
+# Host Python / dependencies (requires Python 3.13 exactly — not 3.12 or 3.14)
 uv sync --group dev
 
 # Tests
-python -m unittest discover -s tests   # canonical
-pytest tests/                          # also works
+uv run python -m unittest discover -s tests   # canonical
+uv run pytest tests/                          # also works
 
-# Run locally
-DEV_MODE=1 python -m app.api_service   # API with hot-reload
-python -m app.worker_service           # Worker
+# Run locally on the host
+DEV_MODE=1 uv run python -m app.api_service   # API with hot-reload
+uv run python -m app.worker_service           # Worker
 
 # Docker
-make build        # checks uv.lock, then compose build
-make up           # production
-make up DEV=1     # dev (mounts source)
-make doctor       # diagnose GPU/Docker/models
+make build          # checks uv.lock, then compose build
+make up             # production
+make up DEV=1       # dev (mounts source)
+make doctor         # diagnose GPU/Docker/models
 make setup-backends # download model weights and verify backends (required before first run)
 ```
 
+> Host-side Python is managed via `uv`. Prefer `uv run ...` over calling the system `python` directly so commands always use the project's pinned Python 3.13 environment.
+>
 > After changing `pyproject.toml`, run `uv lock` before `make build` — the build will fail otherwise.
+>
+> `make` targets that execute host-side Python (`make test`, `make setup-backends`, `make init`) are expected to run through `uv` when available.
+
+### Host Python Rule
+
+- Use `uv sync --group dev` to provision the host environment.
+- Use `uv run ...` for host-side Python entry points.
+- Do **not** assume the shell's `python` version is correct.
+- Container-internal commands may still use plain `python`; the `uv` rule is for host execution.
+
+Why: this repo pins Python `>=3.13,<3.14`, but many developer machines still have 3.12 on `PATH`. Using `uv` avoids subtle runtime differences like missing stdlib APIs or mismatched dependency resolution.
+
+### Makefile Host Runner Convention
+
+The Makefile uses a `PYTHON_RUN` wrapper that resolves to `uv run` when `uv` is installed, and falls back to `python` otherwise. New host-side Python targets should use `$(PYTHON_RUN) -m ...` instead of calling `python` directly.
+
+Examples:
+
+- Good: `$(PYTHON_RUN) -m app.backends install`
+- Good: `$(PYTHON_RUN) -m unittest discover -s tests`
+- Avoid for host targets: `python -m ...`
+- Fine in containers: `python -m ...`
+
+Short version: **host = `uv run`; container = plain `python`**.
 
 ## Architecture
 

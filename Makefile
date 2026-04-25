@@ -10,6 +10,8 @@ APT_MIRROR ?=
 PYPI_INDEX ?=
 BUILD_ARGS := $(if $(APT_MIRROR),--build-arg APT_MIRROR=$(APT_MIRROR)) $(if $(PYPI_INDEX),--build-arg PYPI_INDEX=$(PYPI_INDEX))
 
+PYTHON_RUN := $(shell if command -v uv >/dev/null 2>&1; then printf 'uv run'; else printf 'python'; fi)
+
 ifneq (,$(wildcard .env))
 include .env
 endif
@@ -31,6 +33,9 @@ $(eval $(call normalize_bind_var,MODEL_ROOT))
 # the caller already ran uv sync manually.
 init: env setup-python setup-submodules setup-backends doctor
 
+env:
+	@if [ ! -f .env ]; then cp .env.example .env; fi
+
 setup-python:
 	@if command -v uv >/dev/null 2>&1; then \
 		uv sync --group dev; \
@@ -41,11 +46,11 @@ setup-python:
 setup-submodules:
 	git submodule update --init --recursive
 
-env:
-	@if [ ! -f .env ]; then cp .env.example .env; fi
+setup-backends: setup-python
+	$(PYTHON_RUN) -m app.backends install
 
 test:
-	python -m unittest discover -s tests
+	$(PYTHON_RUN) -m unittest discover -s tests
 
 build:
 	@if command -v uv >/dev/null 2>&1; then \
@@ -59,9 +64,6 @@ build:
 		echo "warning: uv not found, skipping uv.lock validation"; \
 	fi
 	$(COMPOSE) build $(BUILD_ARGS)
-
-setup-backends: setup-python
-	python -m app.backends install
 
 up:
 	$(COMPOSE) up -d $(UP_FLAGS)
