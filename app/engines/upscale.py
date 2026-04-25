@@ -1,7 +1,7 @@
 import os
 
 from app.settings import settings
-from app.upscaler import upscale_video
+from app.upscaler import get_available_upscale_backends, upscale_video
 
 from .base import EngineResult
 
@@ -20,6 +20,17 @@ class UpscaleEngine:
             raise FileNotFoundError(
                 "Upscale runtime assets are missing. Run `make setup-models` first:\n"
                 f"{joined}"
+            )
+
+        available = get_available_upscale_backends(
+            settings.upscale_engine_dir,
+            settings.upscale_weights_dir,
+        )
+        if not available:
+            raise FileNotFoundError(
+                "No available upscale backends. Run `make setup-models` and verify "
+                f"backend assets under {settings.upscale_engine_dir} and "
+                f"{settings.upscale_weights_dir}."
             )
 
     def run(self, job: dict) -> EngineResult:

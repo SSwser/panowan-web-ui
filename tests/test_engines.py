@@ -77,13 +77,30 @@ class UpscaleEngineTests(unittest.TestCase):
     @mock.patch("app.engines.upscale.os.path.exists", return_value=True)
     def test_validate_runtime_passes_when_dirs_exist(self, mock_exists) -> None:
         engine = UpscaleEngine()
-        engine.validate_runtime()  # Should not raise
+        with mock.patch(
+            "app.engines.upscale.get_available_upscale_backends",
+            return_value={"realesrgan-animevideov3": object()},
+        ):
+            engine.validate_runtime()  # Should not raise
 
     @mock.patch("app.engines.upscale.os.path.exists", return_value=False)
     def test_validate_runtime_raises_when_dirs_missing(self, mock_exists) -> None:
         engine = UpscaleEngine()
         with self.assertRaises(FileNotFoundError):
             engine.validate_runtime()
+
+    @mock.patch("app.engines.upscale.os.path.exists", return_value=True)
+    def test_validate_runtime_fails_when_no_backend_available(
+        self, mock_exists
+    ) -> None:
+        engine = UpscaleEngine()
+        with mock.patch(
+            "app.engines.upscale.get_available_upscale_backends",
+            return_value={},
+        ):
+            with self.assertRaises(FileNotFoundError) as ctx:
+                engine.validate_runtime()
+        self.assertIn("No available upscale backends", str(ctx.exception))
 
     @mock.patch("app.engines.upscale.upscale_video")
     def test_run_delegates_to_upscale_video(self, mock_upscale) -> None:
