@@ -21,3 +21,17 @@ class MakefileTests(unittest.TestCase):
     def test_compose_uses_dev_variable(self):
         self.assertIn("COMPOSE_FILES", self.makefile)
         self.assertRegex(self.makefile, r"COMPOSE \?.*=.*\$\(DOCKER\)")
+
+    def test_init_bootstraps_python_before_setup_backends(self):
+        self.assertRegex(
+            self.makefile,
+            r"\ninit: env setup-python setup-submodules setup-backends doctor\n",
+        )
+
+    def test_setup_python_uses_uv_or_pip_fallback(self):
+        self.assertRegex(self.makefile, r"\nsetup-python:\n")
+        self.assertIn("uv sync --group dev", self.makefile)
+        self.assertIn("python -m pip install -e .", self.makefile)
+
+    def test_setup_backends_depends_on_setup_python(self):
+        self.assertRegex(self.makefile, r"\nsetup-backends: setup-python\n")

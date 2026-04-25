@@ -79,7 +79,7 @@ DEV_SKIP_DOWNLOAD_MODELS=1
 
 说明：
 
-- `MODEL_ROOT` 控制 compose 挂载到 `/models` 的宿主机路径，`make setup-models` 也会复用它。
+- `MODEL_ROOT` 控制 compose 挂载到 `/models` 的宿主机路径，`make setup-backends` 也会复用它。
 - `DEV_SKIP_DOWNLOAD_MODELS=1` 时，启动只做服务与依赖环境准备，不自动下载 Wan/LoRA 权重。
 
 输出将显示：
@@ -149,7 +149,7 @@ DEV_SKIP_DOWNLOAD_MODELS=1
 
 ### 模型文件
 
-运行 `make setup-models` 下载必要模型（需要网络连接和足够磁盘空间）：
+运行 `make setup-backends` 下载必要模型并验证后端（需要网络连接和足够磁盘空间）：
 
 - `data/models/Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors` (~4 GB)
 - `data/models/Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth` (~6 GB)
@@ -225,8 +225,8 @@ make env
 # 2. 检查环境
 make doctor
 
-# 3. 下载模型
-make setup-models
+# 3. 下载模型并验证后端
+make setup-backends
 
 # 4. 启动服务
 make up

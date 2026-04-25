@@ -24,11 +24,21 @@ endef
 
 $(eval $(call normalize_bind_var,MODEL_ROOT))
 
-.PHONY: init submodule env test build setup-models up down logs health doctor docker-env prune
+.PHONY: init setup-python setup-submodules env test build setup-backends up down logs health doctor docker-env prune
 
-init: env submodule doctor
+# setup-backends needs host-side Python deps like huggingface_hub before it can
+# download weights, so init bootstraps the environment first instead of assuming
+# the caller already ran uv sync manually.
+init: env setup-python setup-submodules setup-backends doctor
 
-submodule:
+setup-python:
+	@if command -v uv >/dev/null 2>&1; then \
+		uv sync --group dev; \
+	else \
+		python -m pip install -e .; \
+	fi
+
+setup-submodules:
 	git submodule update --init --recursive
 
 env:
@@ -50,8 +60,8 @@ build:
 	fi
 	$(COMPOSE) build $(BUILD_ARGS)
 
-setup-models:
-	$(DOCKER) compose $(COMPOSE_FILES) --profile setup run --rm model-setup
+setup-backends: setup-python
+	python -m app.backends install
 
 up:
 	$(COMPOSE) up -d $(UP_FLAGS)

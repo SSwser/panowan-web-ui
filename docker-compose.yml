@@ -60,24 +60,3 @@ services:
       - ./data/runtime:/app/runtime
     gpus: all
     restart: unless-stopped
-
-  model-setup:
-    build:
-      context: .
-      target: worker-panowan
-      args:
-        APT_MIRROR: ${APT_MIRROR:-}
-        PYPI_INDEX: ${PYPI_INDEX:-}
-    image: panowan-worker-panowan:${TAG:-latest}
-    profiles: [ "setup" ]
-    command: [ "bash", "/app/scripts/model-setup.sh" ]
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      MODEL_ROOT: /models
-      PANOWAN_ENGINE_DIR: /engines/panowan
-      UPSCALE_ENGINE_DIR: /engines/upscale
-      UPSCALE_WEIGHTS_DIR: /models
-    volumes:
-      - ${MODEL_ROOT:-./data/models}:/models
