@@ -2,7 +2,11 @@ import os
 
 from app.paths import container_child
 from app.settings import Settings
-from app.upscale_contract import REALESRGAN_ENGINE_FILES
+from app.upscale_contract import (
+    REALESRGAN_ENGINE_FILES,
+    REALESRGAN_WEIGHT_FAMILY,
+    REALESRGAN_WEIGHT_FILENAME,
+)
 
 from .registry import FileCheck, ModelSpec
 
@@ -46,10 +50,12 @@ def load_specs(settings: Settings) -> list[ModelSpec]:
             name="upscale-realesrgan-weights",
             source_type="http",
             source_ref="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
-            target_dir=container_child(settings.upscale_weights_dir, "realesrgan"),
+            target_dir=container_child(
+                settings.upscale_weights_dir, REALESRGAN_WEIGHT_FAMILY
+            ),
             files=[
                 FileCheck(
-                    path="realesr-animevideov3.pth",
+                    path=REALESRGAN_WEIGHT_FILENAME,
                     sha256="b8a8376811077954d82ca3fcf476f1ac3da3e8a68a4f4d71363008000a18b75d",
                 )
             ],

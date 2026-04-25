@@ -81,9 +81,10 @@ def load_settings() -> Settings:
         default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
         default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
         upscale_engine_dir=os.getenv("UPSCALE_ENGINE_DIR", "/engines/upscale"),
-        upscale_weights_dir=os.getenv(
-            "UPSCALE_WEIGHTS_DIR", container_child(model_root, "upscale")
-        ),
+        # ADR 0003: weights live under model-family folders directly under
+        # MODEL_ROOT (e.g. /models/Real-ESRGAN/...), not under a functional
+        # /models/upscale/ grouping. Default = MODEL_ROOT.
+        upscale_weights_dir=os.getenv("UPSCALE_WEIGHTS_DIR", model_root),
         upscale_output_dir=os.getenv("UPSCALE_OUTPUT_DIR", output_dir),
         upscale_timeout_seconds=int(os.getenv("UPSCALE_TIMEOUT_SECONDS", "1800")),
         max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", "1")),

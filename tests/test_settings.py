@@ -38,7 +38,7 @@ class SettingsTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             loaded = load_settings()
         self.assertEqual(loaded.upscale_engine_dir, "/engines/upscale")
-        self.assertEqual(loaded.upscale_weights_dir, "/models/upscale")
+        self.assertEqual(loaded.upscale_weights_dir, "/models")
         self.assertEqual(loaded.upscale_output_dir, "/app/runtime/outputs")
         self.assertEqual(loaded.upscale_timeout_seconds, 1800)
 

@@ -80,8 +80,9 @@ class UpscalerAvailabilityTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as engine_dir,
             tempfile.TemporaryDirectory() as weights_dir,
         ):
-            Path(weights_dir, "realesrgan").mkdir(parents=True)
-            Path(weights_dir, "realesrgan", "realesr-animevideov3.pth").write_text("x")
+            backend = UPSCALE_BACKENDS[self.backend_name]
+            for relative_path in backend.assets.weight_files:
+                self._write_relative_file(weights_dir, relative_path)
 
             available = get_available_upscale_backends(engine_dir, weights_dir)
 
@@ -249,17 +250,19 @@ class RealESRGANBackendTests(unittest.TestCase):
             input_path="/input/video.mp4",
             output_dir="/output",
             engine_dir="/engines/upscale",
-            weights_dir="/models/upscale",
+            weights_dir="/models",
             scale=2,
         )
         self.assertEqual(cmd[0], "/opt/venvs/upscale-realesrgan/bin/python")
         cmd_str = " ".join(cmd)
-        self.assertIn("/engines/upscale/realesrgan/adapter.py", cmd_str)
+        self.assertIn("/engines/upscale/realesrgan/vendor/__main__.py", cmd_str)
+        self.assertNotIn("adapter.py", cmd_str)
         self.assertIn("--model_path", cmd_str)
         self.assertIn(
-            "/models/upscale/realesrgan/realesr-animevideov3.pth",
+            "/models/Real-ESRGAN/realesr-animevideov3.pth",
             cmd_str,
         )
+        self.assertNotIn("/models/upscale/", cmd_str)
         self.assertIn("-i", cmd_str)
         self.assertIn("/input/video.mp4", cmd_str)
         self.assertIn("-o", cmd_str)
@@ -283,7 +286,7 @@ class RealESRGANBackendTests(unittest.TestCase):
             input_path="/input/video.mp4",
             output_dir="/output",
             engine_dir="/engines/upscale",
-            weights_dir="/models/upscale",
+            weights_dir="/models",
             scale=2,
         )
         cmd_str = " ".join(cmd)
@@ -308,13 +311,13 @@ class RealBasicVSRBackendTests(unittest.TestCase):
             input_path="/input/video.mp4",
             output_dir="/output",
             engine_dir="/engines/upscale",
-            weights_dir="/models/upscale",
+            weights_dir="/models",
             scale=4,
         )
         cmd_str = " ".join(cmd)
         self.assertIn("inference_realbasicvsr.py", cmd_str)
         self.assertIn("/engines/upscale/realbasicvsr", cmd_str)
-        self.assertIn("/models/upscale/realbasicvsr", cmd_str)
+        self.assertIn("/models/realbasicvsr", cmd_str)
         self.assertIn("--max-seq-len", cmd_str)
         self.assertIn("30", cmd_str)
 
@@ -349,7 +352,7 @@ class SeedVR2BackendTests(unittest.TestCase):
             input_path="/input/video.mp4",
             output_dir="/output",
             engine_dir="/engines/upscale",
-            weights_dir="/models/upscale",
+            weights_dir="/models",
             scale=2,
             target_width=896,
             target_height=448,
@@ -387,7 +390,7 @@ class UpscaleVideoTests(unittest.TestCase):
             model="realesrgan-animevideov3",
             scale=2,
             engine_dir="/engines/upscale",
-            weights_dir="/models/upscale",
+            weights_dir="/models",
         )
 
         self.assertEqual(result["output_path"], "/output/video.mp4")

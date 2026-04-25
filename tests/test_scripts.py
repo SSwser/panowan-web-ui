@@ -26,50 +26,45 @@ class ScriptBoundaryTests(unittest.TestCase):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("ffmpeg", dockerfile)
 
-    def test_realesrgan_adapter_uses_vendored_snapshot_without_runtime_pip(self):
-        adapter = (
-            ROOT / "third_party" / "Upscale" / "realesrgan" / "adapter.py"
+    def test_realesrgan_vendor_entrypoint_uses_flat_layout_without_runtime_pip(self):
+        # The vendored runtime is the contract: a flat ``vendor/`` directory
+        # whose ``__main__.py`` prepends itself to ``sys.path`` and delegates
+        # to the trimmed ``inference_realesrgan_video.main`` — no runtime pip,
+        # no environment variable discovery, no fallback paths.
+        entry = (
+            ROOT / "third_party" / "Upscale" / "realesrgan" / "vendor" / "__main__.py"
         ).read_text(encoding="utf-8")
-        self.assertIn('"vendor" / "Real-ESRGAN"', adapter)
-        self.assertIn('"inference_realesrgan_video.py"', adapter)
-        self.assertIn("sys.path.insert", adapter)
-        self.assertNotIn("pip.main", adapter)
-        self.assertNotIn("pip install", adapter)
+        self.assertIn("Path(__file__).resolve().parent", entry)
+        self.assertIn("sys.path.insert", entry)
+        self.assertIn("import inference_realesrgan_video", entry)
+        self.assertNotIn("pip.main", entry)
+        self.assertNotIn("pip install", entry)
+        # The legacy adapter and nested ``vendor/Real-ESRGAN`` tree must be
+        # gone so they cannot drift back in.
+        self.assertFalse(
+            (ROOT / "third_party" / "Upscale" / "realesrgan" / "adapter.py").exists()
+        )
+        self.assertFalse(
+            (
+                ROOT
+                / "third_party"
+                / "Upscale"
+                / "realesrgan"
+                / "vendor"
+                / "Real-ESRGAN"
+            ).exists()
+        )
 
     def test_realesrgan_runtime_bundle_does_not_require_basicsr_package(self):
         requirements = (
             ROOT / "third_party" / "Upscale" / "realesrgan" / "requirements.txt"
         ).read_text(encoding="utf-8")
-        runner = (
-            ROOT
-            / "third_party"
-            / "Upscale"
-            / "realesrgan"
-            / "vendor"
-            / "Real-ESRGAN"
-            / "inference_realesrgan_video.py"
-        ).read_text(encoding="utf-8")
-        utils = (
-            ROOT
-            / "third_party"
-            / "Upscale"
-            / "realesrgan"
-            / "vendor"
-            / "Real-ESRGAN"
-            / "realesrgan"
-            / "utils.py"
-        ).read_text(encoding="utf-8")
-        arch = (
-            ROOT
-            / "third_party"
-            / "Upscale"
-            / "realesrgan"
-            / "vendor"
-            / "Real-ESRGAN"
-            / "realesrgan"
-            / "archs"
-            / "srvgg_arch.py"
-        ).read_text(encoding="utf-8")
+        vendor = ROOT / "third_party" / "Upscale" / "realesrgan" / "vendor"
+        runner = (vendor / "inference_realesrgan_video.py").read_text(encoding="utf-8")
+        utils = (vendor / "realesrgan" / "utils.py").read_text(encoding="utf-8")
+        arch = (vendor / "realesrgan" / "archs" / "srvgg_arch.py").read_text(
+            encoding="utf-8"
+        )
         self.assertNotIn("basicsr", requirements)
         self.assertNotIn("from basicsr", runner)
         self.assertIn("GFPGANer = None", runner)
@@ -77,27 +72,11 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertNotIn("ARCH_REGISTRY", arch)
 
     def test_realesrgan_runtime_package_inits_are_trimmed(self):
-        package_init = (
-            ROOT
-            / "third_party"
-            / "Upscale"
-            / "realesrgan"
-            / "vendor"
-            / "Real-ESRGAN"
-            / "realesrgan"
-            / "__init__.py"
-        ).read_text(encoding="utf-8")
-        arch_init = (
-            ROOT
-            / "third_party"
-            / "Upscale"
-            / "realesrgan"
-            / "vendor"
-            / "Real-ESRGAN"
-            / "realesrgan"
-            / "archs"
-            / "__init__.py"
-        ).read_text(encoding="utf-8")
+        vendor_pkg = (
+            ROOT / "third_party" / "Upscale" / "realesrgan" / "vendor" / "realesrgan"
+        )
+        package_init = (vendor_pkg / "__init__.py").read_text(encoding="utf-8")
+        arch_init = (vendor_pkg / "archs" / "__init__.py").read_text(encoding="utf-8")
         self.assertIn("from .utils import RealESRGANer", package_init)
         self.assertNotIn("from .data", package_init)
         self.assertNotIn("from .models", package_init)
@@ -114,7 +93,6 @@ class ScriptBoundaryTests(unittest.TestCase):
             / "Upscale"
             / "realesrgan"
             / "vendor"
-            / "Real-ESRGAN"
             / "inference_realesrgan_video.py"
         ).read_text(encoding="utf-8")
         self.assertIn('default="realesr-animevideov3"', runner)

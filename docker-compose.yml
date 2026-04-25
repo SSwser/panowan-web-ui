@@ -48,7 +48,7 @@ services:
       MODEL_ROOT: /models
       PANOWAN_ENGINE_DIR: /engines/panowan
       UPSCALE_ENGINE_DIR: /engines/upscale
-      UPSCALE_WEIGHTS_DIR: /models/upscale
+      UPSCALE_WEIGHTS_DIR: /models
       JOB_BACKEND: local
       TORCH_CUDNN_V8_API_ENABLED: "1"
       CUDA_MODULE_LOADING: LAZY
@@ -78,6 +78,6 @@ services:
       MODEL_ROOT: /models
       PANOWAN_ENGINE_DIR: /engines/panowan
       UPSCALE_ENGINE_DIR: /engines/upscale
-      UPSCALE_WEIGHTS_DIR: /models/upscale
+      UPSCALE_WEIGHTS_DIR: /models
     volumes:
       - ${MODEL_ROOT:-./data/models}:/models

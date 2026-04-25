@@ -9,6 +9,11 @@ from unittest.mock import MagicMock, patch
 from app.models.providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
 from app.models.registry import FileCheck, ModelSpec
 from app.settings import load_settings
+from app.upscale_contract import (
+    REALESRGAN_ENGINE_FILES,
+    REALESRGAN_WEIGHT_FAMILY,
+    REALESRGAN_WEIGHT_FILENAME,
+)
 
 
 class ModelSpecTests(unittest.TestCase):
@@ -415,7 +420,7 @@ class LoadSpecsTests(unittest.TestCase):
             "LORA_CHECKPOINT_PATH": "/models/PanoWan/latest-lora.ckpt",
             "PANOWAN_ENGINE_DIR": "/engines/panowan",
             "UPSCALE_ENGINE_DIR": "/engines/upscale",
-            "UPSCALE_WEIGHTS_DIR": "/models/upscale",
+            "UPSCALE_WEIGHTS_DIR": "/models",
         }
         with patch.dict(os.environ, env, clear=True):
             specs = load_specs(load_settings())
@@ -433,29 +438,19 @@ class LoadSpecsTests(unittest.TestCase):
             "LORA_CHECKPOINT_PATH": "/models/PanoWan/latest-lora.ckpt",
             "PANOWAN_ENGINE_DIR": "/engines/panowan",
             "UPSCALE_ENGINE_DIR": "/engines/upscale",
-            "UPSCALE_WEIGHTS_DIR": "/models/upscale",
+            "UPSCALE_WEIGHTS_DIR": "/models",
         }
         with patch.dict(os.environ, env, clear=True):
             specs = load_specs(load_settings())
         re_engine = next(s for s in specs if s.name == "upscale-realesrgan-engine")
         self.assertEqual(re_engine.source_type, "submodule")
         self.assertEqual(re_engine.target_dir, "/engines/upscale")
+        # The engine spec must derive its file list from the shared contract
+        # module so the spec, the upscaler availability check, and the actual
+        # vendored layout cannot drift apart.
         self.assertEqual(
-            re_engine.files,
-            [
-                FileCheck(path="realesrgan/adapter.py"),
-                FileCheck(
-                    path="realesrgan/vendor/Real-ESRGAN/inference_realesrgan_video.py"
-                ),
-                FileCheck(path="realesrgan/vendor/Real-ESRGAN/realesrgan/__init__.py"),
-                FileCheck(path="realesrgan/vendor/Real-ESRGAN/realesrgan/utils.py"),
-                FileCheck(
-                    path="realesrgan/vendor/Real-ESRGAN/realesrgan/archs/__init__.py"
-                ),
-                FileCheck(
-                    path="realesrgan/vendor/Real-ESRGAN/realesrgan/archs/srvgg_arch.py"
-                ),
-            ],
+            [f.path for f in re_engine.files],
+            list(REALESRGAN_ENGINE_FILES),
         )
 
     def test_upscale_realesrgan_weights_spec_uses_official_http_artifact(self) -> None:
@@ -464,7 +459,7 @@ class LoadSpecsTests(unittest.TestCase):
             "LORA_CHECKPOINT_PATH": "/models/PanoWan/latest-lora.ckpt",
             "PANOWAN_ENGINE_DIR": "/engines/panowan",
             "UPSCALE_ENGINE_DIR": "/engines/upscale",
-            "UPSCALE_WEIGHTS_DIR": "/models/upscale",
+            "UPSCALE_WEIGHTS_DIR": "/models",
         }
         with patch.dict(os.environ, env, clear=True):
             specs = load_specs(load_settings())
@@ -474,6 +469,6 @@ class LoadSpecsTests(unittest.TestCase):
             weights.source_ref,
             "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
         )
-        self.assertEqual(weights.target_dir, "/models/upscale/realesrgan")
-        self.assertEqual([f.path for f in weights.files], ["realesr-animevideov3.pth"])
+        self.assertEqual(weights.target_dir, f"/models/{REALESRGAN_WEIGHT_FAMILY}")
+        self.assertEqual([f.path for f in weights.files], [REALESRGAN_WEIGHT_FILENAME])
         self.assertTrue(weights.files[0].sha256)

@@ -18,6 +18,8 @@ from app.upscale_contract import (
     REALESRGAN_REQUIRED_COMMANDS,
     REALESRGAN_RUNTIME_MODULES,
     REALESRGAN_RUNTIME_PYTHON,
+    REALESRGAN_WEIGHT_FAMILY,
+    REALESRGAN_WEIGHT_FILENAME,
     REALESRGAN_WEIGHT_FILES,
 )
 
@@ -87,9 +89,13 @@ class RealESRGANBackend:
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
-        script = container_join(engine_dir, "realesrgan", "adapter.py")
+        # Deterministic flat-vendored entrypoint. The script path, weight path,
+        # and the model name match the asset declarations in
+        # ``app.upscale_contract`` exactly so availability checks and the
+        # actual command never drift.
+        script = container_join(engine_dir, "realesrgan", "vendor", "__main__.py")
         model_path = container_join(
-            weights_dir, "realesrgan", "realesr-animevideov3.pth"
+            weights_dir, REALESRGAN_WEIGHT_FAMILY, REALESRGAN_WEIGHT_FILENAME
         )
         return [
             self.assets.runtime_python or sys.executable,

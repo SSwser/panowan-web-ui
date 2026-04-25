@@ -77,6 +77,9 @@ panowan_env_runtime() {
   export OUTPUT_DIR="${OUTPUT_DIR:-${RUNTIME_DIR}/outputs}"
   export JOB_STORE_PATH="${JOB_STORE_PATH:-${RUNTIME_DIR}/jobs.json}"
   export UPSCALE_ENGINE_DIR="${UPSCALE_ENGINE_DIR:-/engines/upscale}"
-  export UPSCALE_WEIGHTS_DIR="${UPSCALE_WEIGHTS_DIR:-${MODEL_ROOT}/upscale}"
+  # ADR 0003: backend weights live under model-family folders directly under
+  # MODEL_ROOT (e.g. ${MODEL_ROOT}/Real-ESRGAN/...), not under a functional
+  # upscale/ grouping. Default = MODEL_ROOT.
+  export UPSCALE_WEIGHTS_DIR="${UPSCALE_WEIGHTS_DIR:-${MODEL_ROOT}}"
   export UPSCALE_OUTPUT_DIR="${UPSCALE_OUTPUT_DIR:-${OUTPUT_DIR}}"
 }
