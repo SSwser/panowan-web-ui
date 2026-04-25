@@ -329,7 +329,7 @@ def upscale_video(
     target_width: int | None = None,
     target_height: int | None = None,
     engine_dir: str = "/engines/upscale",
-    weights_dir: str = "/models/upscale",
+    weights_dir: str = "/models",
     timeout_seconds: int = 1800,
     should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
