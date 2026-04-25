@@ -72,6 +72,8 @@ class UpscaleBackendAssets:
     engine_files: tuple[str, ...]
     weight_files: tuple[str, ...]
     required_commands: tuple[str, ...] = ()
+    runtime_python: str | None = None
+    required_python_modules: tuple[str, ...] = ()
 
 class UpscalerBackend(Protocol):
     name: str
@@ -138,7 +140,11 @@ Required engine files:
 
 ```text
 realesrgan/adapter.py
-realesrgan/vendor/inference_realesrgan_video.py
+realesrgan/vendor/Real-ESRGAN/inference_realesrgan_video.py
+realesrgan/vendor/Real-ESRGAN/realesrgan/__init__.py
+realesrgan/vendor/Real-ESRGAN/realesrgan/utils.py
+realesrgan/vendor/Real-ESRGAN/realesrgan/archs/__init__.py
+realesrgan/vendor/Real-ESRGAN/realesrgan/archs/srvgg_arch.py
 ```
 
 Required weight files:
@@ -147,18 +153,24 @@ Required weight files:
 realesrgan/realesr-animevideov3.pth
 ```
 
-RealESRGAN is the first backend to make fully available. The current bridge launcher should be replaced by a deterministic adapter that imports or executes the vendored runner from the backend directory. Environment-variable fallback is not part of the target design.
+RealESRGAN is the first backend to make fully available. The deterministic adapter executes a trimmed vendored runtime bundle from the backend directory. The vendored package keeps only the anime-video inference path and slim `__init__.py` files so importing `realesrgan` does not pull training/data/version modules.
 
 Command shape:
 
 ```text
-python /engines/upscale/realesrgan/adapter.py \
+/opt/venvs/upscale-realesrgan/bin/python /engines/upscale/realesrgan/adapter.py \
   -i <input_path> \
   -o <output_dir> \
   -n realesr-animevideov3 \
-  -s <scale> \
-  --half
+    --model_path /models/upscale/realesrgan/realesr-animevideov3.pth \
+    -s <scale>
 ```
+
+Runtime availability probe:
+
+- runtime python: `/opt/venvs/upscale-realesrgan/bin/python`
+- required modules: `cv2`, `ffmpeg`, `tqdm`
+- required command: `ffmpeg`
 
 ### RealBasicVSR
 

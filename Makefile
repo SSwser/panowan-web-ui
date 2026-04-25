@@ -26,7 +26,7 @@ $(eval $(call normalize_bind_var,MODEL_ROOT))
 
 .PHONY: init submodule env test build setup-models up down logs health doctor docker-env prune
 
-init: env submodule
+init: env submodule doctor
 
 submodule:
 	git submodule update --init --recursive
