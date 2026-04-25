@@ -1,0 +1,15 @@
+[backend]
+name = "realesrgan"
+display_name = "Real-ESRGAN"
+
+[source]
+type = "git"
+url = "https://github.com/xinntao/Real-ESRGAN.git"
+revision = "v0.3.0"
+
+[filter]
+include = ["inference/inference_realesrgan_video.py", "realesrgan/**"]
+exclude = ["realesrgan/**/test*", "**/*.md"]
+
+[output]
+target = "vendor"
