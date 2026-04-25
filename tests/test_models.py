@@ -444,7 +444,17 @@ class LoadSpecsTests(unittest.TestCase):
             re_engine.files,
             [
                 FileCheck(path="realesrgan/adapter.py"),
-                FileCheck(path="realesrgan/vendor/inference_realesrgan_video.py"),
+                FileCheck(
+                    path="realesrgan/vendor/Real-ESRGAN/inference_realesrgan_video.py"
+                ),
+                FileCheck(path="realesrgan/vendor/Real-ESRGAN/realesrgan/__init__.py"),
+                FileCheck(path="realesrgan/vendor/Real-ESRGAN/realesrgan/utils.py"),
+                FileCheck(
+                    path="realesrgan/vendor/Real-ESRGAN/realesrgan/archs/__init__.py"
+                ),
+                FileCheck(
+                    path="realesrgan/vendor/Real-ESRGAN/realesrgan/archs/srvgg_arch.py"
+                ),
             ],
         )
 

@@ -35,11 +35,45 @@ class UpscalerRegistryTests(unittest.TestCase):
 
 
 class UpscalerAvailabilityTests(unittest.TestCase):
+    backend_name = "realesrgan-animevideov3"
+
+    def _write_relative_file(
+        self, root_dir: str, relative_path: str, contents: str = "x"
+    ) -> None:
+        file_path = Path(root_dir, *relative_path.split("/"))
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(contents)
+
+    def _materialize_backend_assets(
+        self, engine_dir: str, weights_dir: str | None = None
+    ) -> None:
+        backend = UPSCALE_BACKENDS[self.backend_name]
+        for relative_path in backend.assets.engine_files:
+            self._write_relative_file(engine_dir, relative_path)
+        if weights_dir is None:
+            return
+        for relative_path in backend.assets.weight_files:
+            self._write_relative_file(weights_dir, relative_path)
+
     def test_registered_backends_declare_assets(self) -> None:
         for backend in UPSCALE_BACKENDS.values():
             self.assertTrue(backend.assets.engine_files)
             self.assertIsInstance(backend.assets.weight_files, tuple)
             self.assertIsInstance(backend.assets.required_commands, tuple)
+
+    def test_registered_backends_declare_runtime_module_tuple(self) -> None:
+        for backend in UPSCALE_BACKENDS.values():
+            self.assertIsInstance(backend.assets.required_python_modules, tuple)
+
+    def test_realesrgan_declares_backend_runtime_python(self) -> None:
+        backend = UPSCALE_BACKENDS["realesrgan-animevideov3"]
+        self.assertEqual(
+            backend.assets.runtime_python,
+            "/opt/venvs/upscale-realesrgan/bin/python",
+        )
+        self.assertIn("cv2", backend.assets.required_python_modules)
+        self.assertIn("ffmpeg", backend.assets.required_python_modules)
+        self.assertIn("tqdm", backend.assets.required_python_modules)
 
     def test_backend_unavailable_when_engine_file_missing(self) -> None:
         with (
@@ -58,11 +92,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as engine_dir,
             tempfile.TemporaryDirectory() as weights_dir,
         ):
-            Path(engine_dir, "realesrgan", "vendor").mkdir(parents=True)
-            Path(engine_dir, "realesrgan", "adapter.py").write_text("x")
-            Path(
-                engine_dir, "realesrgan", "vendor", "inference_realesrgan_video.py"
-            ).write_text("x")
+            self._materialize_backend_assets(engine_dir)
 
             available = get_available_upscale_backends(engine_dir, weights_dir)
 
@@ -73,17 +103,118 @@ class UpscalerAvailabilityTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as engine_dir,
             tempfile.TemporaryDirectory() as weights_dir,
         ):
-            Path(engine_dir, "realesrgan", "vendor").mkdir(parents=True)
-            Path(engine_dir, "realesrgan", "adapter.py").write_text("x")
-            Path(
-                engine_dir, "realesrgan", "vendor", "inference_realesrgan_video.py"
-            ).write_text("x")
-            Path(weights_dir, "realesrgan").mkdir(parents=True)
-            Path(weights_dir, "realesrgan", "realesr-animevideov3.pth").write_text("x")
+            real_exists = os.path.exists
+            self._materialize_backend_assets(engine_dir, weights_dir)
 
-            available = get_available_upscale_backends(engine_dir, weights_dir)
+            with (
+                patch("app.upscaler.shutil.which", return_value="ffmpeg"),
+                patch("app.upscaler.os.path.exists") as mock_exists,
+                patch("app.upscaler.subprocess.run") as mock_run,
+            ):
+                mock_run.return_value = SimpleNamespace(returncode=0)
+
+                def exists(path: str) -> bool:
+                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                        return True
+                    return real_exists(path)
+
+                mock_exists.side_effect = exists
+                available = get_available_upscale_backends(engine_dir, weights_dir)
 
         self.assertIn("realesrgan-animevideov3", available)
+
+    def test_backend_unavailable_when_runtime_python_missing(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
+            real_exists = os.path.exists
+            self._materialize_backend_assets(engine_dir, weights_dir)
+
+            with (
+                patch("app.upscaler.shutil.which", return_value="ffmpeg"),
+                patch("app.upscaler.os.path.exists") as mock_exists,
+            ):
+
+                def exists(path: str) -> bool:
+                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                        return False
+                    return real_exists(path)
+
+                mock_exists.side_effect = exists
+                available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertNotIn("realesrgan-animevideov3", available)
+
+    def test_backend_unavailable_when_runtime_probe_fails(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
+            real_exists = os.path.exists
+            self._materialize_backend_assets(engine_dir, weights_dir)
+
+            with (
+                patch("app.upscaler.shutil.which", return_value="ffmpeg"),
+                patch("app.upscaler.os.path.exists") as mock_exists,
+                patch("app.upscaler.subprocess.run") as mock_run,
+            ):
+                mock_run.return_value = SimpleNamespace(returncode=1)
+
+                def exists(path: str) -> bool:
+                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                        return True
+                    return real_exists(path)
+
+                mock_exists.side_effect = exists
+                available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertNotIn("realesrgan-animevideov3", available)
+        mock_run.assert_called_once_with(
+            [
+                "/opt/venvs/upscale-realesrgan/bin/python",
+                "-c",
+                "import cv2; import ffmpeg; import tqdm",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+
+    def test_backend_available_when_runtime_probe_succeeds(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
+            real_exists = os.path.exists
+            self._materialize_backend_assets(engine_dir, weights_dir)
+
+            with (
+                patch("app.upscaler.shutil.which", return_value="ffmpeg"),
+                patch("app.upscaler.os.path.exists") as mock_exists,
+                patch("app.upscaler.subprocess.run") as mock_run,
+            ):
+                mock_run.return_value = SimpleNamespace(returncode=0)
+
+                def exists(path: str) -> bool:
+                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                        return True
+                    return real_exists(path)
+
+                mock_exists.side_effect = exists
+                available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertIn("realesrgan-animevideov3", available)
+        mock_run.assert_called_once_with(
+            [
+                "/opt/venvs/upscale-realesrgan/bin/python",
+                "-c",
+                "import cv2; import ffmpeg; import tqdm",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
 
     def test_backend_unavailable_when_required_command_missing(self) -> None:
         with (
@@ -121,8 +252,14 @@ class RealESRGANBackendTests(unittest.TestCase):
             weights_dir="/models/upscale",
             scale=2,
         )
+        self.assertEqual(cmd[0], "/opt/venvs/upscale-realesrgan/bin/python")
         cmd_str = " ".join(cmd)
         self.assertIn("/engines/upscale/realesrgan/adapter.py", cmd_str)
+        self.assertIn("--model_path", cmd_str)
+        self.assertIn(
+            "/models/upscale/realesrgan/realesr-animevideov3.pth",
+            cmd_str,
+        )
         self.assertIn("-i", cmd_str)
         self.assertIn("/input/video.mp4", cmd_str)
         self.assertIn("-o", cmd_str)
@@ -130,8 +267,7 @@ class RealESRGANBackendTests(unittest.TestCase):
         self.assertIn("-n", cmd_str)
         self.assertIn("realesr-animevideov3", cmd_str)
         self.assertIn("-s", cmd_str)
-        self.assertIn("2", cmd_str)
-        self.assertIn("--half", cmd_str)
+        self.assertNotIn("--half", cmd_str)
 
     def test_validate_params_rejects_exceed_max_scale(self) -> None:
         result = self.backend.validate_params(scale=8)

@@ -13,15 +13,24 @@ from app.process_runner import (
     output_tail,
     run_cancellable_process,
 )
+from app.upscale_contract import (
+    REALESRGAN_ENGINE_FILES,
+    REALESRGAN_REQUIRED_COMMANDS,
+    REALESRGAN_RUNTIME_MODULES,
+    REALESRGAN_RUNTIME_PYTHON,
+    REALESRGAN_WEIGHT_FILES,
+)
 
 
 @dataclass(frozen=True)
 class UpscaleBackendAssets:
-    """Files and commands a backend needs to be considered available."""
+    """Files, commands, and Python runtime a backend needs to be available."""
 
     engine_files: tuple[str, ...]
     weight_files: tuple[str, ...]
     required_commands: tuple[str, ...] = ()
+    runtime_python: str | None = None
+    required_python_modules: tuple[str, ...] = ()
 
 
 @runtime_checkable
@@ -61,11 +70,11 @@ class RealESRGANBackend:
     default_scale: int = 2
     max_scale: int = 4
     assets: UpscaleBackendAssets = UpscaleBackendAssets(
-        engine_files=(
-            "realesrgan/adapter.py",
-            "realesrgan/vendor/inference_realesrgan_video.py",
-        ),
-        weight_files=("realesrgan/realesr-animevideov3.pth",),
+        engine_files=REALESRGAN_ENGINE_FILES,
+        weight_files=REALESRGAN_WEIGHT_FILES,
+        required_commands=REALESRGAN_REQUIRED_COMMANDS,
+        runtime_python=REALESRGAN_RUNTIME_PYTHON,
+        required_python_modules=REALESRGAN_RUNTIME_MODULES,
     )
 
     def build_command(
@@ -79,8 +88,11 @@ class RealESRGANBackend:
         target_height: int | None = None,
     ) -> list[str]:
         script = container_join(engine_dir, "realesrgan", "adapter.py")
+        model_path = container_join(
+            weights_dir, "realesrgan", "realesr-animevideov3.pth"
+        )
         return [
-            sys.executable,
+            self.assets.runtime_python or sys.executable,
             script,
             "-i",
             input_path,
@@ -88,9 +100,10 @@ class RealESRGANBackend:
             output_dir,
             "-n",
             "realesr-animevideov3",
+            "--model_path",
+            model_path,
             "-s",
             str(scale),
-            "--half",
         ]
 
     def validate_params(
@@ -242,6 +255,30 @@ UPSCALE_BACKENDS: dict[str, UpscalerBackend] = {
 }
 
 
+def _has_backend_runtime(backend: UpscalerBackend) -> bool:
+    if backend.assets.runtime_python is None:
+        return True
+    if not os.path.exists(backend.assets.runtime_python):
+        return False
+    if not backend.assets.required_python_modules:
+        return True
+
+    imports = "; ".join(
+        f"import {module_name}"
+        for module_name in backend.assets.required_python_modules
+    )
+    try:
+        result = subprocess.run(
+            [backend.assets.runtime_python, "-c", imports],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
 def _has_backend_assets(
     backend: UpscalerBackend,
     engine_dir: str,
@@ -256,6 +293,8 @@ def _has_backend_assets(
     for command in backend.assets.required_commands:
         if shutil.which(command) is None:
             return False
+    if not _has_backend_runtime(backend):
+        return False
     return True
 
 

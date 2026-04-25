@@ -2,6 +2,7 @@ import os
 
 from app.paths import container_child
 from app.settings import Settings
+from app.upscale_contract import REALESRGAN_ENGINE_FILES
 
 from .registry import FileCheck, ModelSpec
 
@@ -39,10 +40,7 @@ def load_specs(settings: Settings) -> list[ModelSpec]:
             source_type="submodule",
             source_ref="",
             target_dir=settings.upscale_engine_dir,
-            files=[
-                FileCheck(path="realesrgan/adapter.py"),
-                FileCheck(path="realesrgan/vendor/inference_realesrgan_video.py"),
-            ],
+            files=[FileCheck(path=path) for path in REALESRGAN_ENGINE_FILES],
         ),
         ModelSpec(
             name="upscale-realesrgan-weights",
