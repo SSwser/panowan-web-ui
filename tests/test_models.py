@@ -1,11 +1,12 @@
 import contextlib
+import hashlib
 import io
 import os
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.models.providers import HuggingFaceProvider, SubmoduleProvider
+from app.models.providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
 from app.models.registry import FileCheck, ModelSpec
 from app.settings import load_settings
 
@@ -196,6 +197,104 @@ class HuggingFaceProviderTests(unittest.TestCase):
             )
 
 
+import tempfile
+from pathlib import Path
+
+
+class HttpProviderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.provider = HttpProvider()
+
+    def _make_spec(self, target_dir: str, sha256: str | None = None) -> ModelSpec:
+        return ModelSpec(
+            name="test-http",
+            source_type="http",
+            source_ref="https://example.com/model.bin",
+            target_dir=target_dir,
+            files=[FileCheck(path="model.bin", sha256=sha256)],
+        )
+
+    def test_ensure_skips_when_file_present_and_hash_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            payload = b"hello"
+            full = Path(td, "model.bin")
+            full.write_bytes(payload)
+            digest = hashlib.sha256(payload).hexdigest()
+            spec = self._make_spec(td, sha256=digest)
+
+            with patch("app.models.providers.urllib.request.urlopen") as mock_open:
+                self.provider.ensure(spec)
+                mock_open.assert_not_called()
+
+    def test_ensure_downloads_atomically_and_verifies_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            payload = b"binary-content"
+            digest = hashlib.sha256(payload).hexdigest()
+            spec = self._make_spec(td, sha256=digest)
+
+            mock_response = MagicMock()
+            mock_response.read.side_effect = [payload, b""]
+            mock_response.__enter__ = lambda s: s
+            mock_response.__exit__ = lambda s, a, b, c: None
+
+            with patch(
+                "app.models.providers.urllib.request.urlopen",
+                return_value=mock_response,
+            ):
+                self.provider.ensure(spec)
+
+            final = Path(td, "model.bin")
+            self.assertTrue(final.is_file())
+            self.assertEqual(final.read_bytes(), payload)
+            self.assertFalse(Path(td, "model.bin.part").exists())
+
+    def test_ensure_raises_and_cleans_temp_on_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            spec = self._make_spec(td, sha256="00" * 32)
+
+            mock_response = MagicMock()
+            mock_response.read.side_effect = [b"wrong-bytes", b""]
+            mock_response.__enter__ = lambda s: s
+            mock_response.__exit__ = lambda s, a, b, c: None
+
+            with patch(
+                "app.models.providers.urllib.request.urlopen",
+                return_value=mock_response,
+            ):
+                with self.assertRaises(RuntimeError) as ctx:
+                    self.provider.ensure(spec)
+            self.assertIn("Hash mismatch", str(ctx.exception))
+            self.assertFalse(Path(td, "model.bin").exists())
+            self.assertFalse(Path(td, "model.bin.part").exists())
+
+    def test_verify_raises_when_file_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            spec = self._make_spec(td)
+            with self.assertRaises(FileNotFoundError):
+                self.provider.verify(spec)
+
+    def test_verify_raises_on_sha256_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            Path(td, "model.bin").write_bytes(b"bad")
+            spec = self._make_spec(td, sha256="00" * 32)
+            with self.assertRaises(RuntimeError) as ctx:
+                self.provider.verify(spec)
+            self.assertIn("Hash mismatch", str(ctx.exception))
+
+    def test_ensure_rejects_specs_with_multiple_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            spec = ModelSpec(
+                name="bad-http",
+                source_type="http",
+                source_ref="https://example.com/a.bin",
+                target_dir=td,
+                files=[FileCheck(path="a.bin"), FileCheck(path="b.bin")],
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                self.provider.ensure(spec)
+            self.assertIn("exactly one file", str(ctx.exception))
+
+
 from app.models.manager import ModelManager
 
 
@@ -251,6 +350,11 @@ class ModelManagerTests(unittest.TestCase):
         manager = ModelManager()
         missing = manager.verify([spec])
         self.assertEqual(missing, [])
+
+    def test_manager_registers_http_source_type(self) -> None:
+        manager = ModelManager()
+        self.assertIn("http", manager._providers)
+        self.assertIsInstance(manager._providers["http"], HttpProvider)
 
 
 from app.models.specs import load_specs
@@ -319,8 +423,8 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertIn("wan-t2v-1.3b", names)
         self.assertIn("panowan-lora", names)
         self.assertIn("panowan-engine", names)
-        self.assertIn("upscale-engine", names)
-        self.assertIn("realesrgan-weights", names)
+        self.assertIn("upscale-realesrgan-engine", names)
+        self.assertIn("upscale-realesrgan-weights", names)
         self.assertEqual(len(specs), 5)
 
     def test_upscale_engine_spec_is_submodule_type(self) -> None:
@@ -333,10 +437,33 @@ class LoadSpecsTests(unittest.TestCase):
         }
         with patch.dict(os.environ, env, clear=True):
             specs = load_specs(load_settings())
-        re_engine = next(s for s in specs if s.name == "upscale-engine")
+        re_engine = next(s for s in specs if s.name == "upscale-realesrgan-engine")
         self.assertEqual(re_engine.source_type, "submodule")
         self.assertEqual(re_engine.target_dir, "/engines/upscale")
         self.assertEqual(
             re_engine.files,
-            [FileCheck(path="realesrgan/inference_realesrgan_video.py")],
+            [
+                FileCheck(path="realesrgan/adapter.py"),
+                FileCheck(path="realesrgan/vendor/inference_realesrgan_video.py"),
+            ],
         )
+
+    def test_upscale_realesrgan_weights_spec_uses_official_http_artifact(self) -> None:
+        env = {
+            "WAN_MODEL_PATH": "/models/Wan-AI/Wan2.1-T2V-1.3B",
+            "LORA_CHECKPOINT_PATH": "/models/PanoWan/latest-lora.ckpt",
+            "PANOWAN_ENGINE_DIR": "/engines/panowan",
+            "UPSCALE_ENGINE_DIR": "/engines/upscale",
+            "UPSCALE_WEIGHTS_DIR": "/models/upscale",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            specs = load_specs(load_settings())
+        weights = next(s for s in specs if s.name == "upscale-realesrgan-weights")
+        self.assertEqual(weights.source_type, "http")
+        self.assertEqual(
+            weights.source_ref,
+            "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
+        )
+        self.assertEqual(weights.target_dir, "/models/upscale/realesrgan")
+        self.assertEqual([f.path for f in weights.files], ["realesr-animevideov3.pth"])
+        self.assertTrue(weights.files[0].sha256)

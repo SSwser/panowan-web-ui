@@ -1,4 +1,4 @@
-from .providers import HuggingFaceProvider, SubmoduleProvider
+from .providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
 from .registry import ModelSpec
 
 
@@ -7,6 +7,7 @@ class ModelManager:
         self._providers = {
             "huggingface": HuggingFaceProvider(),
             "submodule": SubmoduleProvider(),
+            "http": HttpProvider(),
         }
 
     def ensure(self, specs: list[ModelSpec]) -> None:

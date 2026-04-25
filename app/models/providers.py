@@ -1,5 +1,6 @@
 import hashlib
 import os
+import urllib.request
 from typing import Protocol
 
 from .registry import ModelSpec
@@ -81,3 +82,69 @@ class SubmoduleProvider:
 
     def verify(self, spec: ModelSpec) -> None:
         self._require_present(spec)
+
+
+class HttpProvider:
+    """Downloads single-file model artifacts from a direct HTTP(S) URL."""
+
+    def _all_files_present(self, spec: ModelSpec) -> bool:
+        for file_check in spec.files:
+            full_path = os.path.join(spec.target_dir, file_check.path)
+            if not os.path.isfile(full_path):
+                return False
+            if file_check.sha256 and not _check_sha256(full_path, file_check.sha256):
+                return False
+        return True
+
+    def verify(self, spec: ModelSpec) -> None:
+        for file_check in spec.files:
+            full_path = os.path.join(spec.target_dir, file_check.path)
+            if not os.path.isfile(full_path):
+                raise FileNotFoundError(
+                    f"Missing model file: {full_path} (spec: {spec.name})"
+                )
+            if file_check.sha256 and not _check_sha256(full_path, file_check.sha256):
+                raise RuntimeError(f"Hash mismatch for {full_path} (spec: {spec.name})")
+
+    def ensure(self, spec: ModelSpec) -> None:
+        if self._all_files_present(spec):
+            return
+        if len(spec.files) != 1:
+            raise RuntimeError(
+                f"HTTP model spec must declare exactly one file: {spec.name}"
+            )
+
+        file_check = spec.files[0]
+        os.makedirs(spec.target_dir, exist_ok=True)
+        final_path = os.path.join(spec.target_dir, file_check.path)
+        os.makedirs(os.path.dirname(final_path) or spec.target_dir, exist_ok=True)
+        tmp_path = final_path + ".part"
+
+        try:
+            with urllib.request.urlopen(spec.source_ref) as response, open(
+                tmp_path, "wb"
+            ) as out:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+
+            if file_check.sha256 and not _check_sha256(tmp_path, file_check.sha256):
+                raise RuntimeError(
+                    f"Hash mismatch for downloaded {final_path} (spec: {spec.name})"
+                )
+
+            os.replace(tmp_path, final_path)
+        except BaseException:
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            raise
+
+        if not self._all_files_present(spec):
+            raise RuntimeError(
+                f"Download completed but files still missing for {spec.name}"
+            )
