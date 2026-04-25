@@ -1,5 +1,6 @@
 import hashlib
 import os
+import ssl
 import urllib.request
 from typing import Protocol
 
@@ -9,6 +10,23 @@ try:
     from huggingface_hub import snapshot_download
 except ImportError:  # pragma: no cover
     snapshot_download = None  # type: ignore[assignment]
+
+
+def _make_ssl_context() -> ssl.SSLContext:
+    """Return an SSL context that verifies certificates.
+
+    Prefers *certifi*'s CA bundle (available whenever huggingface_hub is
+    installed) so that uv-managed Python builds — which do not link against
+    the host OS CA store — can still verify HTTPS connections.
+    """
+    ctx = ssl.create_default_context()
+    try:
+        import certifi  # type: ignore[import-untyped]
+
+        ctx.load_verify_locations(cafile=certifi.where())
+    except ImportError:
+        pass  # fall back to default CA search (works on most system Pythons)
+    return ctx
 
 
 class ModelProvider(Protocol):
@@ -121,9 +139,11 @@ class HttpProvider:
         tmp_path = final_path + ".part"
 
         try:
-            with urllib.request.urlopen(spec.source_ref) as response, open(
-                tmp_path, "wb"
-            ) as out:
+            ssl_ctx = _make_ssl_context()
+            with (
+                urllib.request.urlopen(spec.source_ref, context=ssl_ctx) as response,
+                open(tmp_path, "wb") as out,
+            ):
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:

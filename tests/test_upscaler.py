@@ -42,7 +42,10 @@ class UpscalerAvailabilityTests(unittest.TestCase):
             self.assertIsInstance(backend.assets.required_commands, tuple)
 
     def test_backend_unavailable_when_engine_file_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
             Path(weights_dir, "realesrgan").mkdir(parents=True)
             Path(weights_dir, "realesrgan", "realesr-animevideov3.pth").write_text("x")
 
@@ -51,7 +54,10 @@ class UpscalerAvailabilityTests(unittest.TestCase):
         self.assertNotIn("realesrgan-animevideov3", available)
 
     def test_backend_unavailable_when_weight_file_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
             Path(engine_dir, "realesrgan", "vendor").mkdir(parents=True)
             Path(engine_dir, "realesrgan", "adapter.py").write_text("x")
             Path(
@@ -63,7 +69,10 @@ class UpscalerAvailabilityTests(unittest.TestCase):
         self.assertNotIn("realesrgan-animevideov3", available)
 
     def test_backend_available_when_assets_exist(self) -> None:
-        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
             Path(engine_dir, "realesrgan", "vendor").mkdir(parents=True)
             Path(engine_dir, "realesrgan", "adapter.py").write_text("x")
             Path(
@@ -77,7 +86,10 @@ class UpscalerAvailabilityTests(unittest.TestCase):
         self.assertIn("realesrgan-animevideov3", available)
 
     def test_backend_unavailable_when_required_command_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as engine_dir, tempfile.TemporaryDirectory() as weights_dir:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
             Path(engine_dir, "seedvr2", "projects").mkdir(parents=True)
             Path(
                 engine_dir, "seedvr2", "projects", "inference_seedvr2_3b.py"

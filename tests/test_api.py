@@ -403,8 +403,10 @@ class ApiTests(unittest.TestCase):
         self._seed_completed_source("done-unavail", output_path="/out.mp4")
 
         # Override the setUp default to simulate no available backends.
-        with patch("app.api.get_available_upscale_backends", return_value={}), \
-             patch("app.api.os.path.exists", return_value=True):
+        with (
+            patch("app.api.get_available_upscale_backends", return_value={}),
+            patch("app.api.os.path.exists", return_value=True),
+        ):
             with self.assertRaises(HTTPException) as ctx:
                 api.upscale(
                     {
@@ -419,12 +421,17 @@ class ApiTests(unittest.TestCase):
     def test_upscale_accepts_available_model(self) -> None:
         self._seed_completed_source("done-avail", output_path="/out.mp4")
 
-        with patch(
-            "app.api.get_available_upscale_backends",
-            return_value={
-                "realesrgan-animevideov3": UPSCALE_BACKENDS["realesrgan-animevideov3"]
-            },
-        ), patch("app.api.os.path.exists", return_value=True):
+        with (
+            patch(
+                "app.api.get_available_upscale_backends",
+                return_value={
+                    "realesrgan-animevideov3": UPSCALE_BACKENDS[
+                        "realesrgan-animevideov3"
+                    ]
+                },
+            ),
+            patch("app.api.os.path.exists", return_value=True),
+        ):
             response = api.upscale(
                 {
                     "source_job_id": "done-avail",
