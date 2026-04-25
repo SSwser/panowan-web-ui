@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+docker_proxy_export_wslenv_var() {
+    local name="$1"
+    if [[ -z "${!name:-}" ]]; then
+        return
+    fi
+
+    if [[ -n "${WSLENV:-}" ]]; then
+        case ":${WSLENV}:" in
+            *":${name}:"*|*":${name}/"*) ;;
+            *) export WSLENV="${WSLENV}:${name}" ;;
+        esac
+    else
+        export WSLENV="${name}"
+    fi
+}
+
 # Prefer local docker first.
 if command -v docker >/dev/null 2>&1; then
     exec docker "$@"
@@ -14,16 +30,12 @@ for wsl_cmd in wsl.exe wsl; do
 
     if "${wsl_cmd}" sh -lc 'command -v docker >/dev/null 2>&1'; then
         echo "[docker-proxy] local docker not found, using WSL docker via ${wsl_cmd}" >&2
-        if [[ "${wsl_cmd}" == "wsl.exe" ]] && [[ -n "${TAG:-}" ]]; then
-            # Ensure TAG is available in WSL for docker compose variable interpolation.
-            if [[ -n "${WSLENV:-}" ]]; then
-                case ":${WSLENV}:" in
-                    *":TAG:"*) ;;
-                    *) export WSLENV="${WSLENV}:TAG" ;;
-                esac
-            else
-                export WSLENV="TAG"
-            fi
+        if [[ "${wsl_cmd}" == "wsl.exe" ]]; then
+            # Forward common compose interpolation variables into WSL so
+            # `make`/shell overrides behave the same on Windows and WSL.
+            for name in TAG MODEL_ROOT PORT APT_MIRROR PYPI_INDEX; do
+                docker_proxy_export_wslenv_var "${name}"
+            done
         fi
         exec "${wsl_cmd}" docker "$@"
     fi

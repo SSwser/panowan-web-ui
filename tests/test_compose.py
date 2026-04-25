@@ -29,6 +29,8 @@ class ComposeTests(unittest.TestCase):
         self.assertIn("target: worker-panowan", worker_section)
         self.assertIn("gpus: all", worker_section)
         self.assertIn(":/models", worker_section)
+        self.assertNotIn("ENGINE:", worker_section)
+        self.assertNotIn("CAPABILITIES:", worker_section)
 
     def test_worker_service_waits_for_api_health(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")

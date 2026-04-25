@@ -28,3 +28,4 @@ dist/
 
 data/models/*
 !data/models/.gitkeep
+data/runtime/*.lock

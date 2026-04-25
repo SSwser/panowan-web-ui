@@ -44,11 +44,11 @@ services:
         required: false
     environment:
       SERVICE_ROLE: worker
-      ENGINE: panowan
-      CAPABILITIES: t2v,i2v,upscale
       RUNTIME_DIR: /app/runtime
       MODEL_ROOT: /models
       PANOWAN_ENGINE_DIR: /engines/panowan
+      UPSCALE_ENGINE_DIR: /engines/upscale
+      UPSCALE_WEIGHTS_DIR: /models/upscale
       JOB_BACKEND: local
       TORCH_CUDNN_V8_API_ENABLED: "1"
       CUDA_MODULE_LOADING: LAZY
@@ -77,5 +77,7 @@ services:
     environment:
       MODEL_ROOT: /models
       PANOWAN_ENGINE_DIR: /engines/panowan
+      UPSCALE_ENGINE_DIR: /engines/upscale
+      UPSCALE_WEIGHTS_DIR: /models/upscale
     volumes:
       - ${MODEL_ROOT:-./data/models}:/models

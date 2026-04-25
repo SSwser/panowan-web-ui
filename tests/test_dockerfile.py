@@ -34,4 +34,5 @@ class DockerfileTests(unittest.TestCase):
             "FROM engine-panowan-deps AS worker-panowan", 1
         )[1].split("FROM", 1)[0]
         self.assertIn("/engines/panowan", worker_section)
+        self.assertIn("/engines/upscale", worker_section)
         self.assertIn("start-worker.sh", worker_section)

@@ -18,13 +18,13 @@ run_timed() {
     log "DONE : ${label} (${elapsed}s)"
 }
 
-cd "${PANOWAN_APP_DIR}"
-log "Working directory: ${PANOWAN_APP_DIR}"
+cd "${PANOWAN_ENGINE_DIR}"
+log "Working directory: ${PANOWAN_ENGINE_DIR}"
 
 # ── Dev mode: validate mounted source and sync Python environment ─────────────
 if [[ "${DEV_MODE:-0}" == "1" ]]; then
     if [[ ! -f "pyproject.toml" ]]; then
-        echo "ERROR: PanoWan source not found at ${PANOWAN_APP_DIR}." >&2
+        echo "ERROR: PanoWan source not found at ${PANOWAN_ENGINE_DIR}." >&2
         echo "Ensure third_party/PanoWan submodule is initialized (make init), then ensure pyproject.toml exists there." >&2
         exit 1
     fi
@@ -42,49 +42,9 @@ if [[ "${DEV_MODE:-0}" == "1" ]]; then
     fi
 fi
 
-skip_model_download=false
-if [[ "${DEV_MODE:-0}" == "1" ]] && [[ "${DEV_SKIP_DOWNLOAD_MODELS:-0}" == "1" ]]; then
-    skip_model_download=true
-    log "[dev] DEV_SKIP_DOWNLOAD_MODELS=1, skipping model and LoRA downloads."
-fi
-
-log "Checking model files in ${WAN_MODEL_PATH} and $(dirname "${LORA_CHECKPOINT_PATH}")"
-if [[ "${skip_model_download}" != true ]] && ([[ ! -f "${WAN_DIFFUSION_FILE}" ]] || [[ ! -f "${WAN_T5_FILE}" ]]); then
-    log "Wan model weights missing. Downloading into ${WAN_MODEL_PATH} (this can take several minutes)."
-    export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
-    mkdir -p "${WAN_MODEL_PATH}"
-    run_timed "hf download Wan-AI/Wan2.1-T2V-1.3B" \
-        uvx --from="huggingface_hub[cli]" hf download \
-            Wan-AI/Wan2.1-T2V-1.3B \
-            --local-dir "${WAN_MODEL_PATH}" \
-            --max-workers "${HF_MAX_WORKERS:-8}"
-else
-    log "Wan model weights already present."
-fi
-
-lora_dir="$(dirname "${LORA_CHECKPOINT_PATH}")"
-
-if [[ "${skip_model_download}" != true ]] && [[ ! -f "${LORA_CHECKPOINT_PATH}" ]]; then
-    log "PanoWan LoRA checkpoint missing. Downloading into ${lora_dir}."
-    mkdir -p "${lora_dir}"
-    lora_downloaded=false
-    for i in 1 2 3; do
-        log "LoRA download attempt ${i}/3"
-        if run_timed "download-panowan.sh attempt ${i}" bash ./scripts/download-panowan.sh "${lora_dir}"; then
-            lora_downloaded=true
-            break
-        fi
-        log "Attempt ${i} failed, waiting 30s before retry..."
-        sleep 30
-    done
-
-    if [[ "${lora_downloaded}" != true ]]; then
-        echo "Failed to download PanoWan LoRA weights after 3 attempts." >&2
-        exit 1
-    fi
-else
-    log "PanoWan LoRA checkpoint already present."
-fi
+# ── Model asset provisioning ──
+log "Checking model assets..."
+python -m app.models ensure
 
 # Optional pagecache warm-up: set VMTOUCH_MODELS=1 in .env to enable.
 # Pre-loads model weights into the OS page cache so the first inference
@@ -93,12 +53,13 @@ fi
 if [[ "${VMTOUCH_MODELS:-0}" == "1" ]]; then
     if command -v vmtouch &>/dev/null; then
         log "Warming pagecache for model files (background)."
-        vmtouch -t "${WAN_MODEL_PATH}" "${lora_dir}" &>/dev/null &
+        vmtouch -t "${WAN_MODEL_PATH}" "$(dirname "${LORA_CHECKPOINT_PATH}")" &>/dev/null &
     else
         echo "WARNING: VMTOUCH_MODELS=1 but vmtouch is not installed, skipping."
     fi
 fi
 
 cd /app
+panowan_log_config
 log "Runtime prerequisites ready. Launching API service..."
 exec python3 -m app.main

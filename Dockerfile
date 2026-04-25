@@ -18,12 +18,12 @@ ARG APT_MIRROR=
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     if [ -n "${APT_MIRROR}" ]; then \
-      sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list \
-      && sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
+    sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list \
+    && sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
     fi && \
     apt-get update && apt-get install -y \
-      python3 \
-      vmtouch \
+    python3 \
+    vmtouch \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -62,6 +62,7 @@ WORKDIR /app
 COPY app /app/app
 COPY scripts /app/scripts
 COPY third_party/PanoWan /engines/panowan
+COPY third_party/Upscale /engines/upscale
 RUN mkdir -p /app/runtime /models
 EXPOSE 8000
 CMD ["bash", "/app/scripts/start-worker.sh"]
@@ -82,6 +83,7 @@ WORKDIR /app
 COPY app /app/app
 COPY scripts /app/scripts
 COPY third_party/PanoWan /engines/panowan
+COPY third_party/Upscale /engines/upscale
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd /tmp/PanoWan && uv sync --locked --no-install-project --link-mode=copy
 CMD ["bash", "/app/scripts/start-worker.sh"]

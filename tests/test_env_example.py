@@ -13,13 +13,12 @@ class EnvExampleTests(unittest.TestCase):
         for key in [
             "RUNTIME_DIR=",
             "JOB_BACKEND=",
-            "ENGINE=",
-            "CAPABILITIES=",
             "MODEL_ROOT=",
             "PANOWAN_ENGINE_DIR=",
             "WAN_MODEL_PATH=",
             "LORA_CHECKPOINT_PATH=",
-            "UPSCALE_MODEL_DIR=",
+            "UPSCALE_ENGINE_DIR=",
+            "UPSCALE_WEIGHTS_DIR=",
         ]:
             self.assertIn(key, self.env)
 

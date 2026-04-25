@@ -24,5 +24,17 @@ class ScriptBoundaryTests(unittest.TestCase):
 
     def test_model_setup_owns_downloads(self):
         script = self.read_script("model-setup.sh")
-        self.assertIn("hf download", script)
-        self.assertIn("download-panowan.sh", script)
+        self.assertIn("python -m app.models ensure", script)
+        self.assertNotIn("hf download", script)
+        self.assertNotIn("download-panowan.sh", script)
+
+    def test_start_local_uses_panowan_engine_dir_not_legacy_app_dir(self):
+        script = self.read_script("start-local.sh")
+        self.assertIn("${PANOWAN_ENGINE_DIR}", script)
+        self.assertNotIn("PANOWAN_APP_DIR", script)
+
+    def test_docker_proxy_forwards_compose_interpolation_vars_to_wsl(self):
+        script = self.read_script("docker-proxy.sh")
+        self.assertIn("docker_proxy_export_wslenv_var", script)
+        self.assertIn("for name in TAG MODEL_ROOT PORT APT_MIRROR PYPI_INDEX", script)
+        self.assertIn("WSLENV", script)

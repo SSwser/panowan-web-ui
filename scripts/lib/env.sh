@@ -42,6 +42,29 @@ panowan_env_tool_defaults() {
   export PYTHON="${PYTHON:-python3}"
 }
 
+panowan_log_config() {
+  local role="${SERVICE_ROLE:-unknown}"
+  local banner="[config] role=${role}"
+  banner="${banner} | runtime=${RUNTIME_DIR}"
+  banner="${banner} | model_root=${MODEL_ROOT}"
+  banner="${banner} | wan_model=${WAN_MODEL_PATH}"
+  banner="${banner} | lora=${LORA_CHECKPOINT_PATH}"
+  if [[ "${role}" == "worker" ]]; then
+    banner="${banner} | engine=${PANOWAN_ENGINE_DIR}"
+    banner="${banner} | gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'none/unavailable')"
+    banner="${banner} | vmtouch=${VMTOUCH_MODELS:-0}"
+    banner="${banner} | timeout=${GENERATION_TIMEOUT_SECONDS:-1800}s"
+    banner="${banner} | max_concurrent=${MAX_CONCURRENT_JOBS:-1}"
+  fi
+  if [[ "${role}" == "api" ]]; then
+    banner="${banner} | host=${HOST:-0.0.0.0}"
+    banner="${banner} | port=${PORT:-8000}"
+    banner="${banner} | job_store=${JOB_STORE_PATH}"
+    banner="${banner} | dev_mode=${DEV_MODE:-0}"
+  fi
+  echo "${banner}"
+}
+
 panowan_env_runtime() {
   export SERVICE_ROLE="${SERVICE_ROLE:-api}"
   export RUNTIME_DIR="${RUNTIME_DIR:-/app/runtime}"
@@ -53,6 +76,7 @@ panowan_env_runtime() {
   export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-${MODEL_ROOT}/PanoWan/latest-lora.ckpt}"
   export OUTPUT_DIR="${OUTPUT_DIR:-${RUNTIME_DIR}/outputs}"
   export JOB_STORE_PATH="${JOB_STORE_PATH:-${RUNTIME_DIR}/jobs.json}"
-  export UPSCALE_MODEL_DIR="${UPSCALE_MODEL_DIR:-${MODEL_ROOT}/upscale}"
+  export UPSCALE_ENGINE_DIR="${UPSCALE_ENGINE_DIR:-/engines/upscale}"
+  export UPSCALE_WEIGHTS_DIR="${UPSCALE_WEIGHTS_DIR:-${MODEL_ROOT}/upscale}"
   export UPSCALE_OUTPUT_DIR="${UPSCALE_OUTPUT_DIR:-${OUTPUT_DIR}}"
 }
