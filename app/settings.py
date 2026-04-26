@@ -76,7 +76,9 @@ class Settings:
 def load_settings() -> Settings:
     roots = default_runtime_roots(repo_root=_HOST_ROOT, in_container=_in_container())
     model_root = os.getenv("MODEL_ROOT", roots.model_root)
-    runtime_dir = roots.runtime_root
+    # Runtime storage needs a root-level override for tests and alternate mounts,
+    # but leaf paths stay derived so jobs/workers/outputs cannot drift apart.
+    runtime_dir = os.getenv("RUNTIME_DIR", roots.runtime_root)
     output_dir = output_dir_path(runtime_dir)
 
     return Settings(

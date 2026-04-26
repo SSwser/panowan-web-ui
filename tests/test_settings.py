@@ -72,11 +72,11 @@ class SettingsTests(unittest.TestCase):
             lora_checkpoint_path("/workspace/models"),
         )
 
-    def test_load_settings_ignores_leaf_path_environment_overrides(self) -> None:
+    def test_load_settings_uses_runtime_root_override_but_ignores_leaf_path_overrides(self) -> None:
         env = {
             "SERVICE_ROLE": "worker",
             "MODEL_ROOT": "/models-x",
-            "RUNTIME_DIR": "/runtime-ignored",
+            "RUNTIME_DIR": "/runtime-override",
             "PANOWAN_ENGINE_DIR": "/engine-ignored",
             "UPSCALE_ENGINE_DIR": "/upscale-ignored",
             "WAN_MODEL_PATH": "/custom-wan",
@@ -91,7 +91,7 @@ class SettingsTests(unittest.TestCase):
             loaded = load_settings()
 
         self.assertEqual(loaded.model_root, "/models-x")
-        self.assertEqual(loaded.runtime_dir, CONTAINER_RUNTIME_ROOT)
+        self.assertEqual(loaded.runtime_dir, "/runtime-override")
         self.assertEqual(loaded.panowan_engine_dir, CONTAINER_PANOWAN_ENGINE_ROOT)
         self.assertEqual(loaded.upscale_engine_dir, CONTAINER_UPSCALE_ENGINE_ROOT)
         self.assertEqual(loaded.wan_model_path, model_root_path("/models-x"))
@@ -99,11 +99,11 @@ class SettingsTests(unittest.TestCase):
             loaded.lora_checkpoint_path,
             lora_checkpoint_path("/models-x"),
         )
-        self.assertEqual(loaded.output_dir, output_dir_path(CONTAINER_RUNTIME_ROOT))
-        self.assertEqual(loaded.job_store_path, job_store_path(CONTAINER_RUNTIME_ROOT))
+        self.assertEqual(loaded.output_dir, output_dir_path("/runtime-override"))
+        self.assertEqual(loaded.job_store_path, job_store_path("/runtime-override"))
         self.assertEqual(
             loaded.worker_store_path,
-            worker_store_path(CONTAINER_RUNTIME_ROOT),
+            worker_store_path("/runtime-override"),
         )
         self.assertEqual(loaded.upscale_weights_dir, "/models-x")
         self.assertEqual(loaded.upscale_output_dir, loaded.output_dir)
