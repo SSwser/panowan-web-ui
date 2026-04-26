@@ -62,4 +62,4 @@ The final engine-layer naming is generic:
 
 - [ADR 0001: Engine-oriented Product Runtime](0001-engine-oriented-product-runtime.md)
 - [ADR 0003: Backend Runtime Contracts](0003-backend-runtime-contract.md) — `upscale_weights_dir` is the backend weight-contract root; per ADR 0003 it currently equals `MODEL_ROOT`, not a feature-grouped subdirectory.
-- [Model Download Manager Design](../superpowers/specs/2026-04-25-model-download-manager-design.md)
+- [RealESRGAN Backend Runtime Contract Alignment Design](../superpowers/specs/2026-04-26-realesrgan-backend-runtime-contract-alignment-design.md)

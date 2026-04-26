@@ -4,7 +4,7 @@
 
 > **Superseded sections** — The 2026-04-25 Model Download Manager design replaces the following sections of this spec:
 >
-> - **Section 4.2** (Backend Implementations): `pip install` / `mim install` / `git clone` deployment methods are replaced by `third_party/` submodules + HF Hub weight downloads managed by `ModelManager`. See [Model Download Manager Design](2026-04-25-model-download-manager-design.md).
+> - **Section 4.2** (Backend Implementations): `pip install` / `mim install` / `git clone` deployment methods are replaced by `third_party/` submodules + HF Hub weight downloads managed by `ModelManager`. See [RealESRGAN Backend Runtime Contract Alignment Design](2026-04-26-realesrgan-backend-runtime-contract-alignment-design.md).
 > - **Section 4.6** (Settings Extensions): `upscale_model_dir` is replaced by `upscale_engine_dir` + `upscale_weights_dir` (scripts/weights separation). See Section 8 of the new design.
 > - **Section 7** (Concurrency Model): `threading.Semaphore(1)` + API `background_tasks` is replaced by the Worker polling model. The worker process polls `claim_next_job()` and executes serially; no `Semaphore` is needed. See Section 12 of the new design.
 > - **Section 4.5** (Cancel Logic): `_process` field and two-phase termination in API layer is replaced by job-status-based cancel. API marks job as cancelled; Worker checks `_should_cancel()` on next poll.

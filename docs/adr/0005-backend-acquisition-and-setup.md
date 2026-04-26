@@ -3,6 +3,8 @@
 Date: 2026-04-25
 Status: Proposed
 
+> ADR 0006 defines the backend-local source/input/output layout that this ADR leaves implicit. Keep this ADR as the durable acquisition/setup policy record.
+
 ## Context
 
 The project now treats backend implementation as a broader parent concept than individual model providers. The current backend work shows three recurring needs:

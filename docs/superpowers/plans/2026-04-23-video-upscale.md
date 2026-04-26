@@ -12,7 +12,7 @@
 > - **Task 7** (Generator Popen refactor): No longer needed for cancel support — Worker manages subprocess lifecycle directly.
 > - **Task 11** (Docker): Add `COPY third_party/Upscale /engines/upscale` and new env vars (`UPSCALE_ENGINE_DIR`, `UPSCALE_WEIGHTS_DIR`). Remove `/app/data/models/upscale` paths.
 >
-> Additionally, `PanoWanEngine` no longer owns the `upscale` capability. A new `UpscaleEngine` class is the peer engine, registered alongside `PanoWanEngine` in the Worker's `EngineRegistry`. See [Model Download Manager Design](../specs/2026-04-25-model-download-manager-design.md) and ADR 0002.
+> Additionally, `PanoWanEngine` no longer owns the `upscale` capability. A new `UpscaleEngine` class is the peer engine, registered alongside `PanoWanEngine` in the Worker's `EngineRegistry`. See [RealESRGAN Backend Runtime Contract Alignment Design](../specs/2026-04-26-realesrgan-backend-runtime-contract-alignment-design.md) and ADR 0002.
 >
 > **Remaining tasks** (3, 4, 6, 8, 9, 10, 12) are still valid with the noted adjustments.
 
