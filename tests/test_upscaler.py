@@ -88,6 +88,33 @@ class UpscalerAvailabilityTests(unittest.TestCase):
 
         self.assertNotIn("realesrgan-animevideov3", available)
 
+    def test_backend_unavailable_when_runner_missing_even_if_vendor_exists(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as engine_dir,
+            tempfile.TemporaryDirectory() as weights_dir,
+        ):
+            real_exists = os.path.exists
+            self._materialize_backend_assets(engine_dir, weights_dir)
+            runner_path = Path(engine_dir, "realesrgan", "runner.py")
+            runner_path.unlink()
+
+            with (
+                patch("app.upscaler.shutil.which", return_value="ffmpeg"),
+                patch("app.upscaler.os.path.exists") as mock_exists,
+                patch("app.upscaler.subprocess.run") as mock_run,
+            ):
+                mock_run.return_value = SimpleNamespace(returncode=0)
+
+                def exists(path: str) -> bool:
+                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                        return True
+                    return real_exists(path)
+
+                mock_exists.side_effect = exists
+                available = get_available_upscale_backends(engine_dir, weights_dir)
+
+        self.assertNotIn("realesrgan-animevideov3", available)
+
     def test_backend_unavailable_when_weight_file_missing(self) -> None:
         with (
             tempfile.TemporaryDirectory() as engine_dir,
@@ -255,7 +282,7 @@ class RealESRGANBackendTests(unittest.TestCase):
         )
         self.assertEqual(cmd[0], "/opt/venvs/upscale-realesrgan/bin/python")
         cmd_str = " ".join(cmd)
-        self.assertIn("/engines/upscale/realesrgan/vendor/__main__.py", cmd_str)
+        self.assertIn("/engines/upscale/realesrgan/runner.py", cmd_str)
         self.assertNotIn("adapter.py", cmd_str)
         self.assertIn("--model_path", cmd_str)
         self.assertIn(
@@ -281,15 +308,20 @@ class RealESRGANBackendTests(unittest.TestCase):
         result = self.backend.validate_params(scale=2)
         self.assertIsNone(result)
 
-    def test_build_command_with_target_resolution(self) -> None:
+    def test_build_command_ignores_target_resolution_fields(self) -> None:
         cmd = self.backend.build_command(
             input_path="/input/video.mp4",
             output_dir="/output",
             engine_dir="/engines/upscale",
             weights_dir="/models",
             scale=2,
+            target_width=1280,
+            target_height=720,
         )
         cmd_str = " ".join(cmd)
+        self.assertIn("/engines/upscale/realesrgan/runner.py", cmd_str)
+        self.assertNotIn("1280", cmd_str)
+        self.assertNotIn("720", cmd_str)
         self.assertIn("-s", cmd_str)
 
 

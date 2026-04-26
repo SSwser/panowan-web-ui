@@ -24,6 +24,10 @@ exclude = ["**/*.md"]
 
 [output]
 target = "vendor"
+
+[runtime_inputs]
+root = "sources"
+files = ["inference.py"]
 """.strip(),
         encoding="utf-8",
     )
@@ -34,6 +38,9 @@ target = "vendor"
     assert specs[0].backend.name == "realesrgan"
     assert specs[0].source.type == "git"
     assert specs[0].output.target == "vendor"
+    assert specs[0].output.strip_prefixes is None
+    assert specs[0].runtime_inputs.root == "sources"
+    assert specs[0].runtime_inputs.files == ["inference.py"]
 
 
 def test_real_esrgan_backend_toml_exists() -> None:
@@ -43,4 +50,26 @@ def test_real_esrgan_backend_toml_exists() -> None:
 
 def test_real_esrgan_backend_is_discoverable() -> None:
     specs = discover(Path("third_party/Upscale"))
-    assert any(spec.backend.name == "realesrgan" for spec in specs)
+    realesrgan = next(spec for spec in specs if spec.backend.name == "realesrgan")
+    assert realesrgan.output.target == "vendor"
+    assert realesrgan.output.strip_prefixes == [
+        "inference/Real-ESRGAN/",
+        "realesrgan/Real-ESRGAN/",
+    ]
+    assert realesrgan.output.expected_files == [
+        "__main__.py",
+        "inference_realesrgan_video.py",
+        "realesrgan/__init__.py",
+        "realesrgan/utils.py",
+        "realesrgan/archs/__init__.py",
+        "realesrgan/archs/srvgg_arch.py",
+    ]
+    assert realesrgan.runtime_inputs.root == "sources"
+    assert realesrgan.runtime_inputs.files == [
+        "__main__.py",
+        "inference_realesrgan_video.py",
+        "realesrgan/__init__.py",
+        "realesrgan/utils.py",
+        "realesrgan/archs/__init__.py",
+        "realesrgan/archs/srvgg_arch.py",
+    ]

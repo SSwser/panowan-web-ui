@@ -7,6 +7,15 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.backends.providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
+from app.backends.spec import (
+    BackendSection,
+    BackendSpec,
+    FilterSpec,
+    OutputSpec,
+    RuntimeInputsSpec,
+    SourceSpec,
+)
+from app.backends.verify import ensure_backend, expected_backend_files, verify_backend
 from app.backends.model_spec import FileCheck, ModelSpec
 from app.settings import load_settings
 from app.upscale_contract import (
@@ -366,10 +375,11 @@ from app.backends.model_specs import load_model_specs
 
 
 class CLITests(unittest.TestCase):
+    @patch("app.backends.cli.discover", return_value=[])
     @patch("app.backends.cli.ModelManager")
     @patch("app.backends.cli.load_model_specs", return_value=[])
     def test_cli_install_calls_manager_ensure(
-        self, mock_specs, mock_manager_cls
+        self, mock_specs, mock_manager_cls, mock_discover
     ) -> None:
         from app.backends.cli import main
 
@@ -380,10 +390,11 @@ class CLITests(unittest.TestCase):
         mock_manager_cls.return_value.ensure.assert_called_once_with([])
         self.assertIn("ready", buf.getvalue().lower())
 
+    @patch("app.backends.cli.discover", return_value=[])
     @patch("app.backends.cli.ModelManager")
     @patch("app.backends.cli.load_model_specs", return_value=[])
     def test_cli_verify_exits_zero_when_all_present(
-        self, mock_specs, mock_manager_cls
+        self, mock_specs, mock_manager_cls, mock_discover
     ) -> None:
         from app.backends.cli import main
 
@@ -391,11 +402,13 @@ class CLITests(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             main(["verify"])
+        self.assertIn("verified", buf.getvalue().lower())
 
+    @patch("app.backends.cli.discover", return_value=[])
     @patch("app.backends.cli.ModelManager")
     @patch("app.backends.cli.load_model_specs", return_value=[])
     def test_cli_verify_exits_nonzero_when_missing(
-        self, mock_specs, mock_manager_cls
+        self, mock_specs, mock_manager_cls, mock_discover
     ) -> None:
         from app.backends.cli import main
 
@@ -405,6 +418,30 @@ class CLITests(unittest.TestCase):
             main(["verify"])
         self.assertNotEqual(ctx.exception.code, 0)
         self.assertIn("missing-model", buf.getvalue())
+
+    @patch("app.backends.cli.discover", return_value=[])
+    @patch("app.backends.cli.ModelManager")
+    @patch("app.backends.cli.load_model_specs", return_value=[])
+    def test_cli_list_prints_model_specs_when_no_backends(
+        self, mock_specs, mock_manager_cls, mock_discover
+    ) -> None:
+        from app.backends.cli import main
+
+        mock_specs.return_value = [
+            ModelSpec(
+                name="wan-t2v-1.3b",
+                source_type="huggingface",
+                source_ref="org/repo",
+                target_dir="/models/test",
+                files=[FileCheck(path="weights.bin")],
+            )
+        ]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["list"])
+        self.assertIn("wan-t2v-1.3b", buf.getvalue())
+        mock_manager_cls.assert_called_once()
+        mock_discover.assert_called_once()
 
 
 class LoadSpecsTests(unittest.TestCase):
@@ -422,30 +459,489 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertIn("wan-t2v-1.3b", names)
         self.assertIn("panowan-lora", names)
         self.assertIn("panowan-engine", names)
-        self.assertIn("upscale-realesrgan-engine", names)
         self.assertIn("upscale-realesrgan-weights", names)
-        self.assertEqual(len(specs), 5)
+        self.assertNotIn("upscale-realesrgan-engine", names)
+        self.assertEqual(len(specs), 4)
 
-    def test_upscale_engine_spec_is_submodule_type(self) -> None:
-        env = {
-            "WAN_MODEL_PATH": "/models/Wan-AI/Wan2.1-T2V-1.3B",
-            "LORA_CHECKPOINT_PATH": "/models/PanoWan/latest-lora.ckpt",
-            "PANOWAN_ENGINE_DIR": "/engines/panowan",
-            "UPSCALE_ENGINE_DIR": "/engines/upscale",
-            "UPSCALE_WEIGHTS_DIR": "/models",
-        }
-        with patch.dict(os.environ, env, clear=True):
-            specs = load_model_specs(load_settings())
-        re_engine = next(s for s in specs if s.name == "upscale-realesrgan-engine")
-        self.assertEqual(re_engine.source_type, "submodule")
-        self.assertEqual(re_engine.target_dir, "/engines/upscale")
-        # The engine spec must derive its file list from the shared contract
-        # module so the spec, the upscaler availability check, and the actual
-        # vendored layout cannot drift apart.
-        self.assertEqual(
-            [f.path for f in re_engine.files],
-            list(REALESRGAN_ENGINE_FILES),
+    def test_upscale_engine_files_remain_shared_contract_constants(self) -> None:
+        self.assertIn("realesrgan/runner.py", REALESRGAN_ENGINE_FILES)
+        self.assertIn("realesrgan/vendor/__main__.py", REALESRGAN_ENGINE_FILES)
+        self.assertIn(
+            "realesrgan/vendor/inference_realesrgan_video.py",
+            REALESRGAN_ENGINE_FILES,
         )
+        self.assertTrue(
+            all(path.startswith("realesrgan/") for path in REALESRGAN_ENGINE_FILES)
+        )
+        self.assertIn(
+            "realesrgan/vendor/realesrgan/archs/srvgg_arch.py",
+            REALESRGAN_ENGINE_FILES,
+        )
+
+    def test_expected_backend_files_prefers_explicit_contract_when_present(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(
+                include=[
+                    "inference/Real-ESRGAN/inference_realesrgan_video.py",
+                    "realesrgan/Real-ESRGAN/realesrgan/**",
+                ],
+                exclude=[],
+            ),
+            output=OutputSpec(
+                target="vendor",
+                strip_prefixes=[
+                    "inference/Real-ESRGAN/",
+                    "realesrgan/Real-ESRGAN/",
+                ],
+                expected_files=[
+                    "__main__.py",
+                    "inference_realesrgan_video.py",
+                    "realesrgan/__init__.py",
+                ],
+            ),
+        )
+        self.assertEqual(
+            expected_backend_files(spec),
+            [
+                "__main__.py",
+                "inference_realesrgan_video.py",
+                "realesrgan/__init__.py",
+            ],
+        )
+
+    def test_expected_backend_files_rewrite_filtered_paths_for_vendor_layout(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(
+                include=[
+                    "inference/Real-ESRGAN/inference_realesrgan_video.py",
+                    "realesrgan/Real-ESRGAN/realesrgan/**",
+                ],
+                exclude=[],
+            ),
+            output=OutputSpec(
+                target="vendor",
+                strip_prefixes=[
+                    "inference/Real-ESRGAN/",
+                    "realesrgan/Real-ESRGAN/",
+                ],
+            ),
+        )
+        self.assertEqual(
+            expected_backend_files(spec),
+            ["inference_realesrgan_video.py", "realesrgan"],
+        )
+
+    def test_ensure_backend_rebuilds_with_runtime_input_files(self) -> None:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as src:
+            root = Path(td)
+            runtime_input_root = root / "sources" / "realesrgan"
+            runtime_input_root.mkdir(parents=True)
+            (root / "sources" / "__main__.py").write_text("entry", encoding="utf-8")
+            (runtime_input_root / "__init__.py").write_text("pkg", encoding="utf-8")
+
+            src_root = Path(src)
+            (src_root / "inference" / "Real-ESRGAN").mkdir(parents=True)
+            (
+                src_root
+                / "inference"
+                / "Real-ESRGAN"
+                / "inference_realesrgan_video.py"
+            ).write_text("runner", encoding="utf-8")
+
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
+                ),
+                filter=FilterSpec(
+                    include=["inference/Real-ESRGAN/inference_realesrgan_video.py"],
+                    exclude=[],
+                ),
+                output=OutputSpec(
+                    target="vendor",
+                    strip_prefixes=["inference/Real-ESRGAN/"],
+                    expected_files=[
+                        "__main__.py",
+                        "inference_realesrgan_video.py",
+                        "realesrgan/__init__.py",
+                    ],
+                ),
+                runtime_inputs=RuntimeInputsSpec(
+                    root="sources",
+                    files=["__main__.py", "realesrgan/__init__.py"],
+                ),
+            )
+
+            class TempDirStub:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+                def cleanup(self) -> None:
+                    return None
+
+            with patch(
+                "app.backends.verify.acquire_backend_source",
+                return_value=TempDirStub(src),
+            ):
+                status = ensure_backend(spec)
+
+            self.assertEqual(status, "rebuilt")
+            self.assertEqual(
+                (root / "vendor" / ".revision").read_text(encoding="utf-8").strip(),
+                "v1",
+            )
+            self.assertEqual(
+                (root / "vendor" / "inference_realesrgan_video.py").read_text(
+                    encoding="utf-8"
+                ),
+                "runner",
+            )
+            self.assertEqual(
+                (root / "vendor" / "__main__.py").read_text(encoding="utf-8"),
+                "entry",
+            )
+            self.assertEqual(
+                (root / "vendor" / "realesrgan" / "__init__.py").read_text(
+                    encoding="utf-8"
+                ),
+                "pkg",
+            )
+            self.assertFalse((root / "vendor" / "inference").exists())
+
+
+    def test_expected_backend_files_include_runtime_inputs_when_output_contract_is_implicit(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(
+                type="git",
+                url="https://example.invalid/realesrgan.git",
+                revision="v1",
+            ),
+            filter=FilterSpec(
+                include=["inference/Real-ESRGAN/inference_realesrgan_video.py"],
+                exclude=[],
+            ),
+            output=OutputSpec(
+                target="vendor",
+                strip_prefixes=["inference/Real-ESRGAN/"],
+            ),
+            runtime_inputs=RuntimeInputsSpec(
+                root="sources",
+                files=["__main__.py", "realesrgan/__init__.py"],
+            ),
+        )
+        self.assertEqual(
+            expected_backend_files(spec),
+            [
+                "inference_realesrgan_video.py",
+                "__main__.py",
+                "realesrgan/__init__.py",
+            ],
+        )
+
+    def test_verify_backend_reports_missing_without_revision_file(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            result = verify_backend("v1", Path(td), ["__main__.py"])
+        self.assertEqual(result.status, "missing")
+        self.assertEqual(result.revision, None)
+        self.assertEqual(result.missing_files, ["__main__.py"])
+
+    def test_ensure_backend_rebuilds_when_runtime_inputs_are_missing_from_implicit_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as src:
+            root = Path(td)
+            vendor = root / "vendor"
+            vendor.mkdir()
+            (vendor / ".revision").write_text("v1\n", encoding="utf-8")
+            (vendor / "inference_realesrgan_video.py").write_text("runner", encoding="utf-8")
+
+            (root / "sources" / "realesrgan").mkdir(parents=True)
+            (root / "sources" / "__main__.py").write_text("entry", encoding="utf-8")
+            (root / "sources" / "realesrgan" / "__init__.py").write_text(
+                "pkg", encoding="utf-8"
+            )
+
+            src_root = Path(src)
+            (src_root / "inference" / "Real-ESRGAN").mkdir(parents=True)
+            (
+                src_root
+                / "inference"
+                / "Real-ESRGAN"
+                / "inference_realesrgan_video.py"
+            ).write_text("runner", encoding="utf-8")
+
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
+                ),
+                filter=FilterSpec(
+                    include=["inference/Real-ESRGAN/inference_realesrgan_video.py"],
+                    exclude=[],
+                ),
+                output=OutputSpec(
+                    target="vendor",
+                    strip_prefixes=["inference/Real-ESRGAN/"],
+                ),
+                runtime_inputs=RuntimeInputsSpec(
+                    root="sources",
+                    files=["__main__.py", "realesrgan/__init__.py"],
+                ),
+            )
+
+            class TempDirStub:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+                def cleanup(self) -> None:
+                    return None
+
+            with patch(
+                "app.backends.verify.acquire_backend_source",
+                return_value=TempDirStub(src),
+            ):
+                status = ensure_backend(spec)
+
+            self.assertEqual(status, "rebuilt")
+            self.assertEqual((vendor / "__main__.py").read_text(encoding="utf-8"), "entry")
+            self.assertEqual(
+                (vendor / "realesrgan" / "__init__.py").read_text(encoding="utf-8"),
+                "pkg",
+            )
+
+    def test_ensure_backend_skips_when_revision_and_files_match(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            vendor = root / "vendor"
+            vendor.mkdir()
+            (vendor / ".revision").write_text("v1\n", encoding="utf-8")
+            (vendor / "inference_realesrgan_video.py").write_text("x", encoding="utf-8")
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+                filter=FilterSpec(include=["inference/inference_realesrgan_video.py"], exclude=[]),
+                output=OutputSpec(target="vendor", strip_prefixes=["inference/"]),
+            )
+            with patch("app.backends.verify.acquire_backend_source") as mock_acquire:
+                status = ensure_backend(spec)
+            self.assertEqual(status, "ok")
+            mock_acquire.assert_not_called()
+
+    def test_ensure_backend_rebuilds_when_vendor_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as src:
+            root = Path(td)
+            src_root = Path(src)
+            (src_root / "inference" / "Real-ESRGAN").mkdir(parents=True)
+            (
+                src_root / "inference" / "Real-ESRGAN" / "inference_realesrgan_video.py"
+            ).write_text("runner", encoding="utf-8")
+            (src_root / "realesrgan" / "Real-ESRGAN" / "realesrgan").mkdir(parents=True)
+            (
+                src_root / "realesrgan" / "Real-ESRGAN" / "realesrgan" / "__init__.py"
+            ).write_text("pkg", encoding="utf-8")
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+                ),
+                filter=FilterSpec(
+                    include=[
+                        "inference/Real-ESRGAN/inference_realesrgan_video.py",
+                        "realesrgan/Real-ESRGAN/realesrgan/**",
+                    ],
+                    exclude=[],
+                ),
+                output=OutputSpec(
+                    target="vendor",
+                    strip_prefixes=[
+                        "inference/Real-ESRGAN/",
+                        "realesrgan/Real-ESRGAN/",
+                    ],
+                ),
+            )
+
+            class TempDirStub:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+                def cleanup(self) -> None:
+                    return None
+
+            with patch(
+                "app.backends.verify.acquire_backend_source",
+                return_value=TempDirStub(src),
+            ):
+                status = ensure_backend(spec)
+
+            self.assertEqual(status, "rebuilt")
+            self.assertEqual(
+                (root / "vendor" / ".revision").read_text(encoding="utf-8").strip(),
+                "v1",
+            )
+            self.assertTrue((root / "vendor" / "inference_realesrgan_video.py").exists())
+            self.assertTrue((root / "vendor" / "realesrgan" / "__init__.py").exists())
+            self.assertFalse((root / "vendor" / "inference").exists())
+            self.assertFalse((root / "vendor" / ".git").exists())
+
+    def test_ensure_backend_force_rebuilds_even_when_revision_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as src:
+            root = Path(td)
+            vendor = root / "vendor"
+            vendor.mkdir()
+            (vendor / ".revision").write_text("v1\n", encoding="utf-8")
+            (vendor / "stale.txt").write_text("old", encoding="utf-8")
+            src_root = Path(src)
+            (src_root / "realesrgan" / "Real-ESRGAN" / "realesrgan").mkdir(parents=True)
+            (
+                src_root / "realesrgan" / "Real-ESRGAN" / "realesrgan" / "__init__.py"
+            ).write_text("pkg", encoding="utf-8")
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+                ),
+                filter=FilterSpec(include=["realesrgan/Real-ESRGAN/realesrgan/**"], exclude=[]),
+                output=OutputSpec(
+                    target="vendor",
+                    strip_prefixes=["realesrgan/Real-ESRGAN/"],
+                ),
+            )
+
+            class TempDirStub:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+                def cleanup(self) -> None:
+                    return None
+
+            with patch(
+                "app.backends.verify.acquire_backend_source",
+                return_value=TempDirStub(src),
+            ):
+                status = ensure_backend(spec, force=True)
+
+            self.assertEqual(status, "rebuilt")
+            self.assertFalse((root / "vendor" / "stale.txt").exists())
+            self.assertTrue((root / "vendor" / "realesrgan" / "__init__.py").exists())
+            self.assertEqual(
+                (root / "vendor" / ".revision").read_text(encoding="utf-8").strip(),
+                "v1",
+            )
+
+
+
+    def test_acquire_backend_source_failure_bubbles_up(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+        )
+        with patch(
+            "app.backends.verify.acquire_backend_source",
+            side_effect=RuntimeError("clone failed"),
+        ):
+            with self.assertRaises(RuntimeError):
+                ensure_backend(spec)
+
+    def test_ensure_backend_requires_git_backend_source(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="http", url="https://example.invalid/file.zip", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+        )
+        with self.assertRaises(RuntimeError):
+            ensure_backend(spec)
+
+    def test_cli_install_runs_backend_rebuild_before_model_ensure(self) -> None:
+        from app.backends.cli import main
+
+        backend_spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+        )
+        buf = io.StringIO()
+        with (
+            patch("app.backends.cli.discover", return_value=[backend_spec]),
+            patch("app.backends.cli.load_model_specs", return_value=[]),
+            patch("app.backends.cli.ensure_backend") as mock_backend_ensure,
+            patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            contextlib.redirect_stdout(buf),
+        ):
+            main(["install"])
+        mock_backend_ensure.assert_called_once_with(backend_spec)
+        mock_manager_cls.return_value.ensure.assert_called_once_with([])
+        self.assertIn("ready", buf.getvalue().lower())
+
+    def test_cli_verify_reports_backend_namespace_when_vendor_missing(self) -> None:
+        from app.backends.cli import main
+
+        backend_spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+        )
+        buf = io.StringIO()
+        with (
+            patch("app.backends.cli.discover", return_value=[backend_spec]),
+            patch("app.backends.cli.load_model_specs", return_value=[]),
+            patch("app.backends.cli.verify_backend") as mock_verify,
+            patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            self.assertRaises(SystemExit) as ctx,
+            contextlib.redirect_stdout(buf),
+        ):
+            mock_verify.return_value = type("V", (), {"status": "missing"})()
+            mock_manager_cls.return_value.verify.return_value = []
+            main(["verify"])
+        self.assertNotEqual(ctx.exception.code, 0)
+        self.assertIn("backend:realesrgan", buf.getvalue())
+
+    def test_cli_rebuild_forces_backend_materialization_before_models(self) -> None:
+        from app.backends.cli import main
+
+        backend_spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+        )
+        buf = io.StringIO()
+        with (
+            patch("app.backends.cli.discover", return_value=[backend_spec]),
+            patch("app.backends.cli.load_model_specs", return_value=[]),
+            patch("app.backends.cli.ensure_backend") as mock_backend_ensure,
+            patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            contextlib.redirect_stdout(buf),
+        ):
+            main(["rebuild"])
+        mock_backend_ensure.assert_called_once_with(backend_spec, force=True)
+        mock_manager_cls.return_value.ensure.assert_called_once_with([])
+        self.assertIn("rebuild complete", buf.getvalue().lower())
+        self.assertIn("ready", buf.getvalue().lower())
 
     def test_upscale_realesrgan_weights_spec_uses_official_http_artifact(self) -> None:
         env = {
@@ -463,6 +959,7 @@ class LoadSpecsTests(unittest.TestCase):
             weights.source_ref,
             "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
         )
-        self.assertEqual(weights.target_dir, f"/models/{REALESRGAN_WEIGHT_FAMILY}")
+        self.assertTrue(weights.target_dir.endswith(f"/{REALESRGAN_WEIGHT_FAMILY}"))
+        self.assertIn(REALESRGAN_WEIGHT_FAMILY, weights.target_dir)
         self.assertEqual([f.path for f in weights.files], [REALESRGAN_WEIGHT_FILENAME])
         self.assertTrue(weights.files[0].sha256)

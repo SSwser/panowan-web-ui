@@ -89,11 +89,10 @@ class RealESRGANBackend:
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
-        # Deterministic flat-vendored entrypoint. The script path, weight path,
-        # and the model name match the asset declarations in
-        # ``app.upscale_contract`` exactly so availability checks and the
-        # actual command never drift.
-        script = container_join(engine_dir, "realesrgan", "vendor", "__main__.py")
+        # Runtime jobs must enter through backend-root integration code so the
+        # stable project-owned entrypoint survives vendor/ rebuilds without
+        # changing command construction or availability checks.
+        script = container_join(engine_dir, "realesrgan", "runner.py")
         model_path = container_join(
             weights_dir, REALESRGAN_WEIGHT_FAMILY, REALESRGAN_WEIGHT_FILENAME
         )

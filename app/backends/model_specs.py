@@ -40,13 +40,6 @@ def load_model_specs(settings: Settings) -> list[ModelSpec]:
             files=[FileCheck(path="pyproject.toml")],
         ),
         ModelSpec(
-            name="upscale-realesrgan-engine",
-            source_type="submodule",
-            source_ref="",
-            target_dir=settings.upscale_engine_dir,
-            files=[FileCheck(path=path) for path in REALESRGAN_ENGINE_FILES],
-        ),
-        ModelSpec(
             name="upscale-realesrgan-weights",
             source_type="http",
             source_ref="https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",

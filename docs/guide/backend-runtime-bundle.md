@@ -41,6 +41,8 @@ Examples:
 
 These files explain how this repository invokes the backend runtime. They are committed to Git and must survive rebuild.
 
+Important: backend-root integration code should delegate into generated runtime output rather than duplicate it. For example, `runner.py` may enter through `vendor/__main__.py`, while `vendor/` remains rebuildable derived state.
+
 ### 2.2 Repo-owned runtime input layer
 
 Example:
@@ -126,6 +128,8 @@ It checks whether runtime bundle already satisfies the declared contract:
 - `vendor/` exists,
 - provenance marker matches,
 - expected runtime files exist.
+
+Those expected files come from declared output shape, or from filtered upstream paths plus repo-owned `sources/` when output contract is implicit. That keeps verify aligned with materialization instead of trusting whatever happens to be present inside `vendor/`.
 
 Verify must not mutate state.
 
