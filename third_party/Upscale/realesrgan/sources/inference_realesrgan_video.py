@@ -21,14 +21,14 @@ except ImportError as exc:
         "ffmpeg-python is required in the RealESRGAN backend environment"
     ) from exc
 
-try:
-    from gfpgan import GFPGANer
-except ImportError:
-    GFPGANer = None
+def _probe_cmd(ffmpeg_bin):
+    if ffmpeg_bin.endswith("ffmpeg"):
+        return f"{ffmpeg_bin[:-6]}ffprobe"
+    return ffmpeg_bin
 
 
 def count_frames(video_path, ffmpeg_bin):
-    probe = ffmpeg.probe(video_path, cmd=ffmpeg_bin)
+    probe = ffmpeg.probe(video_path, cmd=_probe_cmd(ffmpeg_bin))
     video_streams = [
         stream for stream in probe["streams"] if stream["codec_type"] == "video"
     ]
@@ -46,7 +46,7 @@ def count_frames(video_path, ffmpeg_bin):
 
 def get_video_meta_info(video_path, ffmpeg_bin):
     ret = {}
-    probe = ffmpeg.probe(video_path, cmd=ffmpeg_bin)
+    probe = ffmpeg.probe(video_path, cmd=_probe_cmd(ffmpeg_bin))
     video_streams = [
         stream for stream in probe["streams"] if stream["codec_type"] == "video"
     ]
@@ -292,11 +292,6 @@ def inference_video(args, video_save_path, device=None, total_workers=1, worker_
             "face_enhance is unsupported in generated runtime bundle; only core anime-video upscaling is supported"
         )
 
-    face_enhancer = None
-
-    if GFPGANer is not None:
-        _ = GFPGANer
-
     reader = Reader(args, total_workers, worker_idx)
     audio = reader.get_audio()
     height, width = reader.get_resolution()
@@ -452,6 +447,9 @@ def main():
     parser.add_argument(
         "--fps", type=float, default=None, help="FPS of the output video"
     )
+    # Stream reads, writes, and concat all shell out through this binary, so the
+    # CLI default must stay on ffmpeg even though metadata probes map it to
+    # ffprobe internally.
     parser.add_argument(
         "--ffmpeg_bin", type=str, default="ffmpeg", help="The path to ffmpeg"
     )

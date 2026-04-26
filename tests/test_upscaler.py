@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import subprocess
 import tempfile
@@ -393,6 +394,95 @@ class SeedVR2BackendTests(unittest.TestCase):
         self.assertIn("--res_h", cmd_str)
         self.assertIn("--res_w", cmd_str)
         self.assertIn("--sp_size", cmd_str)
+
+
+class RealESRGANVendorTests(unittest.TestCase):
+    def test_get_video_meta_info_uses_ffprobe_for_metadata_probe(self) -> None:
+        module_path = Path(
+            "third_party/Upscale/realesrgan/sources/inference_realesrgan_video.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "test_realesrgan_vendor", module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+
+        fake_torch = MagicMock()
+        fake_realesrgan = MagicMock()
+        fake_realesrgan.RealESRGANer = MagicMock()
+        fake_arch_module = MagicMock()
+        fake_arch_module.SRVGGNetCompact = MagicMock()
+        fake_ffmpeg = MagicMock()
+        fake_ffmpeg.probe.return_value = {
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 320,
+                    "height": 180,
+                    "avg_frame_rate": "24/1",
+                    "nb_frames": "12",
+                }
+            ]
+        }
+        fake_stream = MagicMock()
+        fake_stream.audio = None
+        fake_ffmpeg.input.return_value = fake_stream
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "cv2": MagicMock(),
+                "numpy": MagicMock(),
+                "torch": fake_torch,
+                "realesrgan": fake_realesrgan,
+                "realesrgan.srvgg_arch": fake_arch_module,
+                "ffmpeg": fake_ffmpeg,
+                "tqdm": MagicMock(),
+            },
+        ):
+            spec.loader.exec_module(module)
+            meta = module.get_video_meta_info("/tmp/in.mp4", "ffmpeg")
+
+        self.assertEqual(meta["fps"], 24.0)
+        fake_ffmpeg.probe.assert_called_once_with("/tmp/in.mp4", cmd="ffprobe")
+
+    def test_main_defaults_ffmpeg_bin_for_stream_io(self) -> None:
+        module_path = Path(
+            "third_party/Upscale/realesrgan/sources/inference_realesrgan_video.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "test_realesrgan_vendor_defaults", module_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+
+        fake_torch = MagicMock()
+        fake_realesrgan = MagicMock()
+        fake_realesrgan.RealESRGANer = MagicMock()
+        fake_arch_module = MagicMock()
+        fake_arch_module.SRVGGNetCompact = MagicMock()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "cv2": MagicMock(),
+                "numpy": MagicMock(),
+                "torch": fake_torch,
+                "realesrgan": fake_realesrgan,
+                "realesrgan.srvgg_arch": fake_arch_module,
+                "ffmpeg": MagicMock(),
+                "tqdm": MagicMock(),
+            },
+        ):
+            spec.loader.exec_module(module)
+            with patch.object(module, "run") as mock_run:
+                with patch("sys.argv", ["prog", "-i", "/tmp/in.mp4", "-o", "/tmp/out"]):
+                    module.main()
+
+        parsed_args = mock_run.call_args.args[0]
+        self.assertEqual(parsed_args.ffmpeg_bin, "ffmpeg")
 
 
 class UpscaleVideoTests(unittest.TestCase):

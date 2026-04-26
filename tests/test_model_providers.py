@@ -1090,6 +1090,85 @@ class LoadSpecsTests(unittest.TestCase):
         mock_manager_cls.return_value.ensure.assert_called_once_with([])
         self.assertIn("ready", buf.getvalue().lower())
 
+    def test_cli_verify_reports_authoritative_backend_rebuild_hint(self) -> None:
+        from app.backends.cli import main
+
+        backend_spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+            runtime_inputs=RuntimeInputsSpec(
+                root="sources",
+                authoritative=True,
+                files=["__main__.py", "realesrgan/__init__.py"],
+            ),
+        )
+        buf = io.StringIO()
+        with (
+            patch("app.backends.cli.discover", return_value=[backend_spec]),
+            patch("app.backends.cli.load_model_specs", return_value=[]),
+            patch("app.backends.cli.verify_backend") as mock_verify,
+            patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            self.assertRaises(SystemExit) as ctx,
+            contextlib.redirect_stdout(buf),
+        ):
+            mock_verify.return_value = type(
+                "V",
+                (),
+                {
+                    "status": "missing",
+                    "missing_files": ["__main__.py", "realesrgan/__init__.py"],
+                    "revision": None,
+                },
+            )()
+            mock_manager_cls.return_value.verify.return_value = []
+            main(["verify"])
+        output = buf.getvalue()
+        self.assertNotEqual(ctx.exception.code, 0)
+        self.assertIn("backend:realesrgan", output)
+        self.assertIn("missing runtime files", output)
+        self.assertIn("uv run -m app.backends install", output)
+        self.assertIn("make setup-backends", output)
+        self.assertIn("delete third_party/Upscale/realesrgan/vendor", output)
+
+    def test_cli_verify_reports_backend_revision_mismatch(self) -> None:
+        from app.backends.cli import main
+
+        backend_spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
+            output=OutputSpec(target="vendor", strip_prefixes=[""]),
+        )
+        buf = io.StringIO()
+        with (
+            patch("app.backends.cli.discover", return_value=[backend_spec]),
+            patch("app.backends.cli.load_model_specs", return_value=[]),
+            patch("app.backends.cli.verify_backend") as mock_verify,
+            patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            self.assertRaises(SystemExit) as ctx,
+            contextlib.redirect_stdout(buf),
+        ):
+            mock_verify.return_value = type(
+                "V",
+                (),
+                {
+                    "status": "mismatch",
+                    "missing_files": [],
+                    "revision": "old-rev",
+                },
+            )()
+            mock_manager_cls.return_value.verify.return_value = []
+            main(["verify"])
+        output = buf.getvalue()
+        self.assertNotEqual(ctx.exception.code, 0)
+        self.assertIn("backend:realesrgan", output)
+        self.assertIn("runtime revision old-rev does not match expected v1", output)
+        self.assertNotIn("delete third_party/Upscale/realesrgan/vendor", output)
+
     def test_cli_verify_reports_backend_namespace_when_vendor_missing(self) -> None:
         from app.backends.cli import main
 
@@ -1109,7 +1188,9 @@ class LoadSpecsTests(unittest.TestCase):
             self.assertRaises(SystemExit) as ctx,
             contextlib.redirect_stdout(buf),
         ):
-            mock_verify.return_value = type("V", (), {"status": "missing"})()
+            mock_verify.return_value = type(
+                "V", (), {"status": "missing", "missing_files": [], "revision": None}
+            )()
             mock_manager_cls.return_value.verify.return_value = []
             main(["verify"])
         self.assertNotEqual(ctx.exception.code, 0)

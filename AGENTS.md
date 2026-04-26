@@ -58,6 +58,14 @@ Examples:
 
 Short version: **host = `uv run`; container = plain `python`**.
 
+### Backend Vendor Maintenance
+
+Backend `vendor/` trees are generated runtime output, not hand-maintained source. If a backend declares `sources/` as authoritative runtime input, make persistent changes under `sources/` and sync `vendor/` through the built-in install flow (`uv run -m app.backends install` or `make setup-backends`) rather than editing generated files in place.
+
+When the current verification path is blocked by directory `stat` limitations, the fastest safe recovery is to delete that backend's `vendor/` directory and rerun the install flow so it is rebuilt from declared inputs. Treat this as a rebuild workaround, not as permission to maintain `vendor/` manually.
+
+Why: the backend runtime contract is file-list based and rebuild-oriented. Manual edits inside `vendor/` drift from `backend.toml` and `sources/`, while delete-and-rebuild keeps runtime state aligned with the declared backend spec.
+
 ## Architecture
 
 ```

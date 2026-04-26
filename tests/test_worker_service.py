@@ -36,6 +36,17 @@ class CancelledDuringRunEngine:
         return EngineResult(output_path=job["output_path"], metadata={"ok": True})
 
 
+class FailingEngine:
+    name = "panowan"
+    capabilities = ("generate",)
+
+    def validate_runtime(self):
+        return None
+
+    def run(self, job):
+        raise RuntimeError("engine exploded")
+
+
 def _registry_with(engine) -> EngineRegistry:
     registry = EngineRegistry()
     registry.register(engine)
@@ -124,6 +135,27 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertFalse(
                 run_one_job(backend, _registry_with(FakeEngine()), worker_id="worker-a")
             )
+
+    def test_run_one_job_marks_failure_without_re_raising_engine_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {
+                    "job_id": "job-1",
+                    "status": "queued",
+                    "type": "generate",
+                    "output_path": f"{tmp}/outputs/output_job-1.mp4",
+                }
+            )
+
+            worked = run_one_job(
+                backend, _registry_with(FailingEngine()), worker_id="worker-a"
+            )
+
+            self.assertTrue(worked)
+            job = backend.get_job("job-1")
+            self.assertEqual(job["status"], "failed")
+            self.assertEqual(job["error"], "engine exploded")
 
 
 class MultiEngineRegistryTests(unittest.TestCase):

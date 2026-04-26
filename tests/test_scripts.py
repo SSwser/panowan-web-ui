@@ -90,7 +90,7 @@ class ScriptBoundaryTests(unittest.TestCase):
         )
         self.assertNotIn("basicsr", requirements)
         self.assertNotIn("from basicsr", runner)
-        self.assertIn("GFPGANer = None", runner)
+        self.assertNotIn("gfpgan", runner)
         self.assertNotIn("load_file_from_url", utils)
         self.assertNotIn("ARCH_REGISTRY", arch)
 

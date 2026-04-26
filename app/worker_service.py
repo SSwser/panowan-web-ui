@@ -94,8 +94,10 @@ def run_one_job(
         return True
     except Exception as exc:
         if _worker_still_owns_job(backend, job_id, worker_id):
+            # Upscale and generation failures are job-scoped errors. Re-raising here
+            # would terminate the worker loop and leave the fleet unavailable until
+            # someone manually restarts the process.
             backend.fail_job(job_id, str(exc))
-            raise
         return True
 
 
