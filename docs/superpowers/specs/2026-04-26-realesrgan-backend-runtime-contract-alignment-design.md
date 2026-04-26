@@ -263,3 +263,13 @@ After Phase 1 stabilizes RealESRGAN, later work may:
 - and refine backend metadata shapes once more than one migrated backend exercises the same contract.
 
 Those follow-up changes should not reopen the core Phase 1 ownership semantics.
+
+A later roadmap item should promote backend contract metadata into a clearer platform manifest abstraction once more than one backend has converged on the same runtime contract shape.
+
+That future abstraction should:
+
+- define backend-generic semantic fields for runtime entrypoints, runtime dependencies, weight artifacts, acquisition strategy, and materialization outputs,
+- let application code consume a platform-level manifest model instead of reaching into backend-specific contract details,
+- and reduce app-to-`third_party` coupling by making backend-local TOML parse into a stable platform-owned schema.
+
+That work is intentionally deferred in Phase 1 because only RealESRGAN currently exercises this richer runtime metadata shape. Before introducing a broader manifest layer, the project should first accumulate at least one more migrated backend with comparable runtime contract structure so that shared fields are discovered from stable commonality rather than guessed too early.

@@ -3,7 +3,7 @@
 `third_party/Upscale` is the repository-managed engine bundle for `UpscaleEngine`.
 Each backend owns a stable subdirectory under this bundle:
 
-- `realesrgan/` — RealESRGAN vendored runtime and entrypoint
+- `realesrgan/` — RealESRGAN backend root with repo-owned runtime sources and generated runtime bundle
 - `realbasicvsr/` — reserved for RealBasicVSR vendor files
 - `seedvr2/` — reserved for SeedVR2 vendor files
 
@@ -19,20 +19,19 @@ A backend is **registered** in `app.upscaler.UPSCALE_BACKENDS` purely by its Pyt
 
 ## RealESRGAN
 
-`realesrgan/vendor/__main__.py` is the stable entrypoint invoked by `app.upscaler.RealESRGANBackend`. It prepends the flat `vendor/` directory to `sys.path` and delegates to `realesrgan/vendor/inference_realesrgan_video.py` — no environment variables, no fallbacks, no runtime `pip`.
+`realesrgan/runner.py` is the stable backend-root entrypoint invoked by `app.upscaler.RealESRGANBackend`. It delegates into generated `vendor/__main__.py`, while repo-owned runtime source of truth lives under `realesrgan/sources/`.
 
-A RealESRGAN backend is available only when the entrypoint, vendored runtime files, backend-local runtime Python, and `/models/Real-ESRGAN/realesr-animevideov3.pth` all exist, and `/opt/venvs/upscale-realesrgan/bin/python` can import `cv2`, `ffmpeg`, and `tqdm`. `make setup-models` provisions the weight via the `upscale-realesrgan-weights` ModelSpec (direct download from the official Real-ESRGAN GitHub release, sha256-verified).
+A RealESRGAN backend is available only when the backend-root runner, generated runtime bundle files, backend-local runtime Python, and `/models/Real-ESRGAN/realesr-animevideov3.pth` all exist, and `/opt/venvs/upscale-realesrgan/bin/python` can import `cv2`, `ffmpeg`, and `tqdm`. `make setup-models` provisions the weight via the `upscale-realesrgan-weights` ModelSpec (direct download from the official Real-ESRGAN GitHub release, sha256-verified).
 
-The vendored runtime intentionally keeps only the inference surface the worker actually uses, in a flat layout under `realesrgan/vendor/`:
+The repo-owned runtime sources intentionally keep only the inference surface the worker actually uses under `realesrgan/sources/`:
 
-- `__main__.py` (entrypoint)
+- `__main__.py`
 - `inference_realesrgan_video.py`
 - `realesrgan/__init__.py`
 - `realesrgan/utils.py`
-- `realesrgan/archs/__init__.py`
-- `realesrgan/archs/srvgg_arch.py`
+- `realesrgan/srvgg_arch.py`
 
-The vendored `__init__.py` files are slimmed down so importing `realesrgan` does not pull training/data/version modules.
+`vendor/` is disposable generated output rebuilt from those sources, not committed source of truth. The slimmed-down `__init__.py` files ensure importing `realesrgan` does not pull training/data/version modules.
 
 ## Backend runtime dependencies
 
@@ -45,6 +44,6 @@ RealESRGAN uses `/opt/venvs/upscale-realesrgan/bin/python` and requires:
 - `cv2` Python module
 - `ffmpeg` Python module from `ffmpeg-python`
 - `tqdm` Python module
-- vendored `realesrgan` package files under `realesrgan/vendor/`
+- generated `realesrgan/vendor/` runtime bundle rebuilt from `realesrgan/sources/`
 
-The RealESRGAN entrypoint inserts `realesrgan/vendor/` at the front of `sys.path` before importing `inference_realesrgan_video`. The vendored runtime requires an explicit `--model_path` and supports only `realesr-animevideov3`; missing dependencies should be fixed in Docker build dependencies rather than by runtime installs.
+The generated `vendor/__main__.py` inserts its own directory at the front of `sys.path` before importing `inference_realesrgan_video`, and `runner.py` delegates into that generated entrypoint. The trimmed runtime requires an explicit `--model_path` and supports only `realesr-animevideov3`; missing dependencies should be fixed in Docker build dependencies rather than by runtime installs.

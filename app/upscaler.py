@@ -5,22 +5,16 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 
-from app.paths import container_join
+from app.backends.registry import discover
+from app.backends.verify import expected_backend_files
+from app.paths import container_join, default_runtime_roots, repo_root_from
 from app.process_runner import (
     ProcessCancelledError,
     output_tail,
     run_cancellable_process,
-)
-from app.upscale_contract import (
-    REALESRGAN_ENGINE_FILES,
-    REALESRGAN_REQUIRED_COMMANDS,
-    REALESRGAN_RUNTIME_MODULES,
-    REALESRGAN_RUNTIME_PYTHON,
-    REALESRGAN_WEIGHT_FAMILY,
-    REALESRGAN_WEIGHT_FILENAME,
-    REALESRGAN_WEIGHT_FILES,
 )
 
 
@@ -64,6 +58,44 @@ class UpscalerBackend(Protocol):
     ) -> str | None: ...
 
 
+def _load_realesrgan_backend_spec(backend_root: Path | None = None):
+    repo_root = repo_root_from(__file__)
+    runtime_backend_root = Path(
+        default_runtime_roots(repo_root=repo_root, in_container=os.path.isfile("/.dockerenv"))
+        .upscale_engine_root
+    )
+    candidate_roots = [backend_root or runtime_backend_root, Path(repo_root) / "third_party" / "Upscale"]
+    seen: set[Path] = set()
+    for candidate_root in candidate_roots:
+        resolved_root = Path(candidate_root)
+        if resolved_root in seen:
+            continue
+        seen.add(resolved_root)
+        spec = next(
+            (spec for spec in discover(resolved_root) if spec.backend.name == "realesrgan"),
+            None,
+        )
+        if spec is not None:
+            return spec
+    raise RuntimeError("Backend spec realesrgan not found in configured backend roots")
+
+
+# API process can start without mounted upscale runtime assets, so backend spec
+# lookup falls back to repo metadata until runtime validation checks real engine roots.
+
+
+def _build_realesrgan_assets() -> UpscaleBackendAssets:
+    spec = _load_realesrgan_backend_spec()
+    vendor_files = [f"realesrgan/{spec.output.target}/{path}" for path in expected_backend_files(spec)]
+    return UpscaleBackendAssets(
+        engine_files=tuple(["realesrgan/runner.py", *vendor_files]),
+        weight_files=tuple(spec.weights.required_files or ()),
+        required_commands=tuple(spec.runtime.required_commands or ()),
+        runtime_python=spec.runtime.python,
+        required_python_modules=tuple(spec.runtime.required_python_modules or ()),
+    )
+
+
 class RealESRGANBackend:
     """Real-ESRGAN anime video upscaler backend (fast)."""
 
@@ -71,13 +103,28 @@ class RealESRGANBackend:
     display_name: str = "Real-ESRGAN (Fast)"
     default_scale: int = 2
     max_scale: int = 4
-    assets: UpscaleBackendAssets = UpscaleBackendAssets(
-        engine_files=REALESRGAN_ENGINE_FILES,
-        weight_files=REALESRGAN_WEIGHT_FILES,
-        required_commands=REALESRGAN_REQUIRED_COMMANDS,
-        runtime_python=REALESRGAN_RUNTIME_PYTHON,
-        required_python_modules=REALESRGAN_RUNTIME_MODULES,
-    )
+
+    @property
+    def assets(self) -> UpscaleBackendAssets:
+        return _build_realesrgan_assets()
+
+    @property
+    def weight_family(self) -> str:
+        spec = _load_realesrgan_backend_spec()
+        if spec.weights.family is None:
+            raise RuntimeError("Backend spec realesrgan missing weights.family")
+        return spec.weights.family
+
+    @property
+    def weight_filename(self) -> str:
+        spec = _load_realesrgan_backend_spec()
+        if spec.weights.filename is None:
+            raise RuntimeError("Backend spec realesrgan missing weights.filename")
+        return spec.weights.filename
+
+    @property
+    def runtime_python(self) -> str:
+        return self.assets.runtime_python or sys.executable
 
     def build_command(
         self,
@@ -89,15 +136,20 @@ class RealESRGANBackend:
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> list[str]:
+        spec = _load_realesrgan_backend_spec(Path(engine_dir))
+        if spec.weights.family is None:
+            raise RuntimeError("Backend spec realesrgan missing weights.family")
+        if spec.weights.filename is None:
+            raise RuntimeError("Backend spec realesrgan missing weights.filename")
+        if spec.runtime.python is None:
+            raise RuntimeError("Backend spec realesrgan missing runtime.python")
         # Runtime jobs must enter through backend-root integration code so the
         # stable project-owned entrypoint survives vendor/ rebuilds without
         # changing command construction or availability checks.
         script = container_join(engine_dir, "realesrgan", "runner.py")
-        model_path = container_join(
-            weights_dir, REALESRGAN_WEIGHT_FAMILY, REALESRGAN_WEIGHT_FILENAME
-        )
+        model_path = container_join(weights_dir, spec.weights.family, spec.weights.filename)
         return [
-            self.assets.runtime_python or sys.executable,
+            spec.runtime.python,
             script,
             "-i",
             input_path,

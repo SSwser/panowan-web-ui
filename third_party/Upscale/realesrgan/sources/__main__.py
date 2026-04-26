@@ -1,17 +1,17 @@
-"""Deterministic entrypoint for the RealESRGAN backend.
+"""Deterministic entrypoint for generated RealESRGAN runtime bundle.
 
 Invoked as `python /engines/upscale/realesrgan/vendor/__main__.py ...`.
 
-The vendored runtime lives flat under this directory:
+The generated runtime bundle lives flat under this directory:
     realesrgan/vendor/
     ├── __main__.py                   ← this file
-    ├── inference_realesrgan_video.py ← upstream video runner (trimmed)
-    └── realesrgan/                   ← vendored realesrgan package (trimmed)
+    ├── inference_realesrgan_video.py ← trimmed video runner
+    └── realesrgan/                   ← trimmed runtime package
 
-This entrypoint prepends the vendored runtime root to ``sys.path`` so the
-trimmed ``realesrgan`` package resolves before any system-installed copy, then
-calls ``inference_realesrgan_video.main()`` with the forwarded CLI args. No
-environment variables or fallback discovery is involved.
+This entrypoint prepends generated runtime root to ``sys.path`` so trimmed
+``realesrgan`` package resolves before any system-installed copy, then calls
+``inference_realesrgan_video.main()`` with forwarded CLI args. No environment
+variables or fallback discovery is involved.
 """
 
 from __future__ import annotations

@@ -67,10 +67,8 @@ class UpscalerAvailabilityTests(unittest.TestCase):
 
     def test_realesrgan_declares_backend_runtime_python(self) -> None:
         backend = UPSCALE_BACKENDS["realesrgan-animevideov3"]
-        self.assertEqual(
-            backend.assets.runtime_python,
-            "/opt/venvs/upscale-realesrgan/bin/python",
-        )
+        self.assertEqual(backend.assets.runtime_python, backend.runtime_python)
+        self.assertEqual(backend.runtime_python, "/opt/venvs/upscale-realesrgan/bin/python")
         self.assertIn("cv2", backend.assets.required_python_modules)
         self.assertIn("ffmpeg", backend.assets.required_python_modules)
         self.assertIn("tqdm", backend.assets.required_python_modules)
@@ -106,7 +104,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
                 mock_run.return_value = SimpleNamespace(returncode=0)
 
                 def exists(path: str) -> bool:
-                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                    if path == UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python:
                         return True
                     return real_exists(path)
 
@@ -142,7 +140,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
                 mock_run.return_value = SimpleNamespace(returncode=0)
 
                 def exists(path: str) -> bool:
-                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                    if path == UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python:
                         return True
                     return real_exists(path)
 
@@ -165,7 +163,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
             ):
 
                 def exists(path: str) -> bool:
-                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                    if path == UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python:
                         return False
                     return real_exists(path)
 
@@ -190,7 +188,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
                 mock_run.return_value = SimpleNamespace(returncode=1)
 
                 def exists(path: str) -> bool:
-                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                    if path == UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python:
                         return True
                     return real_exists(path)
 
@@ -200,7 +198,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
         self.assertNotIn("realesrgan-animevideov3", available)
         mock_run.assert_called_once_with(
             [
-                "/opt/venvs/upscale-realesrgan/bin/python",
+                UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python,
                 "-c",
                 "import cv2; import ffmpeg; import tqdm",
             ],
@@ -225,7 +223,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
                 mock_run.return_value = SimpleNamespace(returncode=0)
 
                 def exists(path: str) -> bool:
-                    if path == "/opt/venvs/upscale-realesrgan/bin/python":
+                    if path == UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python:
                         return True
                     return real_exists(path)
 
@@ -235,7 +233,7 @@ class UpscalerAvailabilityTests(unittest.TestCase):
         self.assertIn("realesrgan-animevideov3", available)
         mock_run.assert_called_once_with(
             [
-                "/opt/venvs/upscale-realesrgan/bin/python",
+                UPSCALE_BACKENDS["realesrgan-animevideov3"].runtime_python,
                 "-c",
                 "import cv2; import ffmpeg; import tqdm",
             ],
@@ -280,13 +278,13 @@ class RealESRGANBackendTests(unittest.TestCase):
             weights_dir="/models",
             scale=2,
         )
-        self.assertEqual(cmd[0], "/opt/venvs/upscale-realesrgan/bin/python")
+        self.assertEqual(cmd[0], self.backend.runtime_python)
         cmd_str = " ".join(cmd)
         self.assertIn("/engines/upscale/realesrgan/runner.py", cmd_str)
         self.assertNotIn("adapter.py", cmd_str)
         self.assertIn("--model_path", cmd_str)
         self.assertIn(
-            "/models/Real-ESRGAN/realesr-animevideov3.pth",
+            f"/models/{self.backend.weight_family}/{self.backend.weight_filename}",
             cmd_str,
         )
         self.assertNotIn("/models/upscale/", cmd_str)

@@ -35,9 +35,32 @@ def verify_backend(
     )
 
 
+def validate_runtime_contract(spec: BackendSpec) -> None:
+    if spec.backend.name != "realesrgan":
+        return
+
+    if not spec.runtime.python:
+        raise RuntimeError("Backend spec realesrgan missing runtime.python")
+    if not spec.runtime.required_commands:
+        raise RuntimeError("Backend spec realesrgan missing runtime.required_commands")
+    if not spec.runtime.required_python_modules:
+        raise RuntimeError(
+            "Backend spec realesrgan missing runtime.required_python_modules"
+        )
+    if not spec.weights.family:
+        raise RuntimeError("Backend spec realesrgan missing weights.family")
+    if not spec.weights.filename:
+        raise RuntimeError("Backend spec realesrgan missing weights.filename")
+    if not spec.weights.required_files:
+        raise RuntimeError("Backend spec realesrgan missing weights.required_files")
+
+
 def expected_backend_files(spec: BackendSpec) -> list[str]:
     if spec.output.expected_files:
         return list(spec.output.expected_files)
+
+    if spec.runtime_inputs.authoritative and spec.runtime_inputs.files:
+        return list(spec.runtime_inputs.files)
 
     rewritten: list[str] = []
     for path in spec.filter.include:
@@ -67,6 +90,12 @@ def ensure_backend(spec: BackendSpec, *, force: bool = False) -> str:
     verification = verify_backend(spec.source.revision, vendor_dir, expected_files)
     if verification.status == "ok" and not force:
         return "ok"
+
+    if spec.runtime_inputs.authoritative:
+        # Sources-only backends keep project-owned runtime files as sole truth so
+        # rebuilds do not silently drift with upstream filter shape changes.
+        materialize_backend(spec, None, [])
+        return "rebuilt"
 
     temp_dir = acquire_backend_source(spec)
     try:

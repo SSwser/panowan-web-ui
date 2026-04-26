@@ -8,8 +8,36 @@ url = "https://github.com/xinntao/Real-ESRGAN.git"
 revision = "v0.3.0"
 
 [filter]
-include = ["inference/inference_realesrgan_video.py", "realesrgan/**"]
-exclude = ["realesrgan/**/test*", "**/*.md"]
+include = []
+exclude = []
 
 [output]
 target = "vendor"
+expected_files = [
+  "__main__.py",
+  "inference_realesrgan_video.py",
+  "realesrgan/__init__.py",
+  "realesrgan/utils.py",
+  "realesrgan/srvgg_arch.py",
+]
+
+[runtime_inputs]
+root = "sources"
+authoritative = true
+files = [
+  "__main__.py",
+  "inference_realesrgan_video.py",
+  "realesrgan/__init__.py",
+  "realesrgan/utils.py",
+  "realesrgan/srvgg_arch.py",
+]
+
+[runtime]
+python = "/opt/venvs/upscale-realesrgan/bin/python"
+required_commands = ["ffmpeg"]
+required_python_modules = ["cv2", "ffmpeg", "tqdm"]
+
+[weights]
+family = "Real-ESRGAN"
+filename = "realesr-animevideov3.pth"
+required_files = ["Real-ESRGAN/realesr-animevideov3.pth"]

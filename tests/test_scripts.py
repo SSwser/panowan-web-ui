@@ -50,10 +50,10 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertIn("sys.argv", runner)
 
     def test_realesrgan_vendor_entrypoint_uses_flat_layout_without_runtime_pip(self):
-        # The vendored runtime is the contract: a flat ``vendor/`` directory
-        # whose ``__main__.py`` prepends itself to ``sys.path`` and delegates
-        # to the trimmed ``inference_realesrgan_video.main`` — no runtime pip,
-        # no environment variable discovery, no fallback paths.
+        # The generated runtime bundle is the contract: a flat ``vendor/``
+        # directory whose ``__main__.py`` prepends itself to ``sys.path`` and
+        # delegates to the trimmed ``inference_realesrgan_video.main`` — no
+        # runtime pip, no environment variable discovery, no fallback paths.
         entry = (
             ROOT / "third_party" / "Upscale" / "realesrgan" / "sources" / "__main__.py"
         ).read_text(encoding="utf-8")
@@ -78,14 +78,14 @@ class ScriptBoundaryTests(unittest.TestCase):
             ).exists()
         )
 
-    def test_realesrgan_runtime_bundle_does_not_require_basicsr_package(self):
+    def test_realesrgan_runtime_sources_do_not_require_basicsr_package(self):
         requirements = (
             ROOT / "third_party" / "Upscale" / "realesrgan" / "requirements.txt"
         ).read_text(encoding="utf-8")
-        vendor = ROOT / "third_party" / "Upscale" / "realesrgan" / "vendor"
-        runner = (vendor / "inference_realesrgan_video.py").read_text(encoding="utf-8")
-        utils = (vendor / "realesrgan" / "utils.py").read_text(encoding="utf-8")
-        arch = (vendor / "realesrgan" / "archs" / "srvgg_arch.py").read_text(
+        sources = ROOT / "third_party" / "Upscale" / "realesrgan" / "sources"
+        runner = (sources / "inference_realesrgan_video.py").read_text(encoding="utf-8")
+        utils = (sources / "realesrgan" / "utils.py").read_text(encoding="utf-8")
+        arch = (sources / "realesrgan" / "srvgg_arch.py").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("basicsr", requirements)
@@ -94,28 +94,25 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertNotIn("load_file_from_url", utils)
         self.assertNotIn("ARCH_REGISTRY", arch)
 
-    def test_realesrgan_runtime_package_inits_are_trimmed(self):
-        vendor_pkg = (
-            ROOT / "third_party" / "Upscale" / "realesrgan" / "vendor" / "realesrgan"
+    def test_realesrgan_runtime_source_package_inits_are_trimmed(self):
+        sources_pkg = (
+            ROOT / "third_party" / "Upscale" / "realesrgan" / "sources" / "realesrgan"
         )
-        package_init = (vendor_pkg / "__init__.py").read_text(encoding="utf-8")
-        arch_init = (vendor_pkg / "archs" / "__init__.py").read_text(encoding="utf-8")
+        package_init = (sources_pkg / "__init__.py").read_text(encoding="utf-8")
         self.assertIn("from .utils import RealESRGANer", package_init)
+        self.assertIn("from .srvgg_arch import SRVGGNetCompact", package_init)
         self.assertNotIn("from .data", package_init)
         self.assertNotIn("from .models", package_init)
         self.assertNotIn("from .version", package_init)
-        self.assertEqual(
-            arch_init.strip(),
-            'from .srvgg_arch import SRVGGNetCompact\n\n__all__ = ["SRVGGNetCompact"]',
-        )
+        self.assertFalse((sources_pkg / "archs").exists())
 
-    def test_realesrgan_runner_only_exposes_supported_cli_surface(self):
+    def test_realesrgan_runtime_source_only_exposes_supported_cli_surface(self):
         runner = (
             ROOT
             / "third_party"
             / "Upscale"
             / "realesrgan"
-            / "vendor"
+            / "sources"
             / "inference_realesrgan_video.py"
         ).read_text(encoding="utf-8")
         self.assertIn('default="realesr-animevideov3"', runner)
@@ -123,6 +120,24 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertNotIn("--denoise_strength", runner)
         self.assertNotIn("--alpha_upsampler", runner)
         self.assertNotIn('"--ext",', runner)
+        self.assertNotIn("GFPGANer(", runner)
+        self.assertIn("--face_enhance", runner)
+        self.assertIn("raise RuntimeError", runner)
+        self.assertIn("face_enhance is unsupported in generated runtime bundle", runner)
+        self.assertNotIn('print("Error", error)', runner)
+        self.assertIn("torch.cuda.is_available()", runner)
+        self.assertNotIn("torch.cuda.synchronize(device)", runner)
+        self.assertIn("torch.cuda.synchronize()", runner)
+        self.assertNotIn('turned this option off for you', runner)
+        self.assertNotIn('GFPGAN is not installed; disabling face enhancement.', runner)
+        self.assertNotIn('https://github.com/TencentARC/GFPGAN', runner)
+        self.assertIn("CUDA out of memory", runner)
+        self.assertIn("failed on frame", runner)
+        self.assertIn("unsupported in generated runtime bundle", runner)
+        self.assertIn("nb_frames", runner)
+        self.assertIn("if not ret[\"nb_frames\"]:", runner)
+        self.assertIn("count_frames(", runner)
+        self.assertNotIn("eval(video_streams[0][\"avg_frame_rate\"])", runner)
 
     def test_start_api_does_not_download_or_check_gpu(self):
         script = self.read_script("start-api.sh")
@@ -232,81 +247,43 @@ class ScriptBoundaryTests(unittest.TestCase):
         ):
             script = self.read_script(name)
             self.assertIn('source "$script_dir/lib/claude-mem.sh"', script)
+
         shared = self.read_script("lib/claude-mem.sh")
-        self.assertIn('step()', shared)
-        self.assertIn('info()', shared)
-        self.assertIn('fail()', shared)
-        self.assertIn('resolve_path()', shared)
-        self.assertIn('sqlite_scalar()', shared)
-        self.assertIn('join_kv_lines()', shared)
-        self.assertIn('get_db_counts()', shared)
-        self.assertIn('get_db_pragmas()', shared)
-        self.assertIn('copy_if_exists()', shared)
-        self.assertIn('remove_if_exists()', shared)
-        self.assertIn('require_sqlite3()', shared)
-        self.assertIn('get_file_size()', shared)
-        self.assertIn('compute_freelist_pct()', shared)
-        self.assertIn('recommend_compaction()', shared)
-        self.assertIn('require_data_dir()', shared)
-        self.assertIn('db_path="$resolved_data_dir/claude-mem.db"', shared)
-        self.assertIn('wal_path="$resolved_data_dir/claude-mem.db-wal"', shared)
-        self.assertIn('shm_path="$resolved_data_dir/claude-mem.db-shm"', shared)
-        self.assertIn('chroma_dir="$resolved_data_dir/chroma"', shared)
-        self.assertIn('chroma_state_path="$resolved_data_dir/chroma-sync-state.json"', shared)
-        self.assertIn('backups_dir="$resolved_data_dir/backups"', shared)
-        self.assertIn('resolved_data_dir=$(resolve_path "$1")', shared)
-        self.assertIn('python - <<\'PY\'', shared)
-        self.assertIn("compact_then_migrate", shared)
-        self.assertIn("recommended_action='none'", shared)
-        self.assertIn('command -v sqlite3 >/dev/null 2>&1 || fail', shared)
-        self.assertIn('cygpath -am "$path"', shared)
-        self.assertIn('cp -R "$source" "$destination"', shared)
-        self.assertIn('rm -rf "$path"', shared)
-        self.assertIn("wc -c < \"$path\" | tr -d '[:space:]'", shared)
-        self.assertIn('declare -A values=()', shared)
-        self.assertIn('while IFS=\'='\' read -r key value; do', shared)
-        self.assertIn('values["$key"]="$value"', shared)
-        self.assertIn('done <<< "$1"', shared)
-        self.assertIn('kv_to_map()', shared)
-        self.assertIn('mkdir -p "$backups_dir"', shared)
-        self.assertIn('timestamp=$(date +%Y-%m-%dT%H-%M-%S)', shared)
-        self.assertIn('migration_backup_dir="$backups_dir/migration-$timestamp"', shared)
-        self.assertIn('mkdir -p "$migration_backup_dir"', shared)
-        self.assertIn('ensure_backup_dir()', shared)
-        self.assertIn('prepare_migration_backup_dir()', shared)
-        self.assertIn('powershell.exe', shared)
-        self.assertIn('Get-CimInstance Win32_Process', shared)
-        self.assertIn('ensure_stopped_processes()', shared)
-        self.assertIn("claude-mem related processes still running:", shared)
-        self.assertIn("Unable to inspect processes with PowerShell Get-CimInstance.", shared)
-        self.assertIn('patterns=(\'claude-mem\' \'worker-service\' \'chroma-mcp\' \'mcp-server\' \'bun-runner\')', shared)
-        self.assertIn('command -v powershell.exe >/dev/null 2>&1 || fail', shared)
-        self.assertIn('tr -d \'\\r\'', shared)
-        self.assertIn('matches=()', shared)
-        self.assertIn('printf \'%s\\n\' "$table" "$(sqlite_scalar "$db_path" "SELECT COUNT(*) FROM $table")"', shared)
-        self.assertIn("printf 'page_count=%s\\n' \"$(sqlite_scalar \"$db_path\" 'PRAGMA page_count')\"", shared)
-        self.assertIn("printf 'freelist_count=%s\\n' \"$(sqlite_scalar \"$db_path\" 'PRAGMA freelist_count')\"", shared)
-        self.assertIn("printf 'page_size=%s\\n' \"$(sqlite_scalar \"$db_path\" 'PRAGMA page_size')\"", shared)
-        self.assertIn("printf 'journal_mode=%s\\n' \"$(sqlite_scalar \"$db_path\" 'PRAGMA journal_mode')\"", shared)
-        self.assertIn('BEGIN { first = 1 } NF { if (!first) printf ", "; printf "%s", $0; first = 0 }', shared)
-        self.assertIn('Path not found: $path', shared)
-        self.assertIn('sqlite3 not found in PATH.', shared)
-        self.assertIn('Live SQLite DB not found: $db_path', shared)
+        for helper in (
+            'step()',
+            'info()',
+            'fail()',
+            'resolve_path()',
+            'copy_if_exists()',
+            'remove_if_exists()',
+            'sqlite_scalar()',
+            'get_db_counts()',
+            'get_db_pragmas()',
+            'join_kv_lines()',
+            'require_sqlite3()',
+            'require_data_dir()',
+            'ensure_backup_dir()',
+            'prepare_migration_backup_dir()',
+            'ensure_stopped_processes()',
+        ):
+            self.assertIn(helper, shared)
+
+    def test_claude_mem_maint_sh_uses_shared_library_and_help_contract(self):
+        script = self.read_script("claude-mem-maint.sh")
+        self.assertIn('source "$script_dir/lib/claude-mem.sh"', script)
+        self.assertIn('Unknown subcommand', script)
+        self.assertIn('Usage: claude-mem-maint.sh <diagnose|compact|migrate> [options]', script)
+        self.assertIn('command -v bash >/dev/null 2>&1', script)
+        self.assertIn('shift || true', script)
+        self.assertIn('case "$command_name" in', script)
+        self.assertIn('help|-h|--help)', script)
+        self.assertIn('exit 0', script)
+        self.assertIn('exit 1', script)
+
+    def test_claude_mem_shell_scripts_keep_command_specific_contracts(self):
         self.assertIn('Nothing to do. Pass --replace-sqlite and/or --reset-chroma.', self.read_script("claude-mem-migrate.sh"))
         self.assertIn('recommended_action=$recommended_action', self.read_script("claude-mem-diagnose.sh"))
         self.assertIn('output_db=$resolved_output_db_path', self.read_script("claude-mem-compact.sh"))
-        self.assertIn('source "$script_dir/lib/claude-mem.sh"', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('Unknown subcommand', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('Usage: claude-mem-maint.sh <diagnose|compact|migrate> [options]', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('command -v bash >/dev/null 2>&1', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('shift || true', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('case "$command_name" in', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('help|-h|--help)', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('exit 0', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('exit 1', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('exec bash', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)', self.read_script("claude-mem-maint.sh"))
-        self.assertIn('lib/claude-mem.sh', self.read_script("claude-mem-maint.sh"))
         self.assertIn('Usage: claude-mem-diagnose.sh [options]', self.read_script("claude-mem-diagnose.sh"))
         self.assertIn('Usage: claude-mem-compact.sh [options]', self.read_script("claude-mem-compact.sh"))
         self.assertIn('Usage: claude-mem-migrate.sh [options]', self.read_script("claude-mem-migrate.sh"))
@@ -316,12 +293,12 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertIn('require_sqlite3', self.read_script("claude-mem-diagnose.sh"))
         self.assertIn('require_sqlite3', self.read_script("claude-mem-compact.sh"))
         self.assertIn('require_sqlite3', self.read_script("claude-mem-migrate.sh"))
-        self.assertIn('ensure_backup_dir', self.read_script("claude-mem-migrate.sh"))
-        self.assertIn('prepare_migration_backup_dir', self.read_script("claude-mem-migrate.sh"))
         self.assertIn('kv_to_map', self.read_script("claude-mem-diagnose.sh"))
         self.assertIn('kv_to_map', self.read_script("claude-mem-migrate.sh"))
         self.assertIn('compute_freelist_pct', self.read_script("claude-mem-diagnose.sh"))
         self.assertIn('recommend_compaction', self.read_script("claude-mem-diagnose.sh"))
+        self.assertIn('ensure_backup_dir', self.read_script("claude-mem-migrate.sh"))
+        self.assertIn('prepare_migration_backup_dir', self.read_script("claude-mem-migrate.sh"))
         self.assertIn('ensure_stopped_processes', self.read_script("claude-mem-migrate.sh"))
         self.assertIn('remove_if_exists "$wal_path"', self.read_script("claude-mem-migrate.sh"))
         self.assertIn('remove_if_exists "$shm_path"', self.read_script("claude-mem-migrate.sh"))

@@ -199,8 +199,8 @@ This is a future option, not a current requirement.
 ### RealESRGAN
 
 - role: backend-local runtime bundle under `third_party/Upscale/realesrgan/`
-- current migration target: replace historical `overlay` terms with `sources/`
-- implication: keep repo-owned runtime inputs in Git, keep `vendor/` ignored
+- current state: `sources/` is authoritative runtime input and `vendor/` is rebuildable runnable copy
+- implication: keep repo-owned runtime inputs in Git, keep `vendor/` ignored, and do not depend on upstream filter output for runtime correctness
 
 ### SeedVR-like backend
 

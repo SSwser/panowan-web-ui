@@ -2,27 +2,28 @@ import contextlib
 import hashlib
 import io
 import os
+import shutil
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
 from app.backends.providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
+from pathlib import Path
+
+from app.backends.registry import discover
 from app.backends.spec import (
     BackendSection,
     BackendSpec,
     FilterSpec,
     OutputSpec,
     RuntimeInputsSpec,
+    RuntimeSpec,
     SourceSpec,
+    WeightsSpec,
 )
 from app.backends.verify import ensure_backend, expected_backend_files, verify_backend
 from app.backends.model_spec import FileCheck, ModelSpec
 from app.settings import load_settings
-from app.upscale_contract import (
-    REALESRGAN_ENGINE_FILES,
-    REALESRGAN_WEIGHT_FAMILY,
-    REALESRGAN_WEIGHT_FILENAME,
-)
 
 
 class ModelSpecTests(unittest.TestCase):
@@ -463,20 +464,34 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertNotIn("upscale-realesrgan-engine", names)
         self.assertEqual(len(specs), 4)
 
-    def test_upscale_engine_files_remain_shared_contract_constants(self) -> None:
-        self.assertIn("realesrgan/runner.py", REALESRGAN_ENGINE_FILES)
-        self.assertIn("realesrgan/vendor/__main__.py", REALESRGAN_ENGINE_FILES)
-        self.assertIn(
-            "realesrgan/vendor/inference_realesrgan_video.py",
-            REALESRGAN_ENGINE_FILES,
+    def test_realesrgan_backend_spec_drives_engine_file_contract(self) -> None:
+        realesrgan = next(
+            spec
+            for spec in discover(Path("third_party/Upscale"))
+            if spec.backend.name == "realesrgan"
         )
-        self.assertTrue(
-            all(path.startswith("realesrgan/") for path in REALESRGAN_ENGINE_FILES)
+        engine_files = [
+            "realesrgan/runner.py",
+            *[f"realesrgan/{path}" for path in expected_backend_files(realesrgan)],
+        ]
+        self.assertIn("realesrgan/runner.py", engine_files)
+        self.assertIn("realesrgan/__main__.py", engine_files)
+        self.assertIn("realesrgan/inference_realesrgan_video.py", engine_files)
+        self.assertTrue(all(path.startswith("realesrgan/") for path in engine_files))
+        self.assertIn("realesrgan/realesrgan/srvgg_arch.py", engine_files)
+        self.assertIn("realesrgan/realesrgan/utils.py", engine_files)
+        self.assertIn("realesrgan/realesrgan/__init__.py", engine_files)
+        self.assertEqual(engine_files[0], "realesrgan/runner.py")
+        self.assertEqual(len(engine_files), 6)
+        self.assertEqual(realesrgan.weights.required_files, ["Real-ESRGAN/realesr-animevideov3.pth"])
+        self.assertEqual(realesrgan.runtime.required_commands, ["ffmpeg"])
+        self.assertEqual(
+            realesrgan.runtime.required_python_modules,
+            ["cv2", "ffmpeg", "tqdm"],
         )
-        self.assertIn(
-            "realesrgan/vendor/realesrgan/archs/srvgg_arch.py",
-            REALESRGAN_ENGINE_FILES,
-        )
+        self.assertEqual(realesrgan.runtime.python, "/opt/venvs/upscale-realesrgan/bin/python")
+        self.assertEqual(realesrgan.weights.family, "Real-ESRGAN")
+        self.assertEqual(realesrgan.weights.filename, "realesr-animevideov3.pth")
 
     def test_expected_backend_files_prefers_explicit_contract_when_present(self) -> None:
         spec = BackendSpec(
@@ -501,6 +516,16 @@ class LoadSpecsTests(unittest.TestCase):
                     "inference_realesrgan_video.py",
                     "realesrgan/__init__.py",
                 ],
+            ),
+            runtime=RuntimeSpec(
+                python="/opt/venvs/upscale-realesrgan/bin/python",
+                required_commands=["ffmpeg"],
+                required_python_modules=["cv2", "ffmpeg", "tqdm"],
+            ),
+            weights=WeightsSpec(
+                family="Real-ESRGAN",
+                filename="realesr-animevideov3.pth",
+                required_files=["Real-ESRGAN/realesr-animevideov3.pth"],
             ),
         )
         self.assertEqual(
@@ -648,6 +673,177 @@ class LoadSpecsTests(unittest.TestCase):
                 "realesrgan/__init__.py",
             ],
         )
+
+    def test_expected_backend_files_use_authoritative_runtime_inputs(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/Upscale/realesrgan"),
+            backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+            source=SourceSpec(
+                type="git",
+                url="https://example.invalid/realesrgan.git",
+                revision="v1",
+            ),
+            filter=FilterSpec(
+                include=["inference/Real-ESRGAN/inference_realesrgan_video.py"],
+                exclude=[],
+            ),
+            output=OutputSpec(target="vendor"),
+            runtime_inputs=RuntimeInputsSpec(
+                root="sources",
+                authoritative=True,
+                files=["__main__.py", "realesrgan/__init__.py"],
+            ),
+        )
+        self.assertEqual(
+            expected_backend_files(spec),
+            ["__main__.py", "realesrgan/__init__.py"],
+        )
+
+    def test_ensure_backend_rebuilds_from_authoritative_runtime_inputs_without_upstream(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "sources" / "realesrgan").mkdir(parents=True)
+            (root / "sources" / "__main__.py").write_text("entry", encoding="utf-8")
+            (root / "sources" / "realesrgan" / "__init__.py").write_text(
+                "pkg", encoding="utf-8"
+            )
+
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
+                ),
+                filter=FilterSpec(include=[], exclude=[]),
+                output=OutputSpec(target="vendor"),
+                runtime_inputs=RuntimeInputsSpec(
+                    root="sources",
+                    authoritative=True,
+                    files=["__main__.py", "realesrgan/__init__.py"],
+                ),
+            )
+
+            with patch("app.backends.verify.acquire_backend_source") as mock_acquire:
+                status = ensure_backend(spec)
+
+            self.assertEqual(status, "rebuilt")
+            mock_acquire.assert_not_called()
+            self.assertEqual((root / "vendor" / "__main__.py").read_text(encoding="utf-8"), "entry")
+            self.assertEqual(
+                (root / "vendor" / "realesrgan" / "__init__.py").read_text(
+                    encoding="utf-8"
+                ),
+                "pkg",
+            )
+            self.assertEqual(
+                (root / "vendor" / ".revision").read_text(encoding="utf-8").strip(),
+                "v1",
+            )
+
+    def test_ensure_backend_rebuilds_when_authoritative_runtime_inputs_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            vendor = root / "vendor"
+            vendor.mkdir()
+            (vendor / ".revision").write_text("v1\n", encoding="utf-8")
+            (vendor / "__main__.py").write_text("entry", encoding="utf-8")
+
+            (root / "sources" / "realesrgan").mkdir(parents=True)
+            (root / "sources" / "__main__.py").write_text("entry", encoding="utf-8")
+            (root / "sources" / "realesrgan" / "__init__.py").write_text(
+                "pkg", encoding="utf-8"
+            )
+
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
+                ),
+                filter=FilterSpec(include=[], exclude=[]),
+                output=OutputSpec(target="vendor"),
+                runtime_inputs=RuntimeInputsSpec(
+                    root="sources",
+                    authoritative=True,
+                    files=["__main__.py", "realesrgan/__init__.py"],
+                ),
+            )
+
+            with patch("app.backends.verify.acquire_backend_source") as mock_acquire:
+                status = ensure_backend(spec)
+
+            self.assertEqual(status, "rebuilt")
+            mock_acquire.assert_not_called()
+            self.assertEqual(
+                (vendor / "realesrgan" / "__init__.py").read_text(encoding="utf-8"),
+                "pkg",
+            )
+            self.assertFalse((vendor / "stale.txt").exists())
+
+    def test_ensure_backend_rebuilds_authoritative_runtime_after_vendor_is_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "sources" / "realesrgan" / "archs").mkdir(parents=True)
+            (root / "sources" / "__main__.py").write_text("entry", encoding="utf-8")
+            (root / "sources" / "inference_realesrgan_video.py").write_text(
+                "runner", encoding="utf-8"
+            )
+            (root / "sources" / "realesrgan" / "__init__.py").write_text(
+                "pkg", encoding="utf-8"
+            )
+            (root / "sources" / "realesrgan" / "archs" / "__init__.py").write_text(
+                "arch", encoding="utf-8"
+            )
+
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
+                ),
+                filter=FilterSpec(include=[], exclude=[]),
+                output=OutputSpec(target="vendor"),
+                runtime_inputs=RuntimeInputsSpec(
+                    root="sources",
+                    authoritative=True,
+                    files=[
+                        "__main__.py",
+                        "inference_realesrgan_video.py",
+                        "realesrgan/__init__.py",
+                    ],
+                ),
+            )
+
+            with patch("app.backends.verify.acquire_backend_source") as mock_acquire:
+                self.assertEqual(ensure_backend(spec), "rebuilt")
+                shutil.rmtree(root / "vendor")
+                self.assertEqual(ensure_backend(spec), "rebuilt")
+
+            mock_acquire.assert_not_called()
+            self.assertEqual((root / "vendor" / "__main__.py").read_text(encoding="utf-8"), "entry")
+            self.assertEqual(
+                (root / "vendor" / "inference_realesrgan_video.py").read_text(
+                    encoding="utf-8"
+                ),
+                "runner",
+            )
+            self.assertEqual(
+                (root / "vendor" / "realesrgan" / "__init__.py").read_text(
+                    encoding="utf-8"
+                ),
+                "pkg",
+            )
+            self.assertEqual(
+                (root / "vendor" / ".revision").read_text(encoding="utf-8").strip(),
+                "v1",
+            )
+            self.assertFalse((root / "vendor" / ".git").exists())
 
     def test_verify_backend_reports_missing_without_revision_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -959,7 +1155,12 @@ class LoadSpecsTests(unittest.TestCase):
             weights.source_ref,
             "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
         )
-        self.assertTrue(weights.target_dir.endswith(f"/{REALESRGAN_WEIGHT_FAMILY}"))
-        self.assertIn(REALESRGAN_WEIGHT_FAMILY, weights.target_dir)
-        self.assertEqual([f.path for f in weights.files], [REALESRGAN_WEIGHT_FILENAME])
+        realesrgan = next(
+            spec
+            for spec in discover(Path("third_party/Upscale"))
+            if spec.backend.name == "realesrgan"
+        )
+        self.assertTrue(weights.target_dir.endswith(f"/{realesrgan.weights.family}"))
+        self.assertIn(realesrgan.weights.family, weights.target_dir)
+        self.assertEqual([f.path for f in weights.files], [realesrgan.weights.filename])
         self.assertTrue(weights.files[0].sha256)

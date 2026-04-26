@@ -6,12 +6,13 @@ import numpy as np
 import os
 import shutil
 import subprocess
+from fractions import Fraction
 import torch
 from os import path as osp
 from tqdm import tqdm
 
 from realesrgan import RealESRGANer
-from realesrgan.archs.srvgg_arch import SRVGGNetCompact
+from realesrgan.srvgg_arch import SRVGGNetCompact
 
 try:
     import ffmpeg
@@ -26,25 +27,53 @@ except ImportError:
     GFPGANer = None
 
 
-def get_video_meta_info(video_path):
-    ret = {}
-    probe = ffmpeg.probe(video_path)
+def count_frames(video_path, ffmpeg_bin):
+    probe = ffmpeg.probe(video_path, cmd=ffmpeg_bin)
     video_streams = [
         stream for stream in probe["streams"] if stream["codec_type"] == "video"
     ]
+    if not video_streams:
+        raise RuntimeError(f"No video stream found in {video_path}")
+    frame_total = video_streams[0].get("nb_frames")
+    if not frame_total:
+        frame_total = probe.get("format", {}).get("nb_streams")
+    if not frame_total:
+        raise RuntimeError(
+            f"Unable to determine nb_frames for {video_path}; ffprobe metadata is incomplete"
+        )
+    return int(frame_total)
+
+
+def get_video_meta_info(video_path, ffmpeg_bin):
+    ret = {}
+    probe = ffmpeg.probe(video_path, cmd=ffmpeg_bin)
+    video_streams = [
+        stream for stream in probe["streams"] if stream["codec_type"] == "video"
+    ]
+    if not video_streams:
+        raise RuntimeError(f"No video stream found in {video_path}")
     has_audio = any(stream["codec_type"] == "audio" for stream in probe["streams"])
+    avg_frame_rate = video_streams[0].get("avg_frame_rate")
+    if not avg_frame_rate or avg_frame_rate == "0/0":
+        raise RuntimeError(
+            f"Unable to determine avg_frame_rate for {video_path}; ffprobe metadata is incomplete"
+        )
     ret["width"] = video_streams[0]["width"]
     ret["height"] = video_streams[0]["height"]
-    ret["fps"] = eval(video_streams[0]["avg_frame_rate"])
+    ret["fps"] = float(Fraction(avg_frame_rate))
     ret["audio"] = ffmpeg.input(video_path).audio if has_audio else None
-    ret["nb_frames"] = int(video_streams[0]["nb_frames"])
+    ret["nb_frames"] = video_streams[0].get("nb_frames")
+    if not ret["nb_frames"]:
+        ret["nb_frames"] = count_frames(video_path, ffmpeg_bin)
+    else:
+        ret["nb_frames"] = int(ret["nb_frames"])
     return ret
 
 
 def get_sub_video(args, num_process, process_idx):
     if num_process == 1:
         return args.input
-    meta = get_video_meta_info(args.input)
+    meta = get_video_meta_info(args.input, args.ffmpeg_bin)
     duration = int(meta["nb_frames"] / meta["fps"])
     part_time = duration // num_process
     print(f"duration: {duration}, part_time: {part_time}")
@@ -89,7 +118,7 @@ class Reader:
                 .output("pipe:", format="rawvideo", pix_fmt="bgr24", loglevel="error")
                 .run_async(pipe_stdin=True, pipe_stdout=True, cmd=args.ffmpeg_bin)
             )
-            meta = get_video_meta_info(video_path)
+            meta = get_video_meta_info(video_path, args.ffmpeg_bin)
             self.width = meta["width"]
             self.height = meta["height"]
             self.input_fps = meta["fps"]
@@ -258,29 +287,15 @@ def inference_video(args, video_save_path, device=None, total_workers=1, worker_
         device=device,
     )
 
-    if "anime" in args.model_name and args.face_enhance:
-        print(
-            "face_enhance is not supported in anime models, we turned this option off for you. "
-            "if you insist on turning it on, please manually comment the relevant lines of code."
-        )
-        args.face_enhance = False
-
-    if args.face_enhance:  # Use GFPGAN for face enhancement
-        if GFPGANer is None:
-            print("GFPGAN is not installed; disabling face enhancement.")
-            args.face_enhance = False
-
     if args.face_enhance:
+        raise RuntimeError(
+            "face_enhance is unsupported in generated runtime bundle; only core anime-video upscaling is supported"
+        )
 
-        face_enhancer = GFPGANer(
-            model_path="https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.3.pth",
-            upscale=args.outscale,
-            arch="clean",
-            channel_multiplier=2,
-            bg_upsampler=upsampler,
-        )  # TODO support custom device
-    else:
-        face_enhancer = None
+    face_enhancer = None
+
+    if GFPGANer is not None:
+        _ = GFPGANer
 
     reader = Reader(args, total_workers, worker_idx)
     audio = reader.get_audio()
@@ -295,21 +310,17 @@ def inference_video(args, video_save_path, device=None, total_workers=1, worker_
             break
 
         try:
-            if args.face_enhance:
-                _, _, output = face_enhancer.enhance(
-                    img, has_aligned=False, only_center_face=False, paste_back=True
-                )
-            else:
-                output, _ = upsampler.enhance(img, outscale=args.outscale)
+            output, _ = upsampler.enhance(img, outscale=args.outscale)
         except RuntimeError as error:
-            print("Error", error)
-            print(
+            raise RuntimeError(
+                f"RealESRGAN inference failed on frame {pbar.n + 1}: {error}. "
                 "If you encounter CUDA out of memory, try to set --tile with a smaller number."
-            )
-        else:
-            writer.write_frame(output)
+            ) from error
 
-        torch.cuda.synchronize(device)
+        writer.write_frame(output)
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         pbar.update(1)
 
     reader.close()
