@@ -14,6 +14,36 @@ panowan_env_load_dotenv() {
   fi
 }
 
+panowan_export_python_settings() {
+  local repo_root="$1"
+  PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON:-python3}" - <<'PY'
+import shlex
+
+from app.settings import load_settings
+
+settings = load_settings()
+exports = {
+    "MODEL_ROOT": settings.model_root,
+    "RUNTIME_DIR": settings.runtime_dir,
+    "PANOWAN_ENGINE_DIR": settings.panowan_engine_dir,
+    "WAN_MODEL_PATH": settings.wan_model_path,
+    "WAN_DIFFUSION_FILE": settings.wan_diffusion_absolute_path,
+    "WAN_T5_FILE": settings.wan_t5_absolute_path,
+    "LORA_CHECKPOINT_PATH": settings.lora_checkpoint_path,
+    "OUTPUT_DIR": settings.output_dir,
+    "JOB_STORE_PATH": settings.job_store_path,
+    "WORKER_STORE_PATH": settings.worker_store_path,
+    "UPSCALE_ENGINE_DIR": settings.upscale_engine_dir,
+    "UPSCALE_WEIGHTS_DIR": settings.upscale_weights_dir,
+    "UPSCALE_OUTPUT_DIR": settings.upscale_output_dir,
+    "UPSCALE_TIMEOUT_SECONDS": str(settings.upscale_timeout_seconds),
+    "WORKER_STALE_SECONDS": str(settings.worker_stale_seconds),
+}
+for key, value in exports.items():
+    print(f"export {key}={shlex.quote(value)}")
+PY
+}
+
 panowan_env_host() {
   local repo_root="${1:-$(panowan_env_repo_root)}"
 
@@ -21,17 +51,13 @@ panowan_env_host() {
 
   export REPO_ROOT="${REPO_ROOT:-${repo_root}}"
   export SERVICE_URL="${SERVICE_URL:-http://localhost:8000}"
-  export MODEL_ROOT="${MODEL_ROOT:-${REPO_ROOT}/data/models}"
+  eval "$(panowan_export_python_settings "${repo_root}")"
   # Clone/cache path for host-side model setup scripts.
   # NOT the same as the git submodule at third_party/PanoWan used by dev compose —
   # keeping them separate avoids the submodule's .git file (vs directory) confusing
   # repo-detection logic, and lets prod scripts clone/cache independently.
   export PANOWAN_HOST_DIR="${PANOWAN_HOST_DIR:-${REPO_ROOT}/.cache/PanoWan}"
   export PANOWAN_REPO_URL="${PANOWAN_REPO_URL:-https://github.com/VariantConst/PanoWan.git}"
-  export WAN_MODEL_PATH="${WAN_MODEL_PATH:-${MODEL_ROOT}/Wan-AI/Wan2.1-T2V-1.3B}"
-  export WAN_DIFFUSION_FILE="${WAN_DIFFUSION_FILE:-${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors}"
-  export WAN_T5_FILE="${WAN_T5_FILE:-${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth}"
-  export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-${MODEL_ROOT}/PanoWan/latest-lora.ckpt}"
 }
 
 panowan_env_tool_defaults() {
@@ -122,23 +148,7 @@ panowan_log_config() {
 }
 
 panowan_env_runtime() {
+  local repo_root="${1:-/app}"
   export SERVICE_ROLE="${SERVICE_ROLE:-api}"
-  export RUNTIME_DIR="${RUNTIME_DIR:-/app/runtime}"
-  export MODEL_ROOT="${MODEL_ROOT:-/models}"
-  export PANOWAN_ENGINE_DIR="${PANOWAN_ENGINE_DIR:-/engines/panowan}"
-  export WAN_MODEL_PATH="${WAN_MODEL_PATH:-${MODEL_ROOT}/Wan-AI/Wan2.1-T2V-1.3B}"
-  export WAN_DIFFUSION_FILE="${WAN_DIFFUSION_FILE:-${WAN_MODEL_PATH}/diffusion_pytorch_model.safetensors}"
-  export WAN_T5_FILE="${WAN_T5_FILE:-${WAN_MODEL_PATH}/models_t5_umt5-xxl-enc-bf16.pth}"
-  export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-${MODEL_ROOT}/PanoWan/latest-lora.ckpt}"
-  export OUTPUT_DIR="${OUTPUT_DIR:-${RUNTIME_DIR}/outputs}"
-  export JOB_STORE_PATH="${JOB_STORE_PATH:-${RUNTIME_DIR}/jobs.json}"
-  export WORKER_STORE_PATH="${WORKER_STORE_PATH:-${RUNTIME_DIR}/workers.json}"
-  export WORKER_STALE_SECONDS="${WORKER_STALE_SECONDS:-60}"
-  export UPSCALE_ENGINE_DIR="${UPSCALE_ENGINE_DIR:-/engines/upscale}"
-  # ADR 0003: backend weights live under model-family folders directly under
-  # MODEL_ROOT (e.g. ${MODEL_ROOT}/Real-ESRGAN/...), not under a functional
-  # upscale/ grouping. Default = MODEL_ROOT.
-  export UPSCALE_WEIGHTS_DIR="${UPSCALE_WEIGHTS_DIR:-${MODEL_ROOT}}"
-  export UPSCALE_OUTPUT_DIR="${UPSCALE_OUTPUT_DIR:-${OUTPUT_DIR}}"
-  export UPSCALE_TIMEOUT_SECONDS="${UPSCALE_TIMEOUT_SECONDS:-1800}"
+  eval "$(panowan_export_python_settings "${repo_root}")"
 }

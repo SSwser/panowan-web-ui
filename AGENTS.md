@@ -28,6 +28,10 @@ make setup-backends # download model weights and verify backends (required befor
 
 > Host-side Python is managed via `uv`. Prefer `uv run ...` over calling the system `python` directly so commands always use the project's pinned Python 3.13 environment.
 >
+> Host-side Docker usage should follow the existing wrappers in `Makefile` and `scripts/docker-proxy.sh` instead of ad-hoc `docker compose ...` commands. Those entry points preserve this repo's host/WSL environment propagation and compose interpolation contract.
+>
+> If you need a direct Docker command, copy the calling pattern from `Makefile` or route it through `scripts/docker-proxy.sh` rather than inventing a new shell wrapper.
+>
 > After changing `pyproject.toml`, run `uv lock` before `make build` — the build will fail otherwise.
 >
 > `make` targets that execute host-side Python (`make test`, `make setup-backends`, `make init`) are expected to run through `uv` when available.

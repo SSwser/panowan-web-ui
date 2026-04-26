@@ -73,13 +73,17 @@ Workers are specialized by engine. The first worker type is `worker-panowan`, ho
 
 A **backend** is the concrete implementation behind an engine (e.g. `RealESRGANBackend` behind `UpscaleEngine`). Per [ADR 0003](adr/0003-backend-runtime-contract.md), every backend declares a deterministic runtime contract through `UpscaleBackendAssets` (or its engine equivalent):
 
-- **Engine files** rooted at `UPSCALE_ENGINE_DIR` (default `/engines/upscale`) — the vendored runtime files copied from `third_party/<bundle>/` at build time.
-- **Weight files** rooted at `UPSCALE_WEIGHTS_DIR` (defaults to `MODEL_ROOT`, currently `/models`) — backend weights live under `/models/<MODEL_FAMILY>/`, e.g. `/models/Real-ESRGAN/realesr-animevideov3.pth`.
+- **Engine files** rooted at the runtime layout's canonical engine root (`/engines/upscale` in containers, `third_party/Upscale` on the host) — vendored runtime files copied from `third_party/<bundle>/` at build time, with each backend living under its own subtree such as `realesrgan/`, `realbasicvsr/`, or `seedvr2/`.
+- **Weight files** rooted at `MODEL_ROOT` (currently `/models` in containers) — backend weights live under `/models/<MODEL_FAMILY>/`, e.g. `/models/Real-ESRGAN/realesr-animevideov3.pth`.
 - **Required commands** on `PATH` (e.g. `ffmpeg`).
 - **Runtime Python** at a backend-isolated path (e.g. `/opt/venvs/upscale-realesrgan/bin/python`).
 - **Required Python modules** that the runtime Python must import.
 
-A backend is considered **available** only when every contract clause holds. The contract is the single source of truth: `app/upscale_contract.py` exports the file lists and the family/filename atoms, and `RealESRGANBackend.build_command()`, `app/models/specs.py`, and the test suite all derive from those constants — no path is re-spelled in multiple places.
+A backend is considered **available** only when every contract clause holds. The contract is the single source of truth: `app/upscale_contract.py` exports the file lists and the family/filename atoms, `app/paths.py` owns the canonical roots and derived path atoms, and `app/settings.py` derives runtime paths from that layout instead of exposing leaf-path environment variables. `RealESRGANBackend.build_command()`, `app/models/specs.py`, startup scripts, and the test suite consume those Python-owned paths rather than re-spelling them.
+
+Operator-facing configuration is intentionally smaller than the internal path graph. Compose and `.env` should expose root inputs and behavior toggles such as `SERVICE_ROLE`, `MODEL_ROOT`, `HOST`, `PORT`, concurrency, timeouts, and Hugging Face download settings. Leaf paths like `WAN_MODEL_PATH`, `LORA_CHECKPOINT_PATH`, `OUTPUT_DIR`, `JOB_STORE_PATH`, `WORKER_STORE_PATH`, `UPSCALE_ENGINE_DIR`, and `UPSCALE_OUTPUT_DIR` are internal derived values, not primary deployment knobs.
+
+This ownership split is deliberate: Python settings own path semantics, Compose owns role and mount contracts, and shell scripts remain thin bootstrap/diagnostic layers.
 
 ## Dependency Boundaries
 

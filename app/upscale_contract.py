@@ -9,8 +9,10 @@ must keep both in sync automatically.
 
 File-path conventions:
     * ``REALESRGAN_ENGINE_FILES`` paths are relative to ``UPSCALE_ENGINE_DIR``
-      (``/engines/upscale`` in containers). The flat layout under
-      ``realesrgan/vendor/`` is the long-lived contract — see
+      (``/engines/upscale`` in containers, ``third_party/Upscale`` on the host).
+      ``UPSCALE_ENGINE_DIR`` is the shared bundle root for all upscale backends,
+      so RealESRGAN files live under the backend-specific ``realesrgan/vendor/``
+      subtree — see
       ``docs/superpowers/specs/2026-04-25-upscale-backend-integration-design.md``.
     * ``REALESRGAN_WEIGHT_FILES`` paths are relative to ``UPSCALE_WEIGHTS_DIR``
       (``MODEL_ROOT`` / ``/models`` in containers). Weights live under the
@@ -18,16 +20,17 @@ File-path conventions:
       not under any functional ``upscale/`` grouping (ADR 0003).
 """
 
-# Flat vendored runtime: ``vendor/__main__.py`` is the deterministic
-# entrypoint that prepends ``vendor/`` to ``sys.path`` and delegates to
+# Flat vendored runtime under backend-specific subtree:
+# ``realesrgan/vendor/__main__.py`` is deterministic entrypoint that prepends
+# its sibling ``vendor/`` dir to ``sys.path`` and delegates to
 # ``inference_realesrgan_video.main()``.
 REALESRGAN_ENGINE_FILES: tuple[str, ...] = (
-    "vendor/__main__.py",
-    "vendor/inference_realesrgan_video.py",
-    "vendor/realesrgan/__init__.py",
-    "vendor/realesrgan/utils.py",
-    "vendor/realesrgan/archs/__init__.py",
-    "vendor/realesrgan/archs/srvgg_arch.py",
+    "realesrgan/vendor/__main__.py",
+    "realesrgan/vendor/inference_realesrgan_video.py",
+    "realesrgan/vendor/realesrgan/__init__.py",
+    "realesrgan/vendor/realesrgan/utils.py",
+    "realesrgan/vendor/realesrgan/archs/__init__.py",
+    "realesrgan/vendor/realesrgan/archs/srvgg_arch.py",
 )
 
 # Weight folder name under MODEL_ROOT. Kept as a constant so upscaler command

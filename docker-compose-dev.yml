@@ -21,6 +21,7 @@ services:
       - ./app:/app/app
       - ./scripts:/app/scripts
       - ./third_party/PanoWan:/engines/panowan
+      - ./third_party/Upscale:/engines/upscale
       - ${MODEL_ROOT:-./data/models}:/models
       - ./data/runtime:/app/runtime
     restart: "no"
@@ -32,6 +33,7 @@ services:
       - panowan-uv-cache:/root/.cache/uv
       - ./scripts:/app/scripts
       - ./third_party/PanoWan:/engines/panowan
+      - ./third_party/Upscale:/engines/upscale
       - ${MODEL_ROOT:-./data/models}:/models
 
 volumes:

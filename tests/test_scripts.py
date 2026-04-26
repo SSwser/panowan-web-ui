@@ -118,6 +118,25 @@ class ScriptBoundaryTests(unittest.TestCase):
         script = self.read_script("check-runtime.sh")
         self.assertIn("python -m app.backends verify", script)
 
+    def test_env_sh_does_not_define_duplicated_runtime_path_defaults(self):
+        script = self.read_script("lib/env.sh")
+        self.assertNotIn('export PANOWAN_ENGINE_DIR="${PANOWAN_ENGINE_DIR:-', script)
+        self.assertNotIn('export WAN_MODEL_PATH="${WAN_MODEL_PATH:-', script)
+        self.assertNotIn('export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-', script)
+        self.assertNotIn('export OUTPUT_DIR="${OUTPUT_DIR:-', script)
+        self.assertNotIn('export JOB_STORE_PATH="${JOB_STORE_PATH:-', script)
+        self.assertNotIn('export WORKER_STORE_PATH="${WORKER_STORE_PATH:-', script)
+        self.assertNotIn('export UPSCALE_ENGINE_DIR="${UPSCALE_ENGINE_DIR:-', script)
+        self.assertNotIn('export UPSCALE_OUTPUT_DIR="${UPSCALE_OUTPUT_DIR:-', script)
+
+    def test_env_sh_exports_python_derived_settings(self):
+        script = self.read_script("lib/env.sh")
+        self.assertIn("from app.settings import load_settings", script)
+        self.assertIn("panowan_export_python_settings", script)
+        self.assertIn('"WAN_MODEL_PATH": settings.wan_model_path', script)
+        self.assertIn('"OUTPUT_DIR": settings.output_dir', script)
+        self.assertIn('"UPSCALE_OUTPUT_DIR": settings.upscale_output_dir', script)
+
     def test_start_worker_supports_vmtouch(self):
         script = self.read_script("start-worker.sh")
         self.assertIn("VMTOUCH_MODELS", script)

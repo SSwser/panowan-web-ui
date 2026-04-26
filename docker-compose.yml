@@ -15,7 +15,6 @@ services:
     environment:
       SERVICE_ROLE: api
       HOST: 0.0.0.0
-      RUNTIME_DIR: /app/runtime
       JOB_BACKEND: local
     healthcheck:
       test:
@@ -44,11 +43,7 @@ services:
         required: false
     environment:
       SERVICE_ROLE: worker
-      RUNTIME_DIR: /app/runtime
       MODEL_ROOT: /models
-      PANOWAN_ENGINE_DIR: /engines/panowan
-      UPSCALE_ENGINE_DIR: /engines/upscale
-      UPSCALE_WEIGHTS_DIR: /models
       JOB_BACKEND: local
       TORCH_CUDNN_V8_API_ENABLED: "1"
       CUDA_MODULE_LOADING: LAZY

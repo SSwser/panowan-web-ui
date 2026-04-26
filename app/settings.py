@@ -1,8 +1,17 @@
 import os
-from pathlib import PurePath
 from dataclasses import dataclass
 
-from .paths import container_child, container_join
+from .paths import (
+    default_runtime_roots,
+    job_store_path,
+    lora_checkpoint_path,
+    model_root_path,
+    output_dir_path,
+    repo_root_from,
+    wan_diffusion_path,
+    wan_t5_path,
+    worker_store_path,
+)
 
 
 def _in_container() -> bool:
@@ -10,15 +19,14 @@ def _in_container() -> bool:
     if os.path.isfile("/.dockerenv"):
         return True
     try:
-        return "docker" in os.readline("/proc/1/cgroup")
-    except (OSError, AttributeError):
+        with open("/proc/1/cgroup", "r", encoding="utf-8") as handle:
+            return "docker" in handle.read()
+    except OSError:
         pass
     return bool(os.getenv("SERVICE_ROLE"))
 
 
-# Host-side project roots (submodule checkouts live under these).
-_HOST_ROOT = os.path.dirname(os.path.abspath(__file__)).rsplit(os.sep + "app", 1)[0]
-_HOST_THIRD_PARTY = os.path.join(_HOST_ROOT, "third_party")
+_HOST_ROOT = repo_root_from(__file__)
 
 
 @dataclass(frozen=True)
@@ -54,15 +62,11 @@ class Settings:
 
     @property
     def wan_diffusion_absolute_path(self) -> str:
-        return container_child(
-            self.wan_model_absolute_path, "diffusion_pytorch_model.safetensors"
-        )
+        return wan_diffusion_path(self.wan_model_absolute_path)
 
     @property
     def wan_t5_absolute_path(self) -> str:
-        return container_child(
-            self.wan_model_absolute_path, "models_t5_umt5-xxl-enc-bf16.pth"
-        )
+        return wan_t5_path(self.wan_model_absolute_path)
 
     @property
     def lora_absolute_path(self) -> str:
@@ -70,46 +74,22 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    in_container = _in_container()
-
-    # Host-side: ./data/models  | Container: /models (docker-compose bind-mount)
-    model_root = os.getenv("MODEL_ROOT", "/models" if in_container else os.path.join(_HOST_ROOT, "data", "models"))
-    runtime_dir = os.getenv("RUNTIME_DIR", "/app/runtime" if in_container else os.path.join(_HOST_ROOT, "data", "runtime"))
-    output_dir = os.getenv("OUTPUT_DIR", container_child(runtime_dir, "outputs"))
-
-    # Engine dirs: host-side points to submodule checkouts; container points to bind-mount roots.
-    # PanoWan: host=third_party/PanoWan          | container=/engines/panowan
-    # Upscale:  host=third_party/Upscale/realesrgan | container=/engines/upscale
-    panowan_engine_dir = os.getenv(
-        "PANOWAN_ENGINE_DIR",
-        "/engines/panowan" if in_container else os.path.join(_HOST_THIRD_PARTY, "PanoWan")
-    )
-    upscale_engine_dir = os.getenv(
-        "UPSCALE_ENGINE_DIR",
-        "/engines/upscale" if in_container else os.path.join(_HOST_THIRD_PARTY, "Upscale", "realesrgan")
-    )
+    roots = default_runtime_roots(repo_root=_HOST_ROOT, in_container=_in_container())
+    model_root = os.getenv("MODEL_ROOT", roots.model_root)
+    runtime_dir = roots.runtime_root
+    output_dir = output_dir_path(runtime_dir)
 
     return Settings(
         service_title="PanoWan Product Runtime API",
         service_version="1.0.0",
-        panowan_engine_dir=panowan_engine_dir,
+        panowan_engine_dir=roots.panowan_engine_root,
         model_root=model_root,
-        wan_model_path=os.getenv(
-            "WAN_MODEL_PATH",
-            container_join(model_root, "Wan-AI/Wan2.1-T2V-1.3B"),
-        ),
-        lora_checkpoint_path=os.getenv(
-            "LORA_CHECKPOINT_PATH",
-            container_join(model_root, "PanoWan/latest-lora.ckpt"),
-        ),
+        wan_model_path=model_root_path(model_root),
+        lora_checkpoint_path=lora_checkpoint_path(model_root),
         runtime_dir=runtime_dir,
         output_dir=output_dir,
-        job_store_path=os.getenv(
-            "JOB_STORE_PATH", container_child(runtime_dir, "jobs.json")
-        ),
-        worker_store_path=os.getenv(
-            "WORKER_STORE_PATH", container_child(runtime_dir, "workers.json")
-        ),
+        job_store_path=job_store_path(runtime_dir),
+        worker_store_path=worker_store_path(runtime_dir),
         default_prompt=os.getenv(
             "DEFAULT_PROMPT", "A beautiful mountain landscape at sunset"
         ),
@@ -117,12 +97,12 @@ def load_settings() -> Settings:
         default_num_inference_steps=int(os.getenv("DEFAULT_NUM_INFERENCE_STEPS", "50")),
         default_width=int(os.getenv("DEFAULT_WIDTH", "896")),
         default_height=int(os.getenv("DEFAULT_HEIGHT", "448")),
-        upscale_engine_dir=upscale_engine_dir,
+        upscale_engine_dir=roots.upscale_engine_root,
         # ADR 0003: weights live under model-family folders directly under
         # MODEL_ROOT (e.g. /models/Real-ESRGAN/...), not under a functional
         # /models/upscale/ grouping. Default = MODEL_ROOT.
-        upscale_weights_dir=os.getenv("UPSCALE_WEIGHTS_DIR", model_root),
-        upscale_output_dir=os.getenv("UPSCALE_OUTPUT_DIR", output_dir),
+        upscale_weights_dir=model_root,
+        upscale_output_dir=output_dir,
         upscale_timeout_seconds=int(os.getenv("UPSCALE_TIMEOUT_SECONDS", "1800")),
         max_concurrent_jobs=int(os.getenv("MAX_CONCURRENT_JOBS", "1")),
         host=os.getenv("HOST", "0.0.0.0"),
