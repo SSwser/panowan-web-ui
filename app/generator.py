@@ -89,7 +89,9 @@ def resolve_inference_params(payload: dict) -> dict:
 
 
 def generate_video(payload: dict) -> dict:
-    job_id = str(payload.get("id") or uuid.uuid4())
+    # job_id key is the canonical identifier set by the worker/job store;
+    # fall back to id for direct API callers, then generate a UUID as last resort.
+    job_id = str(payload.get("job_id") or payload.get("id") or uuid.uuid4())
     prompt = extract_prompt(payload)
     params = resolve_inference_params(payload)
     should_cancel = payload.get("_should_cancel")

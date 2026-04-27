@@ -483,21 +483,29 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertIn("realesrgan/realesrgan/__init__.py", engine_files)
         self.assertEqual(engine_files[0], "realesrgan/runner.py")
         self.assertEqual(len(engine_files), 6)
-        self.assertEqual(realesrgan.weights.required_files, ["Real-ESRGAN/realesr-animevideov3.pth"])
+        self.assertEqual(
+            realesrgan.weights.required_files, ["Real-ESRGAN/realesr-animevideov3.pth"]
+        )
         self.assertEqual(realesrgan.runtime.required_commands, ["ffmpeg"])
         self.assertEqual(
             realesrgan.runtime.required_python_modules,
             ["cv2", "ffmpeg", "tqdm"],
         )
-        self.assertEqual(realesrgan.runtime.python, "/opt/venvs/upscale-realesrgan/bin/python")
+        self.assertEqual(
+            realesrgan.runtime.python, "/opt/venvs/upscale-realesrgan/bin/python"
+        )
         self.assertEqual(realesrgan.weights.family, "Real-ESRGAN")
         self.assertEqual(realesrgan.weights.filename, "realesr-animevideov3.pth")
 
-    def test_expected_backend_files_prefers_explicit_contract_when_present(self) -> None:
+    def test_expected_backend_files_prefers_explicit_contract_when_present(
+        self,
+    ) -> None:
         spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(
                 include=[
                     "inference/Real-ESRGAN/inference_realesrgan_video.py",
@@ -537,11 +545,15 @@ class LoadSpecsTests(unittest.TestCase):
             ],
         )
 
-    def test_expected_backend_files_rewrite_filtered_paths_for_vendor_layout(self) -> None:
+    def test_expected_backend_files_rewrite_filtered_paths_for_vendor_layout(
+        self,
+    ) -> None:
         spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(
                 include=[
                     "inference/Real-ESRGAN/inference_realesrgan_video.py",
@@ -573,10 +585,7 @@ class LoadSpecsTests(unittest.TestCase):
             src_root = Path(src)
             (src_root / "inference" / "Real-ESRGAN").mkdir(parents=True)
             (
-                src_root
-                / "inference"
-                / "Real-ESRGAN"
-                / "inference_realesrgan_video.py"
+                src_root / "inference" / "Real-ESRGAN" / "inference_realesrgan_video.py"
             ).write_text("runner", encoding="utf-8")
 
             spec = BackendSpec(
@@ -642,8 +651,9 @@ class LoadSpecsTests(unittest.TestCase):
             )
             self.assertFalse((root / "vendor" / "inference").exists())
 
-
-    def test_expected_backend_files_include_runtime_inputs_when_output_contract_is_implicit(self) -> None:
+    def test_expected_backend_files_include_runtime_inputs_when_output_contract_is_implicit(
+        self,
+    ) -> None:
         spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
@@ -699,7 +709,9 @@ class LoadSpecsTests(unittest.TestCase):
             ["__main__.py", "realesrgan/__init__.py"],
         )
 
-    def test_ensure_backend_rebuilds_from_authoritative_runtime_inputs_without_upstream(self) -> None:
+    def test_ensure_backend_rebuilds_from_authoritative_runtime_inputs_without_upstream(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "sources" / "realesrgan").mkdir(parents=True)
@@ -730,7 +742,9 @@ class LoadSpecsTests(unittest.TestCase):
 
             self.assertEqual(status, "rebuilt")
             mock_acquire.assert_not_called()
-            self.assertEqual((root / "vendor" / "__main__.py").read_text(encoding="utf-8"), "entry")
+            self.assertEqual(
+                (root / "vendor" / "__main__.py").read_text(encoding="utf-8"), "entry"
+            )
             self.assertEqual(
                 (root / "vendor" / "realesrgan" / "__init__.py").read_text(
                     encoding="utf-8"
@@ -742,7 +756,9 @@ class LoadSpecsTests(unittest.TestCase):
                 "v1",
             )
 
-    def test_ensure_backend_rebuilds_when_authoritative_runtime_inputs_missing(self) -> None:
+    def test_ensure_backend_rebuilds_when_authoritative_runtime_inputs_missing(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             vendor = root / "vendor"
@@ -784,7 +800,9 @@ class LoadSpecsTests(unittest.TestCase):
             )
             self.assertFalse((vendor / "stale.txt").exists())
 
-    def test_ensure_backend_rebuilds_authoritative_runtime_after_vendor_is_deleted(self) -> None:
+    def test_ensure_backend_rebuilds_authoritative_runtime_after_vendor_is_deleted(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "sources" / "realesrgan" / "archs").mkdir(parents=True)
@@ -826,7 +844,9 @@ class LoadSpecsTests(unittest.TestCase):
                 self.assertEqual(ensure_backend(spec), "rebuilt")
 
             mock_acquire.assert_not_called()
-            self.assertEqual((root / "vendor" / "__main__.py").read_text(encoding="utf-8"), "entry")
+            self.assertEqual(
+                (root / "vendor" / "__main__.py").read_text(encoding="utf-8"), "entry"
+            )
             self.assertEqual(
                 (root / "vendor" / "inference_realesrgan_video.py").read_text(
                     encoding="utf-8"
@@ -852,13 +872,17 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertEqual(result.revision, None)
         self.assertEqual(result.missing_files, ["__main__.py"])
 
-    def test_ensure_backend_rebuilds_when_runtime_inputs_are_missing_from_implicit_contract(self) -> None:
+    def test_ensure_backend_rebuilds_when_runtime_inputs_are_missing_from_implicit_contract(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as src:
             root = Path(td)
             vendor = root / "vendor"
             vendor.mkdir()
             (vendor / ".revision").write_text("v1\n", encoding="utf-8")
-            (vendor / "inference_realesrgan_video.py").write_text("runner", encoding="utf-8")
+            (vendor / "inference_realesrgan_video.py").write_text(
+                "runner", encoding="utf-8"
+            )
 
             (root / "sources" / "realesrgan").mkdir(parents=True)
             (root / "sources" / "__main__.py").write_text("entry", encoding="utf-8")
@@ -869,10 +893,7 @@ class LoadSpecsTests(unittest.TestCase):
             src_root = Path(src)
             (src_root / "inference" / "Real-ESRGAN").mkdir(parents=True)
             (
-                src_root
-                / "inference"
-                / "Real-ESRGAN"
-                / "inference_realesrgan_video.py"
+                src_root / "inference" / "Real-ESRGAN" / "inference_realesrgan_video.py"
             ).write_text("runner", encoding="utf-8")
 
             spec = BackendSpec(
@@ -911,7 +932,9 @@ class LoadSpecsTests(unittest.TestCase):
                 status = ensure_backend(spec)
 
             self.assertEqual(status, "rebuilt")
-            self.assertEqual((vendor / "__main__.py").read_text(encoding="utf-8"), "entry")
+            self.assertEqual(
+                (vendor / "__main__.py").read_text(encoding="utf-8"), "entry"
+            )
             self.assertEqual(
                 (vendor / "realesrgan" / "__init__.py").read_text(encoding="utf-8"),
                 "pkg",
@@ -927,8 +950,14 @@ class LoadSpecsTests(unittest.TestCase):
             spec = BackendSpec(
                 root=root,
                 backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-                source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
-                filter=FilterSpec(include=["inference/inference_realesrgan_video.py"], exclude=[]),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
+                ),
+                filter=FilterSpec(
+                    include=["inference/inference_realesrgan_video.py"], exclude=[]
+                ),
                 output=OutputSpec(target="vendor", strip_prefixes=["inference/"]),
             )
             with patch("app.backends.verify.acquire_backend_source") as mock_acquire:
@@ -952,7 +981,9 @@ class LoadSpecsTests(unittest.TestCase):
                 root=root,
                 backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
                 source=SourceSpec(
-                    type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
                 ),
                 filter=FilterSpec(
                     include=[
@@ -988,7 +1019,9 @@ class LoadSpecsTests(unittest.TestCase):
                 (root / "vendor" / ".revision").read_text(encoding="utf-8").strip(),
                 "v1",
             )
-            self.assertTrue((root / "vendor" / "inference_realesrgan_video.py").exists())
+            self.assertTrue(
+                (root / "vendor" / "inference_realesrgan_video.py").exists()
+            )
             self.assertTrue((root / "vendor" / "realesrgan" / "__init__.py").exists())
             self.assertFalse((root / "vendor" / "inference").exists())
             self.assertFalse((root / "vendor" / ".git").exists())
@@ -1009,9 +1042,13 @@ class LoadSpecsTests(unittest.TestCase):
                 root=root,
                 backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
                 source=SourceSpec(
-                    type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+                    type="git",
+                    url="https://example.invalid/realesrgan.git",
+                    revision="v1",
                 ),
-                filter=FilterSpec(include=["realesrgan/Real-ESRGAN/realesrgan/**"], exclude=[]),
+                filter=FilterSpec(
+                    include=["realesrgan/Real-ESRGAN/realesrgan/**"], exclude=[]
+                ),
                 output=OutputSpec(
                     target="vendor",
                     strip_prefixes=["realesrgan/Real-ESRGAN/"],
@@ -1039,13 +1076,13 @@ class LoadSpecsTests(unittest.TestCase):
                 "v1",
             )
 
-
-
     def test_acquire_backend_source_failure_bubbles_up(self) -> None:
         spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
         )
@@ -1060,7 +1097,9 @@ class LoadSpecsTests(unittest.TestCase):
         spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="http", url="https://example.invalid/file.zip", revision="v1"),
+            source=SourceSpec(
+                type="http", url="https://example.invalid/file.zip", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
         )
@@ -1073,7 +1112,9 @@ class LoadSpecsTests(unittest.TestCase):
         backend_spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
         )
@@ -1096,7 +1137,9 @@ class LoadSpecsTests(unittest.TestCase):
         backend_spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
             runtime_inputs=RuntimeInputsSpec(
@@ -1129,7 +1172,7 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertNotEqual(ctx.exception.code, 0)
         self.assertIn("backend:realesrgan", output)
         self.assertIn("missing runtime files", output)
-        self.assertIn("uv run -m app.backends install", output)
+        self.assertIn("uv run python -m app.backends install", output)
         self.assertIn("make setup-backends", output)
         self.assertIn("delete third_party/Upscale/realesrgan/vendor", output)
 
@@ -1139,7 +1182,9 @@ class LoadSpecsTests(unittest.TestCase):
         backend_spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
         )
@@ -1175,7 +1220,9 @@ class LoadSpecsTests(unittest.TestCase):
         backend_spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
         )
@@ -1202,7 +1249,9 @@ class LoadSpecsTests(unittest.TestCase):
         backend_spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
             backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-            source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+            ),
             filter=FilterSpec(include=["realesrgan/**"], exclude=[]),
             output=OutputSpec(target="vendor", strip_prefixes=[""]),
         )
@@ -1222,6 +1271,7 @@ class LoadSpecsTests(unittest.TestCase):
 
     def test_upscale_realesrgan_weights_spec_uses_official_http_artifact(self) -> None:
         env = {
+            "MODEL_ROOT": "/models",
             "WAN_MODEL_PATH": "/models/Wan-AI/Wan2.1-T2V-1.3B",
             "LORA_CHECKPOINT_PATH": "/models/PanoWan/latest-lora.ckpt",
             "PANOWAN_ENGINE_DIR": "/engines/panowan",

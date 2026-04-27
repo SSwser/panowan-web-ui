@@ -85,9 +85,7 @@ class ScriptBoundaryTests(unittest.TestCase):
         sources = ROOT / "third_party" / "Upscale" / "realesrgan" / "sources"
         runner = (sources / "inference_realesrgan_video.py").read_text(encoding="utf-8")
         utils = (sources / "realesrgan" / "utils.py").read_text(encoding="utf-8")
-        arch = (sources / "realesrgan" / "srvgg_arch.py").read_text(
-            encoding="utf-8"
-        )
+        arch = (sources / "realesrgan" / "srvgg_arch.py").read_text(encoding="utf-8")
         self.assertNotIn("basicsr", requirements)
         self.assertNotIn("from basicsr", runner)
         self.assertNotIn("gfpgan", runner)
@@ -128,16 +126,16 @@ class ScriptBoundaryTests(unittest.TestCase):
         self.assertIn("torch.cuda.is_available()", runner)
         self.assertNotIn("torch.cuda.synchronize(device)", runner)
         self.assertIn("torch.cuda.synchronize()", runner)
-        self.assertNotIn('turned this option off for you', runner)
-        self.assertNotIn('GFPGAN is not installed; disabling face enhancement.', runner)
-        self.assertNotIn('https://github.com/TencentARC/GFPGAN', runner)
+        self.assertNotIn("turned this option off for you", runner)
+        self.assertNotIn("GFPGAN is not installed; disabling face enhancement.", runner)
+        self.assertNotIn("https://github.com/TencentARC/GFPGAN", runner)
         self.assertIn("CUDA out of memory", runner)
         self.assertIn("failed on frame", runner)
         self.assertIn("unsupported in generated runtime bundle", runner)
         self.assertIn("nb_frames", runner)
-        self.assertIn("if not ret[\"nb_frames\"]:", runner)
+        self.assertIn('if not ret["nb_frames"]:', runner)
         self.assertIn("count_frames(", runner)
-        self.assertNotIn("eval(video_streams[0][\"avg_frame_rate\"])", runner)
+        self.assertNotIn('eval(video_streams[0]["avg_frame_rate"])', runner)
 
     def test_start_api_does_not_download_or_check_gpu(self):
         script = self.read_script("start-api.sh")
@@ -160,7 +158,9 @@ class ScriptBoundaryTests(unittest.TestCase):
         script = self.read_script("lib/env.sh")
         self.assertNotIn('export PANOWAN_ENGINE_DIR="${PANOWAN_ENGINE_DIR:-', script)
         self.assertNotIn('export WAN_MODEL_PATH="${WAN_MODEL_PATH:-', script)
-        self.assertNotIn('export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-', script)
+        self.assertNotIn(
+            'export LORA_CHECKPOINT_PATH="${LORA_CHECKPOINT_PATH:-', script
+        )
         self.assertNotIn('export OUTPUT_DIR="${OUTPUT_DIR:-', script)
         self.assertNotIn('export JOB_STORE_PATH="${JOB_STORE_PATH:-', script)
         self.assertNotIn('export WORKER_STORE_PATH="${WORKER_STORE_PATH:-', script)
@@ -182,6 +182,8 @@ class ScriptBoundaryTests(unittest.TestCase):
     def test_docker_proxy_forwards_compose_interpolation_vars_to_wsl(self):
         script = self.read_script("docker-proxy.sh")
         self.assertIn("docker_proxy_export_wslenv_var", script)
-        self.assertIn("for name in TAG MODEL_ROOT PORT APT_MIRROR PYPI_INDEX", script)
+        # MODEL_ROOT is forwarded with /p so WSL converts the Windows path;
+        # remaining vars are forwarded without a modifier.
+        self.assertIn('docker_proxy_export_wslenv_var "MODEL_ROOT" "/p"', script)
+        self.assertIn("for name in TAG PORT APT_MIRROR PYPI_INDEX", script)
         self.assertIn("WSLENV", script)
-

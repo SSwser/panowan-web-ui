@@ -4,6 +4,7 @@ from unittest import mock
 from app.engines.base import EngineResult
 from app.engines.panowan import PanoWanEngine
 from app.engines.registry import EngineRegistry
+from app.engines.upscale import UpscaleEngine
 from app.settings import settings
 
 
@@ -64,9 +65,6 @@ class PanoWanEngineTests(unittest.TestCase):
             ),
         )
         generate_video.assert_called_once()
-
-
-from app.engines.upscale import UpscaleEngine
 
 
 class UpscaleEngineTests(unittest.TestCase):

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from typing import Any
 
 
@@ -12,34 +13,40 @@ class SSEBus:
     """
 
     def __init__(self) -> None:
-        self._subscribers: list[asyncio.Queue] = []
-        self._loop: asyncio.AbstractEventLoop | None = None
-
-    def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get the running event loop (cached after first call)."""
-        if self._loop is None or self._loop.is_closed():
-            self._loop = asyncio.get_event_loop()
-        return self._loop
+        # Each entry is (queue, loop) so broadcast() always dispatches to the
+        # loop that owns the queue, regardless of which thread calls broadcast().
+        self._subscribers: list[tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = []
+        # Lock guards _subscribers against concurrent subscribe/unsubscribe while
+        # broadcast() may be taking a snapshot.
+        self._lock = threading.Lock()
 
     def subscribe(self, maxsize: int = 0) -> asyncio.Queue:
+        # Capture the running loop at subscription time — the worker thread that
+        # calls broadcast() later may be on a different loop entirely.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g. in sync tests); fall back gracefully.
+            loop = asyncio.new_event_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
-        self._subscribers.append(queue)
+        with self._lock:
+            self._subscribers.append((queue, loop))
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
-        try:
-            self._subscribers.remove(queue)
-        except ValueError:
-            pass
+        with self._lock:
+            self._subscribers = [(q, l) for q, l in self._subscribers if q is not queue]
 
     def broadcast(self, event: str, data: dict[str, Any]) -> None:
         message = {
             "event": event,
             "data": json.dumps(data, ensure_ascii=False),
         }
-        for queue in self._subscribers:
+        # Take a snapshot so subscribe/unsubscribe during iteration is safe.
+        with self._lock:
+            snapshot = list(self._subscribers)
+        for queue, loop in snapshot:
             try:
-                loop = self._get_loop()
                 if loop.is_running():
                     loop.call_soon_threadsafe(queue.put_nowait, message)
                 else:

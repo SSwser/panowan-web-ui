@@ -24,7 +24,7 @@ def _format_missing_files(missing_files: list[str]) -> str:
 
 def _authoritative_rebuild_hint(vendor_dir: Path) -> str:
     return (
-        f"rerun `uv run -m app.backends install` or `make setup-backends` to rebuild "
+        f"rerun `uv run python -m app.backends install` or `make setup-backends` to rebuild "
         f"{vendor_dir.as_posix()}; if verification is blocked by directory stat limitations, "
         f"delete {vendor_dir.as_posix()} and rerun install"
     )

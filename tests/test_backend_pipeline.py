@@ -2,7 +2,14 @@ from pathlib import Path
 
 from app.backends.filter import filter_paths
 from app.backends.materialize import write_revision
-from app.backends.spec import BackendSection, BackendSpec, OutputSpec, RuntimeInputsSpec, SourceSpec
+from app.backends.spec import (
+    BackendSection,
+    BackendSpec,
+    FilterSpec,
+    OutputSpec,
+    RuntimeInputsSpec,
+    SourceSpec,
+)
 from app.backends.verify import BackendVerification, verify_backend
 
 
@@ -43,7 +50,10 @@ def test_authoritative_backend_missing_files_are_reported_for_rebuild_hint() -> 
     spec = BackendSpec(
         root=Path("third_party/Upscale/realesrgan"),
         backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-        source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+        source=SourceSpec(
+            type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+        ),
+        filter=FilterSpec(include=[], exclude=[]),
         output=OutputSpec(target="vendor"),
         runtime_inputs=RuntimeInputsSpec(
             root="sources",
@@ -61,7 +71,7 @@ def test_authoritative_backend_missing_files_are_reported_for_rebuild_hint() -> 
 
     assert "backend:realesrgan" in message
     assert "missing runtime files: __main__.py, realesrgan/__init__.py" in message
-    assert "uv run -m app.backends install" in message
+    assert "uv run python -m app.backends install" in message
     assert "make setup-backends" in message
     assert "delete third_party/Upscale/realesrgan/vendor" in message
 
@@ -72,7 +82,10 @@ def test_non_authoritative_backend_mismatch_skips_delete_vendor_hint() -> None:
     spec = BackendSpec(
         root=Path("third_party/Upscale/realesrgan"),
         backend=BackendSection(name="realesrgan", display_name="Real-ESRGAN"),
-        source=SourceSpec(type="git", url="https://example.invalid/realesrgan.git", revision="v1"),
+        source=SourceSpec(
+            type="git", url="https://example.invalid/realesrgan.git", revision="v1"
+        ),
+        filter=FilterSpec(include=[], exclude=[]),
         output=OutputSpec(target="vendor"),
     )
     verification = BackendVerification(
@@ -85,4 +98,4 @@ def test_non_authoritative_backend_mismatch_skips_delete_vendor_hint() -> None:
 
     assert "runtime revision old-rev does not match expected v1" in message
     assert "delete third_party/Upscale/realesrgan/vendor" not in message
-    assert "uv run -m app.backends install" not in message
+    assert "uv run python -m app.backends install" not in message

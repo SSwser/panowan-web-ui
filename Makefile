@@ -10,7 +10,9 @@ APT_MIRROR ?=
 PYPI_INDEX ?=
 BUILD_ARGS := $(if $(APT_MIRROR),--build-arg APT_MIRROR=$(APT_MIRROR)) $(if $(PYPI_INDEX),--build-arg PYPI_INDEX=$(PYPI_INDEX))
 
-PYTHON_RUN := $(shell if command -v uv >/dev/null 2>&1; then printf 'uv run'; else printf 'python'; fi)
+# uv run expects a command name, not a Python flag. Use uv run python so
+# `-m ...` is passed to Python instead of uv.
+PYTHON_RUN := $(shell if command -v uv >/dev/null 2>&1; then printf 'uv run python'; else printf 'python'; fi)
 
 ifneq (,$(wildcard .env))
 include .env

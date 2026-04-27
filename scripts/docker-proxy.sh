@@ -3,6 +3,9 @@ set -euo pipefail
 
 docker_proxy_export_wslenv_var() {
     local name="$1"
+    # Optional WSLENV modifier (e.g. /p for path conversion, /l for path list).
+    local modifier="${2:-}"
+    local entry="${name}${modifier}"
     if [[ -z "${!name:-}" ]]; then
         return
     fi
@@ -10,10 +13,10 @@ docker_proxy_export_wslenv_var() {
     if [[ -n "${WSLENV:-}" ]]; then
         case ":${WSLENV}:" in
             *":${name}:"*|*":${name}/"*) ;;
-            *) export WSLENV="${WSLENV}:${name}" ;;
+            *) export WSLENV="${WSLENV}:${entry}" ;;
         esac
     else
-        export WSLENV="${name}"
+        export WSLENV="${entry}"
     fi
 }
 
@@ -33,7 +36,10 @@ for wsl_cmd in wsl.exe wsl; do
         if [[ "${wsl_cmd}" == "wsl.exe" ]]; then
             # Forward common compose interpolation variables into WSL so
             # `make`/shell overrides behave the same on Windows and WSL.
-            for name in TAG MODEL_ROOT PORT APT_MIRROR PYPI_INDEX; do
+            # MODEL_ROOT is a filesystem path; /p tells WSLENV to convert it
+            # between Windows and Linux path formats during forwarding.
+            docker_proxy_export_wslenv_var "MODEL_ROOT" "/p"
+            for name in TAG PORT APT_MIRROR PYPI_INDEX; do
                 docker_proxy_export_wslenv_var "${name}"
             done
         fi

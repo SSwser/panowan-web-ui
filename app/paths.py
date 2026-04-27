@@ -28,11 +28,15 @@ class RuntimePathRoots:
 
 
 def container_join(base: str, *parts: str) -> str:
-    cleaned_parts = [part.strip("/") for part in parts if part]
-    if not cleaned_parts:
-        return base
-    base_clean = base.rstrip("/") or "/"
-    return posixpath.join(base_clean, *cleaned_parts)
+    # Use POSIX joining only for absolute POSIX (container) paths.
+    # On a Windows host the base is a native path, so os.path.join is correct.
+    if base.startswith("/"):
+        cleaned_parts = [part.strip("/") for part in parts if part]
+        if not cleaned_parts:
+            return base
+        base_clean = base.rstrip("/") or "/"
+        return posixpath.join(base_clean, *cleaned_parts)
+    return os.path.join(base, *parts)
 
 
 def container_child(path: str, child: str) -> str:
