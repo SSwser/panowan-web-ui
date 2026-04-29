@@ -1,13 +1,12 @@
-from dataclasses import replace
 import importlib.util
 import json
 import logging
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest import mock
 from unittest.mock import patch
-
 
 FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
@@ -15,9 +14,9 @@ if FASTAPI_AVAILABLE:
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
     from fastapi.testclient import TestClient
+
     from app import api
     from app.jobs import LocalWorkerRegistry
-    from app.upscaler import UPSCALE_BACKENDS
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
@@ -184,7 +183,7 @@ class ApiTests(unittest.TestCase):
             response["download_url"], f"/jobs/{response['job_id']}/download"
         )
 
-        with open(api.settings.job_store_path, "r", encoding="utf-8") as handle:
+        with open(api.settings.job_store_path, encoding="utf-8") as handle:
             persisted = json.load(handle)
 
         self.assertEqual(
@@ -511,7 +510,9 @@ class ApiTests(unittest.TestCase):
                 )
 
         self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("does not support target_width/target_height", ctx.exception.detail)
+        self.assertIn(
+            "does not support target_width/target_height", ctx.exception.detail
+        )
 
     def test_upscale_rejects_missing_source_job(self) -> None:
         with self.assertRaises(HTTPException) as ctx:

@@ -117,7 +117,10 @@ class UpscaleEngineTests(unittest.TestCase):
             "scale": 2,
         }
         engine = UpscaleEngine()
-        cancel_probe = lambda: False
+
+        def cancel_probe() -> bool:
+            return False
+
         result = engine.run(
             {
                 "source_output_path": "/app/runtime/outputs/output_src.mp4",

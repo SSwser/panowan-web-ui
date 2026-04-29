@@ -2,7 +2,6 @@ import os
 import posixpath
 from dataclasses import dataclass
 
-
 CONTAINER_MODEL_ROOT = "/models"
 CONTAINER_RUNTIME_ROOT = "/app/runtime"
 CONTAINER_PANOWAN_ENGINE_ROOT = "/engines/panowan"

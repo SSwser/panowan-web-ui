@@ -72,7 +72,7 @@ class SettingsTests(unittest.TestCase):
             lora_checkpoint_path("/workspace/models"),
         )
 
-    def test_load_settings_uses_runtime_root_override_but_ignores_leaf_path_overrides(self) -> None:
+    def test_load_settings_uses_runtime_root_override_but_ignores_leaf(self) -> None:
         env = {
             "SERVICE_ROLE": "worker",
             "MODEL_ROOT": "/models-x",

@@ -20,7 +20,7 @@ def _in_container() -> bool:
     if os.path.isfile("/.dockerenv"):
         return True
     try:
-        with open("/proc/1/cgroup", "r", encoding="utf-8") as handle:
+        with open("/proc/1/cgroup", encoding="utf-8") as handle:
             return "docker" in handle.read()
     except OSError:
         pass

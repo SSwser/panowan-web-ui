@@ -9,12 +9,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from .sse import broadcast_job_event, subscribe, unsubscribe
-
 from .generator import extract_prompt, resolve_inference_params
-from .upscaler import UPSCALE_BACKENDS
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
 from .settings import settings
+from .sse import broadcast_job_event, subscribe, unsubscribe
+from .upscaler import UPSCALE_BACKENDS
 
 
 @asynccontextmanager
@@ -376,7 +375,7 @@ async def job_events(request: Request) -> Any:
                             known_jobs[job_id] = _job_event_snapshot(payload)
 
                     yield event
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     known_jobs, store_events = _collect_job_store_events(known_jobs)
                     if store_events:
                         for event in store_events:

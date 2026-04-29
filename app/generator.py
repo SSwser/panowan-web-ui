@@ -1,7 +1,6 @@
 import json
 import os
 import uuid
-from typing import Optional
 
 from .process_runner import ProcessCancelledError, output_tail, run_cancellable_process
 from .settings import settings
@@ -26,7 +25,7 @@ class JobCancelledError(RuntimeError):
     pass
 
 
-def _payload_int(payload: dict, key: str) -> Optional[int]:
+def _payload_int(payload: dict, key: str) -> int | None:
     value = payload.get(key)
     if value in (None, ""):
         return None
@@ -50,7 +49,8 @@ def _resolve_task(payload: dict) -> str:
 
 
 def resolve_inference_params(payload: dict) -> dict:
-    stored_params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    raw_params = payload.get("params")
+    stored_params = raw_params if isinstance(raw_params, dict) else {}
     preset_name = payload.get("quality")
     preset = _QUALITY_PRESETS.get(preset_name, {})
     return {
@@ -72,8 +72,16 @@ def resolve_inference_params(payload: dict) -> dict:
             or preset.get("height")
             or settings.default_height
         ),
-        "seed": _payload_int(stored_params, "seed") or _payload_int(payload, "seed") or 0,
-        "num_frames": _payload_int(stored_params, "num_frames") or _payload_int(payload, "num_frames") or 81,
+        "seed": (
+            _payload_int(stored_params, "seed")
+            or _payload_int(payload, "seed")
+            or 0
+        ),
+        "num_frames": (
+            _payload_int(stored_params, "num_frames")
+            or _payload_int(payload, "num_frames")
+            or 81
+        ),
         "guidance_scale": payload.get("guidance_scale"),
     }
 
@@ -139,7 +147,9 @@ def generate_video(payload: dict) -> dict:
         )
     except ProcessCancelledError as exc:
         raise JobCancelledError(
-            f"Generation cancelled\nSTDOUT:{output_tail(exc.stdout)}\nSTDERR:{output_tail(exc.stderr)}"
+            "Generation cancelled\n"
+            f"STDOUT:{output_tail(exc.stdout)}\n"
+            f"STDERR:{output_tail(exc.stderr)}"
         ) from exc
 
     process = result.process
