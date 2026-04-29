@@ -7,6 +7,7 @@ from .paths import (
     lora_checkpoint_path,
     model_root_path,
     output_dir_path,
+    panowan_runner_dir_path,
     repo_root_from,
     wan_diffusion_path,
     wan_t5_path,
@@ -41,6 +42,7 @@ class Settings:
     output_dir: str
     job_store_path: str
     worker_store_path: str
+    panowan_runner_job_dir: str
     default_prompt: str
     generation_timeout_seconds: int
     default_num_inference_steps: int
@@ -92,6 +94,10 @@ def load_settings() -> Settings:
         output_dir=output_dir,
         job_store_path=job_store_path(runtime_dir),
         worker_store_path=worker_store_path(runtime_dir),
+        panowan_runner_job_dir=os.getenv(
+            "PANOWAN_RUNNER_JOB_DIR",
+            panowan_runner_dir_path(runtime_dir),
+        ),
         default_prompt=os.getenv(
             "DEFAULT_PROMPT", "A beautiful mountain landscape at sunset"
         ),

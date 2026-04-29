@@ -16,6 +16,7 @@ JOBS_FILENAME = "jobs.json"
 WORKERS_FILENAME = "workers.json"
 WAN_DIFFUSION_FILENAME = "diffusion_pytorch_model.safetensors"
 WAN_T5_FILENAME = "models_t5_umt5-xxl-enc-bf16.pth"
+PANOWAN_RUNNER_DIRNAME = "panowan-runner"
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,11 @@ def job_store_path(runtime_root: str) -> str:
 
 def worker_store_path(runtime_root: str) -> str:
     return container_child(runtime_root, WORKERS_FILENAME)
+
+
+def panowan_runner_dir_path(runtime_root: str) -> str:
+    """Path under the runtime root where panowan job JSON files are written."""
+    return container_join(runtime_root, PANOWAN_RUNNER_DIRNAME)
 
 
 def wan_diffusion_path(wan_model_path: str) -> str:

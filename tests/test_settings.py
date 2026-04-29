@@ -184,3 +184,15 @@ class SettingsTests(unittest.TestCase):
         from app.paths import container_join
 
         self.assertEqual(container_join("/", "models/foo"), "/models/foo")
+
+
+class PanoWanRunnerScratchPathTests(unittest.TestCase):
+    def test_default_runner_job_dir_lives_under_runtime_root(self) -> None:
+        loaded = load_settings()
+        expected_suffix = os.path.join("runtime", "panowan-runner")
+        self.assertTrue(loaded.panowan_runner_job_dir.endswith(expected_suffix))
+
+    def test_runner_job_dir_can_be_overridden_via_env(self) -> None:
+        with patch.dict(os.environ, {"PANOWAN_RUNNER_JOB_DIR": "/custom/scratch"}):
+            loaded = load_settings()
+        self.assertEqual(loaded.panowan_runner_job_dir, "/custom/scratch")
