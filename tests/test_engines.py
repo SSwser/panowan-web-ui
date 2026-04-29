@@ -49,23 +49,6 @@ class EngineResultTests(unittest.TestCase):
 
 
 class PanoWanEngineTests(unittest.TestCase):
-    @mock.patch("app.engines.panowan.generate_video")
-    def test_run_generate_delegates_to_generator(self, generate_video):
-        generate_video.return_value = {
-            "output_path": "/app/runtime/outputs/output_job-1.mp4"
-        }
-        engine = PanoWanEngine()
-
-        result = engine.run({"job_id": "job-1", "type": "generate", "prompt": "sky"})
-
-        self.assertEqual(
-            result,
-            EngineResult(
-                output_path="/app/runtime/outputs/output_job-1.mp4", metadata={}
-            ),
-        )
-        generate_video.assert_called_once()
-
     @mock.patch("app.engines.panowan.os.path.exists", return_value=False)
     def test_validate_runtime_raises_with_backend_root_hint(self, mock_exists):
         engine = PanoWanEngine()
@@ -73,6 +56,30 @@ class PanoWanEngineTests(unittest.TestCase):
             engine.validate_runtime()
         self.assertIn("setup-backends", str(ctx.exception))
         self.assertIn("runner.py", str(ctx.exception))
+
+
+class PanoWanEngineRuntimeControllerTests(unittest.TestCase):
+    def test_engine_run_delegates_through_runtime_controller(self):
+        controller = mock.MagicMock()
+        controller.run_job.return_value = {"status": "ok", "output_path": "/tmp/o.mp4"}
+
+        engine = PanoWanEngine()
+        engine._controller = controller  # inject mock controller
+
+        with mock.patch("app.engines.panowan.build_runner_payload") as mock_payload:
+            mock_payload.return_value = {
+                "version": "v1",
+                "task": "t2v",
+                "prompt": "sky",
+                "negative_prompt": "blur",
+                "output_path": "/tmp/o.mp4",
+                "resolution": {"width": 896, "height": 448},
+                "num_frames": 81,
+            }
+            result = engine.run({"prompt": "sky", "negative_prompt": "blur"})
+
+        controller.run_job.assert_called_once()
+        self.assertEqual(result.output_path, "/tmp/o.mp4")
 
 
 class UpscaleEngineTests(unittest.TestCase):
