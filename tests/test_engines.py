@@ -66,6 +66,14 @@ class PanoWanEngineTests(unittest.TestCase):
         )
         generate_video.assert_called_once()
 
+    @mock.patch("app.engines.panowan.os.path.exists", return_value=False)
+    def test_validate_runtime_raises_with_backend_root_hint(self, mock_exists):
+        engine = PanoWanEngine()
+        with self.assertRaises(FileNotFoundError) as ctx:
+            engine.validate_runtime()
+        self.assertIn("setup-backends", str(ctx.exception))
+        self.assertIn("runner.py", str(ctx.exception))
+
 
 class UpscaleEngineTests(unittest.TestCase):
     def test_upscale_engine_has_correct_name_and_capabilities(self) -> None:

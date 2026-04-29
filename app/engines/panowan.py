@@ -12,8 +12,9 @@ class PanoWanEngine:
 
     def validate_runtime(self) -> None:
         missing = []
+        runner_path = os.path.join(settings.panowan_engine_dir, "runner.py")
         for path in (
-            settings.panowan_engine_dir,
+            runner_path,
             settings.wan_diffusion_absolute_path,
             settings.wan_t5_absolute_path,
             settings.lora_absolute_path,
@@ -23,7 +24,8 @@ class PanoWanEngine:
         if missing:
             joined = "\n".join(f"- {path}" for path in missing)
             raise FileNotFoundError(
-                "PanoWan runtime assets are missing. Run `make setup-backends` first:\n"
+                "PanoWan runtime assets are missing. Run `make setup-backends` first.\n"
+                "Missing: runner.py means the backend root was not installed.\n"
                 f"{joined}"
             )
 
