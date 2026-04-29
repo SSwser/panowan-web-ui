@@ -16,6 +16,9 @@ services:
     environment:
       DEV_MODE: "1"
       UV_LINK_MODE: copy
+    depends_on:
+      model-setup:
+        condition: service_completed_successfully
     volumes:
       - panowan-uv-cache:/root/.cache/uv
       - ./app:/app/app
@@ -29,12 +32,18 @@ services:
   model-setup:
     build:
       target: dev-worker-panowan
+    command: ["bash", "/app/scripts/check-runtime.sh"]
+    environment:
+      SERVICE_ROLE: worker
+      MODEL_ROOT: /models
     volumes:
       - panowan-uv-cache:/root/.cache/uv
+      - ./app:/app/app
       - ./scripts:/app/scripts
       - ./third_party/PanoWan:/engines/panowan
       - ./third_party/Upscale:/engines/upscale
       - ${MODEL_ROOT:-./data/models}:/models
+      - ./data/runtime:/app/runtime
 
 volumes:
   panowan-uv-cache:

@@ -37,3 +37,27 @@ class ComposeTests(unittest.TestCase):
         self.assertIn("depends_on:", worker_section)
         self.assertIn("condition: service_healthy", worker_section)
         self.assertIn("healthcheck:", api_section)
+
+
+class DevComposeTests(unittest.TestCase):
+    def setUp(self):
+        compose = (ROOT / "docker-compose-dev.yml").read_text(encoding="utf-8")
+        # model-setup is the last service, so the section ends at the next
+        # root-level key (volumes:, networks:, etc.) rather than another service.
+        after = compose.split("  model-setup:", 1)[1]
+        self.model_setup_section = re.split(r"\n[a-z]", after, maxsplit=1)[0]
+
+    def test_model_setup_runs_verify(self):
+        self.assertIn("check-runtime.sh", self.model_setup_section)
+
+    def test_model_setup_exports_worker_role(self):
+        self.assertIn("SERVICE_ROLE: worker", self.model_setup_section)
+
+    def test_model_setup_mounts_models(self):
+        self.assertIn(":/models", self.model_setup_section)
+
+    def test_worker_panowan_waits_for_model_setup(self):
+        compose = (ROOT / "docker-compose-dev.yml").read_text(encoding="utf-8")
+        worker_section = compose.split("  worker-panowan:", 1)[1]
+        self.assertIn("model-setup:", worker_section)
+        self.assertIn("service_completed_successfully", worker_section)
