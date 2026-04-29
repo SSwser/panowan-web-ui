@@ -4,8 +4,8 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 ProcessOutput = str | bytes

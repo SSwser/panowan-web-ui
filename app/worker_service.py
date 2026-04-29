@@ -7,7 +7,6 @@ from app.jobs import LocalJobBackend, LocalWorkerRegistry
 from app.settings import settings
 from app.upscaler import get_available_upscale_backends
 
-
 JOB_TYPE_TO_ENGINE = {
     "generate": "panowan",
     "upscale": "upscale",

@@ -3,13 +3,12 @@ import hashlib
 import io
 import os
 import shutil
-import sys
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from app.backends.providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
-from pathlib import Path
-
+from app.backends.model_spec import FileCheck, ModelSpec
+from app.backends.providers import HttpProvider, HuggingFaceProvider, SubmoduleProvider
 from app.backends.registry import discover
 from app.backends.spec import (
     BackendSection,
@@ -22,7 +21,6 @@ from app.backends.spec import (
     WeightsSpec,
 )
 from app.backends.verify import ensure_backend, expected_backend_files, verify_backend
-from app.backends.model_spec import FileCheck, ModelSpec
 from app.settings import load_settings
 
 
@@ -213,7 +211,6 @@ class HuggingFaceProviderTests(unittest.TestCase):
 
 
 import tempfile
-from pathlib import Path
 
 
 class HttpProviderTests(unittest.TestCase):
