@@ -50,7 +50,7 @@ def load_model_specs(settings: Settings) -> list[ModelSpec]:
             source_type="submodule",
             source_ref="",
             target_dir=settings.panowan_engine_dir,
-            files=[FileCheck(path="pyproject.toml")],
+            files=[FileCheck(path="backend.toml"), FileCheck(path="runner.py")],
         ),
         ModelSpec(
             name="upscale-realesrgan-weights",

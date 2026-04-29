@@ -39,15 +39,7 @@ COPY pyproject.toml uv.lock /app/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-project --link-mode=copy
 
-FROM runtime-base AS engine-panowan-deps
-
-ARG PYPI_INDEX=
-ENV UV_INDEX_URL=${PYPI_INDEX:-}
-
-COPY third_party/PanoWan/pyproject.toml third_party/PanoWan/uv.lock /tmp/PanoWan/
-WORKDIR /tmp/PanoWan
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-install-project --link-mode=copy
+FROM api-deps AS engine-panowan-deps
 
 FROM engine-panowan-deps AS upscale-realesrgan-deps
 
@@ -101,6 +93,4 @@ COPY app /app/app
 COPY scripts /app/scripts
 COPY third_party/PanoWan /engines/panowan
 COPY third_party/Upscale /engines/upscale
-RUN --mount=type=cache,target=/root/.cache/uv \
-    cd /tmp/PanoWan && uv sync --locked --no-install-project --link-mode=copy
 CMD ["bash", "/app/scripts/start-worker.sh"]

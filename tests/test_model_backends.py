@@ -16,6 +16,12 @@ def test_load_model_specs_only_keeps_submodule_source_for_panowan_engine() -> No
     assert submodule_names == {"panowan-engine"}
 
 
+def test_load_model_specs_uses_panowan_wrapper_sentinels() -> None:
+    specs = load_model_specs(settings)
+    panowan = next(spec for spec in specs if spec.name == "panowan-engine")
+    assert [file.path for file in panowan.files] == ["backend.toml", "runner.py"]
+
+
 def test_load_model_specs_preserves_weight_artifact_contract() -> None:
     specs = load_model_specs(settings)
     names = {spec.name for spec in specs}

@@ -36,3 +36,8 @@ class DockerfileTests(unittest.TestCase):
         self.assertIn("/engines/panowan", worker_section)
         self.assertIn("/engines/upscale", worker_section)
         self.assertIn("start-worker.sh", worker_section)
+
+    def test_panowan_build_no_longer_assumes_backend_local_uv_project(self):
+        self.assertNotIn("third_party/PanoWan/pyproject.toml", self.dockerfile)
+        self.assertNotIn("third_party/PanoWan/uv.lock", self.dockerfile)
+        self.assertNotIn("cd /tmp/PanoWan && uv sync", self.dockerfile)
