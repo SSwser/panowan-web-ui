@@ -6,9 +6,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.worktrees/
 .venv/
 venv/
-env/
 
 .env
 
@@ -28,3 +28,4 @@ dist/
 
 data/models/*
 !data/models/.gitkeep
+data/runtime/*.lock

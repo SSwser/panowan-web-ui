@@ -1,19 +1,57 @@
 services:
-  panowan:
+  api:
     build:
       context: .
-    image: panowan:${TAG:-latest}
+      target: api
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PYPI_INDEX: ${PYPI_INDEX:-}
+    image: panowan-api:${TAG:-latest}
     ports:
       - "${PORT:-8000}:8000"
     env_file:
       - path: .env
         required: false
     environment:
+      SERVICE_ROLE: api
       HOST: 0.0.0.0
+      JOB_BACKEND: local
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    volumes:
+      - ./data/runtime:/app/runtime
+    restart: unless-stopped
+
+  worker-panowan:
+    build:
+      context: .
+      target: worker-panowan
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PYPI_INDEX: ${PYPI_INDEX:-}
+    image: panowan-worker-panowan:${TAG:-latest}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SERVICE_ROLE: worker
+      MODEL_ROOT: /models
+      JOB_BACKEND: local
       TORCH_CUDNN_V8_API_ENABLED: "1"
       CUDA_MODULE_LOADING: LAZY
+    depends_on:
+      api:
+        condition: service_healthy
     volumes:
-      - ${MODEL_ROOT:-./data/models}:/app/PanoWan/models
+      - ${MODEL_ROOT:-./data/models}:/models
       - ./data/runtime:/app/runtime
     gpus: all
     restart: unless-stopped

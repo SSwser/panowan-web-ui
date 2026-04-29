@@ -1,10 +1,24 @@
 # Video Upscale Implementation Plan
 
+> Final implementation update (2026-04-25): the engine layer now uses `third_party/Upscale` and generic `upscale_*` paths. Any older references below to `third_party/RealESRGAN` or `realesrgan_*` as top-level engine paths are superseded — use `UPSCALE_ENGINE_DIR`, `UPSCALE_WEIGHTS_DIR`, `/engines/upscale`, `/models/upscale` instead.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> **Superseded by 2026-04-25 design changes:**
+>
+> - **Task 1** (Settings): `upscale_model_dir` is replaced by `upscale_engine_dir` + `upscale_weights_dir`. Default paths change from `/app/data/models/upscale` to `/engines/upscale` and `/models/upscale`.
+> - **Task 2** (Upscaler Module): `build_command` signature changes from `model_dir: str` to `engine_dir: str, weights_dir: str`. Deployment is `third_party/` submodule + HF Hub, not `pip install`.
+> - **Task 5** (Cancel): Two-phase termination with `_process` and `Semaphore` is replaced by Worker polling + job-status-based cancel. API marks job as cancelled; Worker checks `_should_cancel()`.
+> - **Task 7** (Generator Popen refactor): No longer needed for cancel support — Worker manages subprocess lifecycle directly.
+> - **Task 11** (Docker): Add `COPY third_party/Upscale /engines/upscale` and new env vars (`UPSCALE_ENGINE_DIR`, `UPSCALE_WEIGHTS_DIR`). Remove `/app/data/models/upscale` paths.
+>
+> Additionally, `PanoWanEngine` no longer owns the `upscale` capability. A new `UpscaleEngine` class is the peer engine, registered alongside `PanoWanEngine` in the Worker's `EngineRegistry`. See [RealESRGAN Backend Runtime Contract Alignment Design](../specs/2026-04-26-realesrgan-backend-runtime-contract-alignment-design.md) and ADR 0002.
+>
+> **Remaining tasks** (3, 4, 6, 8, 9, 10, 12) are still valid with the noted adjustments.
 
 **Goal:** Add video super-resolution (upscale) capability with three backend models, real-time SSE updates, job cancellation, and a comparison preview window.
 
-**Architecture:** Upscale jobs are independent job records with `type="upscale"` linked to source jobs via `source_job_id`. Each upscaler backend implements a `UpscalerBackend` Protocol that builds subprocess commands. SSE replaces polling for live status updates. Cancel supports two-phase process termination for running jobs.
+**Architecture:** Upscale jobs are independent job records with `type="upscale"` linked to source jobs via `source_job_id`. Each upscaler backend implements a `UpscalerBackend` Protocol that builds subprocess commands. SSE replaces polling for live status updates. Cancel is implemented via job-status-based signalling (API marks cancelled, Worker checks on next poll).
 
 **Tech Stack:** FastAPI, sse-starlette, subprocess.Popen, vanilla HTML/CSS/JS, Real-ESRGAN, RealBasicVSR, SeedVR2-3B
 
@@ -33,6 +47,7 @@
 ## Task 1: Settings — Add Upscale Configuration
 
 **Files:**
+
 - Modify: `app/settings.py`
 - Modify: `tests/test_settings.py`
 - Modify: `.env.example`
@@ -118,6 +133,7 @@ git commit -m "feat: add upscale settings fields (model_dir, output_dir, timeout
 ## Task 2: Upscaler Module — Backend Protocol and Real-ESRGAN
 
 **Files:**
+
 - Create: `app/upscaler.py`
 - Create: `tests/test_upscaler.py`
 
@@ -430,6 +446,7 @@ git commit -m "feat: add upscaler module with Protocol and three backends"
 ## Task 3: Job Data Model — Add type, source_job_id, upscale_params
 
 **Files:**
+
 - Modify: `app/api.py`
 - Modify: `tests/test_api.py`
 
@@ -546,6 +563,7 @@ git commit -m "feat: add type, source_job_id, upscale_params to job data model"
 ## Task 4: API — POST /upscale Endpoint
 
 **Files:**
+
 - Modify: `app/api.py`
 - Modify: `tests/test_api.py`
 
@@ -762,6 +780,7 @@ git commit -m "feat: add POST /upscale endpoint with validation and background e
 ## Task 5: API — POST /jobs/{job_id}/cancel Endpoint
 
 **Files:**
+
 - Modify: `app/api.py`
 - Modify: `tests/test_api.py`
 
@@ -902,6 +921,7 @@ git commit -m "feat: add POST /jobs/{id}/cancel with two-phase termination"
 ## Task 6: SSE — Broadcast and Endpoint
 
 **Files:**
+
 - Create: `app/sse.py`
 - Modify: `app/api.py`
 - Create: `tests/test_sse.py`
@@ -1105,6 +1125,7 @@ git commit -m "feat: add SSE broadcast bus and /jobs/events endpoint"
 ## Task 7: Generator — Refactor to Popen for Cancel Support
 
 **Files:**
+
 - Modify: `app/generator.py`
 - Modify: `tests/test_generator.py`
 
@@ -1268,6 +1289,7 @@ git commit -m "refactor: switch generate_video from subprocess.run to Popen for 
 ## Task 8: Frontend — SSE Client and Polling Migration
 
 **Files:**
+
 - Modify: `app/static/index.html`
 
 - [ ] **Step 1: Add SSE client class and replace polling**
@@ -1375,6 +1397,7 @@ Remove the old `scheduleRefresh` function and `pollTimer` variable (no longer ne
 - [ ] **Step 2: Test in browser**
 
 Start the dev server and verify:
+
 1. Page loads, fetches full job list, then connects to SSE
 2. When a job status changes, UI updates without full page refresh
 3. If you stop the server (simulate disconnect), it falls back to polling
@@ -1392,6 +1415,7 @@ git commit -m "feat: add SSE client with fallback polling for real-time job upda
 ## Task 9: Frontend — Upscale Dialog and Cancel Button
 
 **Files:**
+
 - Modify: `app/static/index.html`
 
 - [ ] **Step 1: Add upscale configuration dialog HTML**
@@ -1644,6 +1668,7 @@ function statusBadge(status) {
 - [ ] **Step 6: Test in browser**
 
 Start the dev server and verify:
+
 1. Completed jobs show "提升画质" button
 2. Clicking it opens the upscale dialog
 3. Model selection works, hints update
@@ -1664,6 +1689,7 @@ git commit -m "feat: add upscale dialog, cancel buttons, and updated action cell
 ## Task 10: Frontend — Comparison Preview Window
 
 **Files:**
+
 - Modify: `app/static/index.html`
 
 - [ ] **Step 1: Add comparison CSS styles**
@@ -1959,6 +1985,7 @@ function openPreview(job) {
 - [ ] **Step 5: Test in browser**
 
 Verify:
+
 1. Clicking "预览" on a generate job shows single video (no tabs)
 2. Clicking "预览" on an upscale job shows comparison tabs
 3. Side-by-side mode: two videos, synced playback
@@ -1977,6 +2004,7 @@ git commit -m "feat: add comparison preview window with side-by-side, A/B toggle
 ## Task 11: Docker — Add sse-starlette and Upscale Model Downloads
 
 **Files:**
+
 - Modify: `Dockerfile`
 - Modify: `docker-compose.yml`
 
@@ -2032,6 +2060,7 @@ git commit -m "infra: add sse-starlette and upscale model directory to Docker se
 ## Task 12: Integration Test — Full Flow
 
 **Files:**
+
 - Modify: `tests/test_api.py`
 
 - [ ] **Step 1: Write integration test for upscale→cancel→SSE flow**

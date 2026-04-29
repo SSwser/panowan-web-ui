@@ -122,21 +122,21 @@ echo ""
 echo "[1/5] Docker"
 
 if command -v docker &>/dev/null; then
-  ok "docker CLI 已安装: $(docker --version)"
+  ok "Docker CLI 已安装: $(docker --version)"
 else
-  fail "docker 未找到 — 请安装 Docker Desktop 或 Docker Engine"
+  fail "Docker 未找到 — 请安装 Docker Desktop 或 Docker Engine"
 fi
 
 if docker info &>/dev/null 2>&1; then
-  ok "Docker daemon 正在运行"
+  ok "Docker Daemon 正在运行"
 else
-  fail "Docker daemon 未响应 — 请确保 Docker 已启动"
+  fail "Docker Daemon 未响应 — 请确保 Docker 已启动"
 fi
 
 if docker compose version &>/dev/null 2>&1; then
-  ok "docker compose: $(docker compose version --short 2>/dev/null || docker compose version)"
+  ok "Docker Compose 已安装: $(docker compose version --short 2>/dev/null || docker compose version)"
 else
-  fail "docker compose 插件未安装"
+  fail "Docker Compose 插件未安装"
 fi
 
 # ── 2. NVIDIA / CUDA ────────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ if [[ -f "$WAN_DIFFUSION_FILE" ]]; then
   ok "diffusion_pytorch_model.safetensors ($SIZE)"
 else
   fail "缺少: $WAN_DIFFUSION_FILE"
-  echo "       运行 make download-models 下载"
+  echo "       运行 make setup-backends 下载"
 fi
 
 if [[ -f "$WAN_T5_FILE" ]]; then
@@ -183,7 +183,7 @@ if [[ -f "$WAN_T5_FILE" ]]; then
   ok "models_t5_umt5-xxl-enc-bf16.pth ($SIZE)"
 else
   fail "缺少: $WAN_T5_FILE"
-  echo "       运行 make download-models 下载"
+  echo "       运行 make setup-backends 下载"
 fi
 
 if [[ -f "$LORA_CHECKPOINT_FILE" ]]; then
@@ -191,7 +191,7 @@ if [[ -f "$LORA_CHECKPOINT_FILE" ]]; then
   ok "latest-lora.ckpt ($SIZE)"
 else
   fail "缺少: $LORA_CHECKPOINT_FILE"
-  echo "       运行 make download-models 下载"
+  echo "       运行 make setup-backends 下载"
 fi
 
 # ── 4. 环境变量 ──────────────────────────────────────────────────────────────

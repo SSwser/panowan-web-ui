@@ -1,6 +1,15 @@
-# panowan-web-ui
+# PanoWan Worker
 
-一个基于 [PanoWan](https://github.com/VariantConst/PanoWan) 的本地 Docker 化视频生成服务，提供 HTTP API 与 Web UI，让你可以在自己的机器上方便地提交文本生成全景视频任务、查看任务进度并下载结果。
+PanoWan Worker 是一个正在产品化的视频生成运行时与调度平台。当前默认推理引擎是 [PanoWan](https://github.com/VariantConst/PanoWan)，但项目边界不是 PanoWan wrapper；长期目标是支持多 inference engine，并演进为可在 GPU 集群中分布式运行的生成平台。
+
+当前阶段提供本地 Docker 化运行、HTTP API、Web UI、异步任务、持久化输出，并正在扩展 T2V、I2V、upscale、job orchestration 等产品能力。
+
+> **定位说明**
+>
+> - **主项目**：产品化视频生成 runtime、API、任务管理、调度与未来集群能力。
+> - **PanoWan**：当前默认 engine，作为 vendor/engine 边界保留，未来可替换或与其他 engine 并存。
+>
+- **Docker/Compose 拓扑**：默认 Compose 拓扑已拆分为 `api` / `worker-panowan` 两类运行角色；宿主机侧初始化通过 `make setup-backends` 完成。
 
 > **灵感来源与致谢**
 >
@@ -12,13 +21,48 @@
 
 ---
 
-## 功能特性
+## 产品愿景
 
-- **Web UI**：浏览器内一键提交任务、查看进度、下载结果
-- **异步任务队列**：提交后立即返回任务 ID，后台生成，完成后下载
-- **持久化存储**：生成的 MP4 和任务记录在容器重启后保留
-- **全参数暴露**：可调整分辨率、推理步数、随机种子、负向提示词等
-- **一键诊断**：`make doctor` 检测 GPU、Docker、模型文件等配置
+PanoWan Worker 的发展目标是成为一个 engine-oriented video generation platform：
+
+- **产品化 API runtime**：对外提供稳定的任务提交、查询、取消、事件推送和结果下载接口。
+- **多能力视频生成**：以 T2V 为起点，继续集成 I2V、upscale 和后处理能力。
+- **可替换推理引擎**：PanoWan 是当前默认 engine，但不是应用边界；未来可接入其他视频生成或增强 engine。
+- **GPU worker 执行模型**：API 负责调度与交互，worker 负责 GPU 推理和模型加载。
+- **分布式调度路径**：从本地文件 job backend 起步，未来演进到 scheduler、queue、数据库和 GPU 集群 worker。
+
+详细架构说明见：
+
+- [Runtime Architecture](docs/runtime-architecture.md)
+- [ADR 0001: Engine-oriented Product Runtime](docs/adr/0001-engine-oriented-product-runtime.md)
+- [ADR 0002: Model Download Manager](docs/adr/0002-model-download-manager.md)
+- [ADR 0003: Backend Runtime Contracts](docs/adr/0003-backend-runtime-contract.md)
+
+---
+
+## 运行架构
+
+默认 Docker/Compose 拓扑以三个运行角色为核心：
+
+| 角色 | 职责 | GPU | Engine 依赖 |
+|---|---|---:|---:|
+| API service | HTTP API、Web UI、job 创建/查询/取消、SSE 事件、调度入口 | 否 | 否 |
+| GPU Worker | job claim、engine adapter、模型加载、T2V/I2V/upscale 执行、状态回写 | 是 | 是 |
+| Host setup (`make setup-backends`) | 下载/校验模型权重并准备 backend vendor tree | 否 | 是 |
+
+生产拓扑由 `docker-compose.yml` 定义；`docker-compose-dev.yml` 作为开发 override 提供源码挂载与 dev 镜像。设计细节见 `docs/architecture/`。
+
+---
+
+## 当前功能特性
+
+- **Web UI**：浏览器内提交任务、查看进度、下载结果。
+- **HTTP API**：提交生成任务、查询任务状态、下载输出文件。
+- **异步任务队列**：提交后立即返回任务 ID，后台生成，完成后下载。
+- **持久化存储**：生成的 MP4 和任务记录在容器重启后保留。
+- **全参数暴露**：可调整分辨率、推理步数、随机种子、负向提示词等。
+- **环境诊断**：`make doctor` 检测 GPU、Docker、模型文件等配置。
+- **扩展方向**：I2V、upscale、多 engine worker、分布式调度。
 
 ## 系统要求
 
@@ -37,20 +81,35 @@
 .
 ├── app/
 │   ├── api.py          # HTTP API 路由
+│   ├── api_service.py  # API 服务入口
+│   ├── worker_service.py # Worker 服务入口
 │   ├── generator.py    # 视频生成逻辑
-│   ├── main.py         # 服务入口
+│   ├── upscaler.py     # 视频超分辨率
+│   ├── process_runner.py # 子进程管理
+│   ├── sse.py          # Server-Sent Events
+│   ├── paths.py        # 路径常量
 │   ├── settings.py     # 环境变量配置
+│   ├── backends/       # backend setup CLI、模型注册与下载
 │   └── static/
 │       └── index.html  # Web UI
 ├── data/
-│   ├── models/         # 模型权重（首次启动自动下载）
+│   ├── models/         # 模型权重
 │   └── runtime/        # 任务记录与生成输出（容器重启保留）
+├── docs/
+│   ├── architecture/   # 产品 runtime 架构与 ADR
+│   └── panowan-architecture.md
 ├── scripts/
 │   ├── doctor.sh       # 环境诊断脚本
-│   ├── download-models.sh
-│   └── health.sh
+│   ├── health.sh      # 服务健康检查
+│   ├── check-runtime.sh # Worker 启动前运行时检查
+│   ├── start-api.sh    # API 容器入口
+│   ├── start-worker.sh # Worker 容器入口
+│   └── docker-proxy.sh # Docker CLI 代理（WSL 兼容）
+├── third_party/
+│   └── PanoWan/        # 当前默认 vendor engine
 ├── tests/
 ├── docker-compose.yml
+├── docker-compose-dev.yml
 ├── Dockerfile
 ├── Makefile
 └── ENVIRONMENT.md      # 详细环境配置指南
@@ -58,15 +117,26 @@
 
 ## 快速开始
 
+标准启动流程：
+
+```bash
+make init
+make build
+make up
+make health
+```
+
+各步骤说明如下。
+
 ### 1. 克隆并配置环境变量
 
 ```bash
 git clone https://github.com/SSwser/panowan-web-ui.git
 cd panowan-web-ui
-make init         # 生成 .env + 初始化 submodule (third_party/PanoWan)
+make init         # 生成 .env、安装 Python 依赖、初始化 submodule、下载/校验 backends
 ```
 
-编辑 `.env`，按需配置（中国用户建议设置 HuggingFace 镜像）：
+编辑 `.env`，按需配置：
 
 ```bash
 # 中国用户推荐：使用镜像加速下载
@@ -79,7 +149,7 @@ HF_TOKEN=your_token_here
 GENERATION_TIMEOUT_SECONDS=1800
 ```
 
-### 2. 检查环境（推荐）
+### 2. 检查环境
 
 ```bash
 make doctor
@@ -87,13 +157,17 @@ make doctor
 
 脚本会检查 Docker、GPU、NVIDIA Container Toolkit 及模型文件状态。如发现 GPU 访问问题，会交互式引导修复。
 
-### 3. 下载模型权重
+### 3. 准备模型权重
+
+模型准备由宿主机侧的 backend setup CLI 完成：
 
 ```bash
-make download-models
+make setup-backends
 ```
 
-将下载约 10 GB 模型到 `data/models/`，可与构建镜像并行进行。下载内容：
+`make init` 已经会自动执行这一步；单独运行 `make setup-backends` 适用于后续补装或重新校验模型资产。
+
+下载内容：
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
@@ -103,19 +177,22 @@ make download-models
 
 ### 4. 构建并启动服务
 
-默认是生产模式（prod）：
-
-```bash
-make build    # 构建 Docker 镜像
-make up       # 后台启动
-```
-
-开发模式（dev）使用 `DEV=1`：
+生产拓扑（拆分的 API + GPU Worker）：
 
 ```bash
 make build
-make up DEV=1
+make up
 ```
+
+开发模式（源码挂载 + dev 镜像）：
+
+```bash
+make build DEV=1
+make up DEV=1
+make logs DEV=1
+```
+
+开发 override 通过 `docker-compose-dev.yml` 注入，仅作为开发便利层，不改变默认产品拓扑。
 
 ### 5. 验证健康状态
 
@@ -207,7 +284,7 @@ curl http://localhost:8000/health
 
 ### `GET /jobs/{job_id}`
 
-查询单个任务状态。状态值：`queued` / `running` / `completed` / `failed`
+查询单个任务状态。状态值：`queued` / `running` / `completed` / `failed`。
 
 ### `GET /jobs/{job_id}/download`
 
@@ -218,7 +295,6 @@ curl http://localhost:8000/health
 ## 命令行使用（curl）
 
 ```bash
-# 提交任务
 JOB_ID=$(curl -s -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt": "A cinematic alpine valley at sunset", "width": 896, "height": 448}' \
@@ -226,10 +302,7 @@ JOB_ID=$(curl -s -X POST http://localhost:8000/generate \
 
 echo "Job ID: $JOB_ID"
 
-# 轮询状态
 curl http://localhost:8000/jobs/$JOB_ID
-
-# 下载结果
 curl -o output.mp4 http://localhost:8000/jobs/$JOB_ID/download
 ```
 
@@ -251,15 +324,20 @@ curl -o output.mp4 http://localhost:8000/jobs/$JOB_ID/download
 ## Makefile 速查
 
 ```bash
-make env              # 初始化 .env 文件
-make doctor           # 环境诊断
-make download-models  # 下载模型权重
-make build            # 构建 Docker 镜像
-make up               # 后台启动服务
-make down             # 停止服务
-make logs             # 查看日志
-make health           # 健康检查
-make test             # 运行单元测试
+make env           # initialize .env
+make init          # bootstrap Python deps + submodules + backend assets
+make doctor        # diagnose host Docker/GPU/model state
+make setup-backends  # prepare backend vendor tree and model assets on host
+make build         # build production api + worker images
+make build DEV=1   # build development api + worker images
+make up            # start split production topology
+make up DEV=1      # start split topology with dev overrides
+make down          # stop production topology
+make down DEV=1    # stop development topology
+make logs          # follow production logs
+make logs DEV=1    # follow development logs
+make health        # check API health endpoint
+make test          # run unit tests
 ```
 
 ---
@@ -276,9 +354,9 @@ make logs
 
 ### Q: 生成很慢 / 超时？
 
-- 降低分辨率（如 448×224）和推理步数（20 步）先验证效果
-- 调大超时：在 `.env` 中设置 `GENERATION_TIMEOUT_SECONDS=3600`
-- 确保 GPU 被 Docker 正确识别：`make doctor`
+- 降低分辨率（如 448×224）和推理步数（20 步）先验证效果。
+- 调大超时：在 `.env` 中设置 `GENERATION_TIMEOUT_SECONDS=3600`。
+- 确保 GPU 被 Docker 正确识别：`make doctor`。
 
 ### Q: Docker 容器内无法访问 GPU？
 
@@ -297,12 +375,13 @@ HF_ENDPOINT=https://hf-mirror.com
 HF_HUB_ENABLE_HF_TRANSFER=1
 ```
 
-### Q: 生成的视频接缝处有伪影？
+### Q: 为什么要拆 API 和 GPU Worker？
 
-这是全景生成的已知局限。全景连续性由算法约束保证（循环滚动 + 循环 padding），建议：
+API 是产品交互和调度入口，未来应能运行在 CPU 节点并水平扩展；Worker 才负责 GPU、模型、engine adapter 和长时间推理。这个边界是未来多 engine 与 GPU 集群调度的基础。
 
-- 使用更高推理步数（50 步）
-- 在 Prompt 中描述大范围自然场景（云雾、山川、海洋）效果更好
+### Q: PanoWan 会被移入主项目吗？
+
+短期不会。PanoWan 保持 vendor engine 身份，主项目通过 engine boundary 使用它。未来可以接入其他 engine，而不是把产品架构绑定到单一上游项目。
 
 ---
 
@@ -310,10 +389,10 @@ HF_HUB_ENABLE_HF_TRANSFER=1
 
 详见 [ENVIRONMENT.md](ENVIRONMENT.md)，包含：
 
-- NVIDIA Container Toolkit 安装与修复
-- 所有环境变量说明
-- WSL2 特殊配置
-- 生产部署建议
+- NVIDIA Container Toolkit 安装与修复。
+- 所有环境变量说明。
+- WSL2 特殊配置。
+- 生产部署建议。
 
 ---
 
@@ -325,14 +404,15 @@ HF_HUB_ENABLE_HF_TRANSFER=1
 python3 -m unittest discover -s tests
 ```
 
-直接运行容器（不使用 Compose）：
+开发运行使用 dev override：
 
 ```bash
-docker run --rm -p 8000:8000 --gpus all \
-  -v $(pwd)/data/models:/app/PanoWan/models \
-  -v $(pwd)/data/runtime:/app/runtime \
-  panowan
+make build DEV=1
+make up DEV=1
+make logs DEV=1
 ```
+
+该流程会启用源码 bind mount 和 dev 目标镜像，保持与生产拓扑一致的 API / worker-panowan 拆分。
 
 ---
 
@@ -344,10 +424,10 @@ docker run --rm -p 8000:8000 --gpus all \
 
 **详见 [LICENSE.md](LICENSE.md)**，其中包含：
 
-- 完整的许可证条款和免责声明
-- 所有依赖库和模型的许可证汇总
-- 使用限制和禁止用途
-- 学术引用指南
+- 完整的许可证条款和免责声明。
+- 所有依赖库和模型的许可证汇总。
+- 使用限制和禁止用途。
+- 学术引用指南。
 
 ---
 

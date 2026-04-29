@@ -1,1 +1,1 @@
-"""PanoWan local service package."""
+"""PanoWan product runtime package."""

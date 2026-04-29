@@ -1,103 +1,106 @@
-# PanoWan local Docker service
-# Generates 360 panoramic videos from text prompts over HTTP
-#
-# Dev-mode architecture:
-#   docker-compose-dev.yml bind-mounts ./third_party/PanoWan onto /app/PanoWan,
-#   replacing the shallow clone baked into the image.  The Python venv lives at
-#   /opt/venv (set via UV_PROJECT_ENVIRONMENT), so it is NOT shadowed by the
-#   mount.  When start-local.sh runs `uv sync` in DEV_MODE=1, it reuses
-#   /opt/venv and only adds missing dev dependencies.
-#
-# Mirror overrides (optional — leave empty for official sources):
-#   make build APT_MIRROR=mirrors.tuna.tsinghua.edu.cn PYPI_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
-#   make build APT_MIRROR=mirrors.aliyun.com PYPI_INDEX=https://mirrors.aliyun.com/pypi/simple
+# PanoWan Worker product runtime images
+# Targets:
+#   api                 CPU-only API and Web UI service
+#   worker-panowan      GPU worker with PanoWan engine dependencies
+#   dev-api             API development target with reload support
+#   dev-worker-panowan  Worker development target with mounted engine/source support
 
-# ── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:22.04 AS runtime-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-
-WORKDIR /build
-
-# APT mirror — leave empty for official Ubuntu archives.
-# Set to e.g. mirrors.tuna.tsinghua.edu.cn in China.
-ARG APT_MIRROR=
-RUN if [ -n "${APT_MIRROR}" ]; then \
-      sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list \
-      && sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
-    fi
-
-# Install build-time system dependencies
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y \
-    git \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Shallow clone — no git history needed at runtime
-RUN git clone --depth 1 https://github.com/VariantConst/PanoWan.git
-
-# Install uv and PanoWan Python dependencies.
-# UV_PROJECT_ENVIRONMENT places the venv at /opt/venv, independent of the
-# source tree so that a dev bind mount on /app/PanoWan won't shadow it.
-ARG PYPI_INDEX=
-WORKDIR /build/PanoWan
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=cache,target=/root/.cache/uv \
-    pip_install_flag="${PYPI_INDEX:+-i ${PYPI_INDEX}}" && \
-    python3 -m pip install --upgrade pip $pip_install_flag && \
-    python3 -m pip install uv $pip_install_flag && \
-    bash ./scripts/install-uv.sh && \
-    export PATH="$HOME/.local/bin:$PATH" && \
-    if [ -n "${PYPI_INDEX}" ]; then export UV_INDEX_URL="${PYPI_INDEX}"; fi && \
-    uv sync --no-dev --link-mode=copy
-
-# ── Stage 2: Runtime ────────────────────────────────────────────────────────
-FROM ubuntu:22.04
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
-# UV_PROJECT_ENVIRONMENT ensures `uv sync` (dev mode) also targets /opt/venv,
-# so the venv survives the /app/PanoWan bind mount in dev compose.
-ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-ARG PYPI_INDEX=
-# UV_INDEX_URL persists into runtime for dev-mode uv sync.
-# Empty value = use default PyPI; set via --build-arg PYPI_INDEX=... to override.
-ENV UV_INDEX_URL=${PYPI_INDEX:-}
-ENV PATH="/opt/venv/bin:/root/.local/bin:${PATH}"
+ENV PATH="/opt/venv/bin:/usr/local/bin:${PATH}"
 
 WORKDIR /app
 
-# APT mirror — leave empty for official Ubuntu archives.
 ARG APT_MIRROR=
-RUN if [ -n "${APT_MIRROR}" ]; then \
-      sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list \
-      && sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
-    fi
-
-# Runtime dependencies only — no git, pip, or build tools
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if [ -n "${APT_MIRROR}" ]; then \
+    sed -i "s|archive.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list \
+    && sed -i "s|security.ubuntu.com|${APT_MIRROR}|g" /etc/apt/sources.list; \
+    fi && \
     apt-get update && apt-get install -y \
+    ffmpeg \
     python3 \
+    python3-venv \
     vmtouch \
     && rm -rf /var/lib/apt/lists/*
 
-# PanoWan source (shallow clone from builder — replaced by bind mount in dev)
-COPY --from=builder /build/PanoWan /app/PanoWan
-# Python venv with all installed packages
-COPY --from=builder /opt/venv /opt/venv
-# uv binary + managed Python interpreter (needed by venv and dev-mode uv sync)
-COPY --from=builder /root/.local /root/.local
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Application code
+FROM runtime-base AS api-deps
+
+ARG PYPI_INDEX=
+ENV UV_INDEX_URL=${PYPI_INDEX:-}
+
+COPY pyproject.toml uv.lock /app/
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project --link-mode=copy
+
+FROM runtime-base AS engine-panowan-deps
+
+ARG PYPI_INDEX=
+ENV UV_INDEX_URL=${PYPI_INDEX:-}
+
+COPY third_party/PanoWan/pyproject.toml third_party/PanoWan/uv.lock /tmp/PanoWan/
+WORKDIR /tmp/PanoWan
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project --link-mode=copy
+
+FROM engine-panowan-deps AS upscale-realesrgan-deps
+
+ARG PYPI_INDEX=
+ENV PIP_INDEX_URL=${PYPI_INDEX:-}
+
+COPY third_party/Upscale/realesrgan/requirements.txt /tmp/upscale-realesrgan-requirements.txt
+RUN /opt/venv/bin/python -m venv /opt/venvs/upscale-realesrgan \
+    && MAIN_SITE=$(/opt/venv/bin/python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
+    && INNER_SITE=$(/opt/venvs/upscale-realesrgan/bin/python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])") \
+    && printf '%s\n' "$MAIN_SITE" > "$INNER_SITE/panowan_worker_site.pth" \
+    && /opt/venvs/upscale-realesrgan/bin/python -m pip install --upgrade pip \
+    && /opt/venvs/upscale-realesrgan/bin/python -m pip install -r /tmp/upscale-realesrgan-requirements.txt
+
+FROM api-deps AS api
+
+WORKDIR /app
 COPY app /app/app
 COPY scripts /app/scripts
-
+RUN mkdir -p /app/runtime
 EXPOSE 8000
+CMD ["bash", "/app/scripts/start-api.sh"]
 
-CMD ["bash", "/app/scripts/start-local.sh"]
+FROM engine-panowan-deps AS worker-panowan
+
+WORKDIR /app
+COPY --from=upscale-realesrgan-deps /opt/venvs/upscale-realesrgan /opt/venvs/upscale-realesrgan
+COPY app /app/app
+COPY scripts /app/scripts
+COPY third_party/PanoWan /engines/panowan
+COPY third_party/Upscale /engines/upscale
+RUN mkdir -p /app/runtime /models
+EXPOSE 8000
+CMD ["bash", "/app/scripts/start-worker.sh"]
+
+FROM api-deps AS dev-api
+
+WORKDIR /app
+COPY app /app/app
+COPY scripts /app/scripts
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-install-project --link-mode=copy
+EXPOSE 8000
+CMD ["bash", "/app/scripts/start-api.sh"]
+
+FROM engine-panowan-deps AS dev-worker-panowan
+
+WORKDIR /app
+COPY --from=upscale-realesrgan-deps /opt/venvs/upscale-realesrgan /opt/venvs/upscale-realesrgan
+COPY app /app/app
+COPY scripts /app/scripts
+COPY third_party/PanoWan /engines/panowan
+COPY third_party/Upscale /engines/upscale
+RUN --mount=type=cache,target=/root/.cache/uv \
+    cd /tmp/PanoWan && uv sync --locked --no-install-project --link-mode=copy
+CMD ["bash", "/app/scripts/start-worker.sh"]

@@ -1,5 +1,18 @@
 # Video Upscale Feature Design
 
+> Final implementation update (2026-04-25): the top-level engine bundle is `third_party/Upscale`, not `third_party/RealESRGAN`. Engine-layer settings and paths are now `UPSCALE_ENGINE_DIR`, `UPSCALE_WEIGHTS_DIR`, `upscale_engine_dir`, and `upscale_weights_dir`. RealESRGAN is a backend under `third_party/Upscale/realesrgan/`.
+
+> **Superseded sections** — The 2026-04-25 Model Download Manager design replaces the following sections of this spec:
+>
+> - **Section 4.2** (Backend Implementations): `pip install` / `mim install` / `git clone` deployment methods are replaced by `third_party/` submodules + HF Hub weight downloads managed by `ModelManager`. See [RealESRGAN Backend Runtime Contract Alignment Design](2026-04-26-realesrgan-backend-runtime-contract-alignment-design.md).
+> - **Section 4.6** (Settings Extensions): `upscale_model_dir` is replaced by `upscale_engine_dir` + `upscale_weights_dir` (scripts/weights separation). See Section 8 of the new design.
+> - **Section 7** (Concurrency Model): `threading.Semaphore(1)` + API `background_tasks` is replaced by the Worker polling model. The worker process polls `claim_next_job()` and executes serially; no `Semaphore` is needed. See Section 12 of the new design.
+> - **Section 4.5** (Cancel Logic): `_process` field and two-phase termination in API layer is replaced by job-status-based cancel. API marks job as cancelled; Worker checks `_should_cancel()` on next poll.
+>
+> **Architectural change** — Upscale capability is extracted from `PanoWanEngine` into a peer `UpscaleEngine`. `PanoWanEngine.capabilities` becomes `("t2v", "i2v")`. See ADR 0002 and Section 7 of the new design.
+>
+> **All other sections** (Data Model, API endpoints, Frontend UI, SSE, Error Handling) remain valid and current.
+
 ## Overview
 
 Add video super-resolution (upscale) capability to panowan-worker. Users can upscale completed video generation jobs to higher resolution using one of three supported models. Upscaled results are stored as independent jobs linked to their source. The preview window supports three comparison modes (side-by-side, A/B toggle, slider). An SSE endpoint replaces polling for real-time job status updates. A cancel endpoint allows terminating queued or running jobs.
@@ -82,6 +95,7 @@ Submit an upscale job for a completed generation job.
 ```
 
 **Validation errors (400):**
+
 - Source job not found, not completed, or output file missing
 - Model not in supported list
 - Scale exceeds model's max_scale
@@ -105,7 +119,7 @@ Cancel a queued or running job.
 | Job status | `force=false` (default) | `force=true` |
 |---|---|---|
 | `queued` | Mark as `failed`, error: "Cancelled by user". Return 200. | Same |
-| `running` | Return 202 with warning. **No cancel executed.** | Execute two-phase termination, then mark `failed`. Return 200. |
+| `running` | Return 202 with warning. **No cancel executed.** | Mark persisted job state as `failed`; the worker observes `_should_cancel()` and terminates its own subprocess tree. Return 200. |
 | `completed`/`failed` | Return 409 | Return 409 |
 
 **Running + force=false response (202):**
@@ -114,24 +128,26 @@ Cancel a queued or running job.
 {
     "job_id": "abc123",
     "status": "running",
-    "warning": "Job is currently running. Force termination may cause incomplete output. Set force=true to confirm.",
-    "pid": 12345
+    "message": "Job is currently running. Force termination may cause incomplete output. Set force=true to confirm.",
+    "pid": null,
+    "warning": true
 }
 ```
 
-**Running + force=true two-phase termination:**
+**Running + force=true worker-driven termination:**
 
-1. SIGTERM, wait up to 5 seconds
-2. If process exits: cleanup temp files, mark `failed`, return 200
-3. If timeout: SIGKILL, wait up to 3 seconds
-4. If process exits: cleanup temp files, mark `failed`, return 200
-5. If process still alive: mark `failed` with error "Cancel failed: process unkillable", return 500
+1. API flips the persisted job state to `failed` with error `Cancelled by user`
+2. Polling worker sees it no longer owns a running job
+3. Engine `_should_cancel()` callback returns `True`
+4. Engine terminates its own subprocess tree and stops writing output
+5. Worker does not overwrite the failed state after aborting
 
 **Frontend interaction flow:**
+
 1. User clicks "Cancel" on a `queued` job: call `cancel(force=false)`, immediate cancel
 2. User clicks "Cancel" on a `running` job: show confirmation dialog about force termination
 3. User confirms: call `cancel(force=true)`
-4. Frontend polls job status, waiting for `failed` (success) or persistent `running` (failure, show error)
+4. Frontend polls job status until it observes `failed`
 
 ### New: `GET /jobs/events` (SSE)
 
@@ -177,6 +193,7 @@ Works for both generate and upscale jobs. Upscale job's download_url points to t
 | `running` (any type) | **"Cancel" button** (triggers confirmation dialog for force termination) |
 
 **Download for upscale jobs:**
+
 - "Download Original" -> downloads source job's output via `/jobs/{source_job_id}/download`
 - "Download Upscaled" -> downloads current job's output via `/jobs/{job_id}/download`
 
@@ -222,17 +239,20 @@ For `upscale` type completed jobs, the existing preview `<dialog>` is extended w
 For `generate` type jobs, preview works as before (no tabs, single video).
 
 **Side-by-Side mode:**
+
 - Two `<video>` elements side by side: original (left) + upscaled (right)
 - Synchronized playback: play/pause/seek on one controls both
 - Resolution labels below each video
 
 **A/B Toggle mode:**
+
 - Single `<video>` element
 - [A Original] and [B Upscaled] toggle buttons
 - Switching preserves playback position and state
 - Keyboard shortcut: `A` key / `B` key for quick toggle
 
 **Slider mode:**
+
 - Paused at current frame (static comparison)
 - CSS clip-based left/right split view on canvas
 - Draggable slider divider
@@ -270,6 +290,7 @@ class UpscalerBackend(Protocol):
 ### 4.2 Backend Implementations
 
 **RealESRGANBackend:**
+
 - `name`: `"realesrgan-animevideov3"`
 - `display_name`: `"Real-ESRGAN (Fast)"`
 - `default_scale`: 2, `max_scale`: 4
@@ -280,6 +301,7 @@ class UpscalerBackend(Protocol):
 - Limitation: frame-by-frame processing, no temporal consistency
 
 **RealBasicVSRBackend:**
+
 - `name`: `"realbasicvsr"`
 - `display_name`: `"RealBasicVSR (High Quality)"`
 - `default_scale`: 4, `max_scale`: 4 (only supports 4x)
@@ -290,6 +312,7 @@ class UpscalerBackend(Protocol):
 - Strength: bidirectional propagation for temporal consistency
 
 **SeedVR2Backend:**
+
 - `name`: `"seedvr2-3b"`
 - `display_name`: `"SeedVR2-3B (SOTA)"`
 - `default_scale`: 2, `max_scale`: 4
@@ -449,6 +472,7 @@ Native `EventSource` API. `JobEventSource` class manages connection lifecycle:
 GPU concurrency is managed by `_gpu_slot = threading.Semaphore(1)`. Both generate and upscale jobs share this single slot. PanoWan (`panowan-test` CLI) is a single-GPU single-process inference tool; running two instances simultaneously would cause GPU OOM. Therefore, all GPU tasks execute serially in submission order.
 
 Future path for concurrency:
+
 - Multi-GPU: `Semaphore(N)` with `CUDA_VISIBLE_DEVICES` binding per job
 - Async inference: requires PanoWan source code modification
 
@@ -457,6 +481,7 @@ Future path for concurrency:
 Not introduced in this version. Three backends registered via Protocol interface + dict is sufficient. Adding a new backend requires: implement `UpscalerBackend`, register in `UPSCALE_BACKENDS`, add model weights. Three steps, no framework overhead.
 
 Trigger for future pluginization:
+
 - Backend count exceeds 5-6
 - Non-subprocess integration needed (e.g., direct Python API calls)
 - User-authored custom backends without source modification
