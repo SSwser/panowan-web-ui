@@ -21,6 +21,7 @@ dist/
 *.stackdump
 *.log
 
+data/
 *.mp4
 *.mov
 *.avi
