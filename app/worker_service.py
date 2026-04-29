@@ -63,8 +63,54 @@ def publish_worker_state(
             "available_upscale_models": available_upscale_models,
             "max_concurrent_jobs": settings.max_concurrent_jobs,
             "running_jobs": running_jobs,
+            "panowan_runtime_status": _panowan_runtime_status(engine_registry),
         },
     )
+
+
+def _panowan_runtime_status(engine_registry: EngineRegistry) -> str:
+    """Read the PanoWan engine controller state for worker registry telemetry."""
+    try:
+        engine = engine_registry.get("panowan")
+        return engine._controller.status_snapshot()["status"]
+    except (KeyError, AttributeError):
+        return "unknown"
+
+
+def _startup_preload(engine_registry: EngineRegistry) -> None:
+    if not settings.panowan_startup_preload:
+        return
+    try:
+        engine = engine_registry.get("panowan")
+        from third_party.PanoWan.sources.runtime_adapter import (
+            runtime_identity_from_job,
+        )
+        identity = runtime_identity_from_job({"version": "v1", "task": "t2v"})
+        engine._controller.ensure_loaded(identity)
+        print("PanoWan runtime preloaded.", flush=True)
+    # Preload is best-effort; worker must keep running even if model load fails.
+    except Exception as exc:
+        print(f"PanoWan startup preload failed (non-fatal): {exc}", flush=True)
+
+
+def _maybe_evict_idle(engine_registry: EngineRegistry) -> None:
+    """Evict the PanoWan resident runtime if idle past the configured threshold."""
+    if settings.panowan_idle_evict_seconds <= 0:
+        return
+    try:
+        from time import monotonic
+        engine = engine_registry.get("panowan")
+        snap = engine._controller.status_snapshot()
+        if snap["status"] == "warm":
+            idle_seconds = monotonic() - snap.get("last_used_at", monotonic())
+            if idle_seconds >= settings.panowan_idle_evict_seconds:
+                engine._controller.evict()
+                print(
+                    f"PanoWan runtime evicted after {idle_seconds:.0f}s idle.",
+                    flush=True,
+                )
+    except (KeyError, AttributeError):
+        pass
 
 
 def run_one_job(
@@ -117,8 +163,10 @@ def main() -> None:
         f"upscale_models={','.join(upscale_models) or 'none'}",
         flush=True,
     )
+    _startup_preload(registry)
     while True:
         publish_worker_state(worker_registry, worker_id, registry)
+        _maybe_evict_idle(registry)
         worked = run_one_job(backend, registry, worker_id)
         if not worked:
             time.sleep(settings.worker_poll_interval_seconds)

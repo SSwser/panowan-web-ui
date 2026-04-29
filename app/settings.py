@@ -57,6 +57,8 @@ class Settings:
     port: int
     worker_poll_interval_seconds: float
     worker_stale_seconds: float
+    panowan_startup_preload: bool = False
+    panowan_idle_evict_seconds: float = 600.0
 
     @property
     def wan_model_absolute_path(self) -> str:
@@ -119,6 +121,10 @@ def load_settings() -> Settings:
             os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")
         ),
         worker_stale_seconds=float(os.getenv("WORKER_STALE_SECONDS", "60")),
+        panowan_startup_preload=os.getenv("PANOWAN_STARTUP_PRELOAD", "0") == "1",
+        panowan_idle_evict_seconds=float(
+            os.getenv("PANOWAN_IDLE_EVICT_SECONDS", "600")
+        ),
     )
 
 

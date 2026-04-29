@@ -6,7 +6,8 @@ from app.engines.base import EngineResult
 from app.engines.panowan import PanoWanEngine
 from app.engines.upscale import UpscaleEngine
 from app.jobs.local import LocalJobBackend
-from app.worker_service import run_one_job
+from app.jobs.workers import LocalWorkerRegistry
+from app.worker_service import publish_worker_state, run_one_job
 
 
 class FakeEngine:
@@ -292,3 +293,18 @@ class MultiEngineRegistryTests(unittest.TestCase):
         registry = build_registry()
         with self.assertRaises(ValueError):
             _resolve_engine(registry, {"type": "unknown"})
+
+
+class WorkerRuntimeTelemetryTests(unittest.TestCase):
+    def test_publish_worker_state_includes_panowan_runtime_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = LocalWorkerRegistry(f"{tmp}/workers.json")
+            engine_registry = EngineRegistry()
+            engine = PanoWanEngine()
+            engine_registry.register(engine)
+
+            record = publish_worker_state(
+                registry, "worker-test", engine_registry
+            )
+
+            self.assertIn("panowan_runtime_status", record)

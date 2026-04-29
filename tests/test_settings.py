@@ -172,6 +172,16 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(loaded.worker_poll_interval_seconds, 1.5)
         self.assertEqual(loaded.worker_stale_seconds, 45.0)
 
+    def test_load_settings_reads_panowan_runtime_controls(self) -> None:
+        env = {
+            "PANOWAN_STARTUP_PRELOAD": "1",
+            "PANOWAN_IDLE_EVICT_SECONDS": "300",
+        }
+        with patch.dict(os.environ, env):
+            loaded = load_settings()
+        self.assertTrue(loaded.panowan_startup_preload)
+        self.assertEqual(loaded.panowan_idle_evict_seconds, 300.0)
+
     def test_container_path_join_uses_posix_separators(self):
         from app.paths import container_join
 
