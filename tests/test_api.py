@@ -175,7 +175,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(snapshots, {})
 
     def test_generate_returns_queued_job_metadata(self) -> None:
-        response = api.generate({"prompt": "test"})
+        response = api.generate({"prompt": "test", "negative_prompt": "bad"})
 
         self.assertEqual(response["status"], "queued")
         self.assertIn("job_id", response)
@@ -222,13 +222,48 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(record["status"], "queued")
 
     def test_generate_endpoint_only_queues_job(self) -> None:
-        response = self.client.post("/generate", json={"prompt": "sky"})
+        response = self.client.post(
+            "/generate",
+            json={"prompt": "sky", "negative_prompt": "clouds"},
+        )
 
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(payload["status"], "queued")
         job = self.client.get(f"/jobs/{payload['job_id']}").json()
         self.assertEqual(job["status"], "queued")
+
+    def test_generate_persists_negative_prompt_in_queued_job(self) -> None:
+        response = self.client.post(
+            "/generate",
+            json={"prompt": "mountains", "negative_prompt": "rain"},
+        )
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["negative_prompt"], "rain")
+        self.assertEqual(job["payload"]["task"], "t2v")
+
+    def test_generate_rejects_missing_negative_prompt(self) -> None:
+        response = self.client.post("/generate", json={"prompt": "mountains"})
+        self.assertEqual(response.status_code, 422)
+
+    def test_generate_persists_i2v_task_fields(self) -> None:
+        response = self.client.post(
+            "/generate",
+            json={
+                "prompt": "pan right",
+                "negative_prompt": "blur",
+                "task": "i2v",
+                "input_image_path": "/tmp/frame.png",
+                "denoising_strength": 0.7,
+            },
+        )
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["task"], "i2v")
+        self.assertEqual(job["payload"]["input_image_path"], "/tmp/frame.png")
 
     def test_restore_jobs_marks_running_job_failed_after_restart(self) -> None:
         completed_output = os.path.join(self.temp_dir.name, "outputs", "done.mp4")

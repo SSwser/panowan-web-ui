@@ -266,11 +266,17 @@ def healthcheck() -> dict:
 
 @app.post("/generate", status_code=202)
 def generate(payload: dict) -> dict:
+    if "negative_prompt" not in payload:
+        raise HTTPException(status_code=422, detail="negative_prompt is required")
+    task = payload.get("task") or payload.get("mode") or "t2v"
+    if task not in {"t2v", "i2v"}:
+        raise HTTPException(status_code=422, detail="task must be 't2v' or 'i2v'")
     job_id = str(payload.get("id") or uuid.uuid4())
     prompt = extract_prompt(payload)
     output_path = os.path.join(settings.output_dir, f"output_{job_id}.mp4")
     job_payload = dict(payload)
     job_payload["id"] = job_id
+    job_payload["task"] = task
     params = resolve_inference_params(job_payload)
     record = _create_job_record(
         job_id, prompt, output_path, params, payload=job_payload
