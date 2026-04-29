@@ -1,12 +1,14 @@
+import json
 import os
 import subprocess
 import unittest
 import unittest.mock
 from dataclasses import replace
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 from app.generator import (
     JobCancelledError,
+    build_runner_payload,
     extract_prompt,
     generate_video,
     resolve_inference_params,
@@ -29,7 +31,7 @@ class ExtractPromptTests(unittest.TestCase):
         self.assertEqual(extract_prompt({}), settings.default_prompt)
 
 
-class GenerateVideoTests(unittest.TestCase):
+class ResolveInferenceParamsTests(unittest.TestCase):
     def test_resolves_inference_params_from_preset(self) -> None:
         params = resolve_inference_params({"quality": "draft"})
 
@@ -37,7 +39,6 @@ class GenerateVideoTests(unittest.TestCase):
         self.assertEqual(params["width"], 448)
         self.assertEqual(params["height"], 224)
         self.assertEqual(params["seed"], 0)
-        self.assertEqual(params["negative_prompt"], "")
 
     def test_resolves_inference_params_from_stored_job_params(self) -> None:
         params = resolve_inference_params(
@@ -48,7 +49,7 @@ class GenerateVideoTests(unittest.TestCase):
                     "width": 512,
                     "height": 256,
                     "seed": 7,
-                    "negative_prompt": "rain",
+                    "num_frames": 49,
                 },
             }
         )
@@ -57,8 +58,40 @@ class GenerateVideoTests(unittest.TestCase):
         self.assertEqual(params["width"], 512)
         self.assertEqual(params["height"], 256)
         self.assertEqual(params["seed"], 7)
-        self.assertEqual(params["negative_prompt"], "rain")
+        self.assertEqual(params["num_frames"], 49)
 
+
+class BuildRunnerPayloadTests(unittest.TestCase):
+    def test_build_runner_payload_includes_required_fields(self):
+        payload = build_runner_payload(
+            {
+                "id": "j1",
+                "prompt": "sky",
+                "negative_prompt": "blur",
+                "output_path": os.path.join(settings.output_dir, "output_j1.mp4"),
+            }
+        )
+        self.assertEqual(payload["version"], "v1")
+        self.assertEqual(payload["task"], "t2v")
+        self.assertEqual(payload["prompt"], "sky")
+        self.assertEqual(payload["negative_prompt"], "blur")
+        self.assertIn("resolution", payload)
+        self.assertIn("num_frames", payload)
+
+
+def _captured_runner_payload(mock_dump):
+    """Extract the runner payload dict from the patched json.dump call."""
+    assert mock_dump.called, "json.dump was not called"
+    return mock_dump.call_args.args[0]
+
+
+class GenerateVideoTests(unittest.TestCase):
+    def test_generate_video_requires_negative_prompt(self) -> None:
+        with self.assertRaisesRegex(ValueError, "negative_prompt"):
+            generate_video({"id": "job-1", "prompt": "test"})
+
+    @patch("app.generator.json.dump")
+    @patch("app.generator.open", new_callable=mock_open)
     @patch("app.generator.os.makedirs")
     @patch("app.generator.os.path.exists", return_value=True)
     @patch("app.generator.os.path.getsize", return_value=11)
@@ -69,13 +102,17 @@ class GenerateVideoTests(unittest.TestCase):
         mock_getsize,
         mock_exists,
         mock_makedirs,
+        mock_open_fn,
+        mock_dump,
     ):
         mock_process = unittest.mock.MagicMock()
         mock_process.communicate.return_value = ("ok", "")
         mock_process.returncode = 0
         mock_popen.return_value = mock_process
 
-        result = generate_video({"id": "job-1", "prompt": "mountain sunset"})
+        result = generate_video(
+            {"id": "job-1", "prompt": "mountain sunset", "negative_prompt": "blur"}
+        )
 
         self.assertEqual(result["id"], "job-1")
         self.assertEqual(result["prompt"], "mountain sunset")
@@ -84,16 +121,31 @@ class GenerateVideoTests(unittest.TestCase):
             result["output_path"],
             os.path.join(settings.output_dir, "output_job-1.mp4"),
         )
-        mock_popen.assert_called_once()
-        mock_getsize.assert_called_once_with(
-            os.path.join(settings.output_dir, "output_job-1.mp4")
-        )
-        mock_makedirs.assert_called_once_with(settings.output_dir, exist_ok=True)
-        self.assertTrue(mock_exists.called)
 
+        # Assert the new runner.py CLI shape: ["python", "runner.py", "--job", <json>]
+        cmd = (
+            mock_popen.call_args.kwargs["args"]
+            if "args" in mock_popen.call_args.kwargs
+            else mock_popen.call_args.args[0]
+        )
+        self.assertEqual(cmd[:3], ["python", "runner.py", "--job"])
+        self.assertTrue(cmd[3].endswith("job-1.json"))
+
+        runner_payload = _captured_runner_payload(mock_dump)
+        self.assertEqual(runner_payload["version"], "v1")
+        self.assertEqual(runner_payload["task"], "t2v")
+        self.assertEqual(runner_payload["prompt"], "mountain sunset")
+        self.assertEqual(runner_payload["negative_prompt"], "blur")
+        self.assertIn("resolution", runner_payload)
+        self.assertIn("num_frames", runner_payload)
+
+    @patch("app.generator.json.dump")
+    @patch("app.generator.open", new_callable=mock_open)
     @patch("app.generator.os.makedirs")
     @patch("app.process_runner.subprocess.Popen")
-    def test_generate_video_timeout_kills_process(self, mock_popen, mock_makedirs):
+    def test_generate_video_timeout_kills_process(
+        self, mock_popen, mock_makedirs, mock_open_fn, mock_dump
+    ):
         mock_process = unittest.mock.MagicMock()
         mock_process.communicate.side_effect = subprocess.TimeoutExpired(
             cmd="test", timeout=10
@@ -106,17 +158,27 @@ class GenerateVideoTests(unittest.TestCase):
 
         with patch("app.generator.settings", timeout_settings):
             with self.assertRaises(TimeoutError):
-                generate_video({"id": "timeout-test", "prompt": "test"})
+                generate_video(
+                    {
+                        "id": "timeout-test",
+                        "prompt": "test",
+                        "negative_prompt": "blur",
+                    }
+                )
 
         mock_process.kill.assert_called_once()
         self.assertGreaterEqual(mock_process.communicate.call_count, 1)
 
+    @patch("app.generator.json.dump")
+    @patch("app.generator.open", new_callable=mock_open)
     @patch("app.generator.os.makedirs")
     @patch("app.process_runner.subprocess.Popen")
     def test_generate_video_kills_process_when_cancelled(
         self,
         mock_popen,
         mock_makedirs,
+        mock_open_fn,
+        mock_dump,
     ):
         mock_process = unittest.mock.MagicMock()
         mock_process.communicate.side_effect = [("", "")]
@@ -128,6 +190,7 @@ class GenerateVideoTests(unittest.TestCase):
                 {
                     "id": "cancelled-job",
                     "prompt": "test",
+                    "negative_prompt": "blur",
                     "_should_cancel": lambda: True,
                 }
             )
@@ -136,12 +199,16 @@ class GenerateVideoTests(unittest.TestCase):
 
     @patch("app.process_runner.os.killpg", create=True)
     @patch("app.process_runner.os.getpgid", return_value=321, create=True)
+    @patch("app.generator.json.dump")
+    @patch("app.generator.open", new_callable=mock_open)
     @patch("app.generator.os.makedirs")
     @patch("app.process_runner.subprocess.Popen")
     def test_generate_video_kills_process_group_on_posix_cancel(
         self,
         mock_popen,
         mock_makedirs,
+        mock_open_fn,
+        mock_dump,
         mock_getpgid,
         mock_killpg,
     ):
@@ -157,6 +224,7 @@ class GenerateVideoTests(unittest.TestCase):
                     {
                         "id": "cancelled-job",
                         "prompt": "test",
+                        "negative_prompt": "blur",
                         "_should_cancel": lambda: True,
                     }
                 )
@@ -165,6 +233,8 @@ class GenerateVideoTests(unittest.TestCase):
         mock_killpg.assert_called_once()
         mock_process.kill.assert_not_called()
 
+    @patch("app.generator.json.dump")
+    @patch("app.generator.open", new_callable=mock_open)
     @patch("app.generator.os.makedirs")
     @patch("app.generator.os.path.exists", return_value=True)
     @patch("app.generator.os.path.getsize", return_value=11)
@@ -175,6 +245,8 @@ class GenerateVideoTests(unittest.TestCase):
         mock_getsize,
         mock_exists,
         mock_makedirs,
+        mock_open_fn,
+        mock_dump,
     ):
         mock_process = unittest.mock.MagicMock()
         mock_process.communicate.return_value = ("ok", "")
@@ -185,25 +257,59 @@ class GenerateVideoTests(unittest.TestCase):
             {
                 "job_id": "job-queued",
                 "prompt": "mountain sunset",
+                "negative_prompt": "blur",
                 "params": {
                     "num_inference_steps": 10,
-                    "width": 448,
-                    "height": 224,
+                    "width": 896,
+                    "height": 448,
                     "seed": 3,
+                    "num_frames": 81,
                 },
             }
         )
 
-        cmd = (
-            mock_popen.call_args.kwargs["args"]
-            if "args" in mock_popen.call_args.kwargs
-            else mock_popen.call_args.args[0]
+        runner_payload = _captured_runner_payload(mock_dump)
+        self.assertEqual(runner_payload["resolution"]["width"], 896)
+        self.assertEqual(runner_payload["resolution"]["height"], 448)
+        self.assertEqual(runner_payload["num_frames"], 81)
+        self.assertEqual(runner_payload["seed"], 3)
+        self.assertEqual(runner_payload["num_inference_steps"], 10)
+
+    @patch("app.generator.json.dump")
+    @patch("app.generator.open", new_callable=mock_open)
+    @patch("app.generator.os.makedirs")
+    @patch("app.generator.os.path.exists", return_value=True)
+    @patch("app.generator.os.path.getsize", return_value=11)
+    @patch("app.process_runner.subprocess.Popen")
+    def test_generate_video_writes_i2v_runner_payload(
+        self,
+        mock_popen,
+        mock_getsize,
+        mock_exists,
+        mock_makedirs,
+        mock_open_fn,
+        mock_dump,
+    ):
+        mock_process = unittest.mock.MagicMock()
+        mock_process.communicate.return_value = ("ok", "")
+        mock_process.returncode = 0
+        mock_popen.return_value = mock_process
+
+        result = generate_video(
+            {
+                "id": "job-i2v",
+                "task": "i2v",
+                "prompt": "pan right",
+                "negative_prompt": "blur",
+                "input_image_path": "/tmp/frame0.png",
+                "denoising_strength": 0.7,
+                "output_path": os.path.join(settings.output_dir, "output_job-i2v.mp4"),
+            }
         )
-        self.assertIn("--num-inference-steps", cmd)
-        self.assertIn("10", cmd)
-        self.assertIn("--width", cmd)
-        self.assertIn("448", cmd)
-        self.assertIn("--height", cmd)
-        self.assertIn("224", cmd)
-        self.assertIn("--seed", cmd)
-        self.assertIn("3", cmd)
+
+        self.assertEqual(result["id"], "job-i2v")
+        self.assertTrue(mock_popen.called)
+        runner_payload = _captured_runner_payload(mock_dump)
+        self.assertEqual(runner_payload["task"], "i2v")
+        self.assertEqual(runner_payload["input_image_path"], "/tmp/frame0.png")
+        self.assertEqual(runner_payload["denoising_strength"], 0.7)
