@@ -171,38 +171,40 @@ def _resolve_upscale_params(
             detail=f"No online worker currently advertises upscale model: {model_name}",
         )
 
-    target_width = payload.get("target_width")
-    target_height = payload.get("target_height")
+    explicit_target_width = payload.get("target_width")
+    explicit_target_height = payload.get("target_height")
     scale = payload.get("scale")
 
     src_params = source_job.get("params", {})
     src_w = src_params.get("width", 896)
     src_h = src_params.get("height", 448)
 
-    if not scale and not target_width and not target_height:
+    if not scale and explicit_target_width is None and explicit_target_height is None:
         scale = backend.default_scale
     elif not scale:
-        if target_width:
-            scale = target_width // src_w
-        elif target_height:
-            scale = target_height // src_h
+        if explicit_target_width is not None:
+            scale = explicit_target_width // src_w
+        elif explicit_target_height is not None:
+            scale = explicit_target_height // src_h
         if scale and scale < 1:
             scale = 1
 
     if not scale:
         scale = backend.default_scale
 
-    if target_width is None and target_height is None:
-        target_width = src_w * scale
-        target_height = src_h * scale
-
     validation_error = backend.validate_params(
         scale=scale,
-        target_width=target_width,
-        target_height=target_height,
+        target_width=explicit_target_width,
+        target_height=explicit_target_height,
     )
     if validation_error:
         raise HTTPException(status_code=400, detail=validation_error)
+
+    target_width = explicit_target_width
+    target_height = explicit_target_height
+    if backend.name == "seedvr2-3b" and target_width is None and target_height is None:
+        target_width = src_w * scale
+        target_height = src_h * scale
 
     return {
         "model": model_name,
@@ -429,12 +431,16 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
 
     status = job["status"]
     if status == "queued":
-        return _update_job(
-            job_id,
-            status="failed",
-            error="Cancelled by user",
-            finished_at=now_iso(),
-        )
+        if get_job_backend().cancel_queued_job(job_id):
+            cancelled = _get_job(job_id)
+            if cancelled is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            broadcast_job_event("job_updated", cancelled)
+            return cancelled
+        job = _get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        status = job["status"]
 
     if status == "running":
         if not force:

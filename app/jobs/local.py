@@ -126,6 +126,57 @@ class LocalJobBackend:
             job_id, status="failed", finished_at=now_iso(), error=error
         )
 
+    def cancel_queued_job(self, job_id: str) -> bool:
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None or job.get("status") != "queued":
+                return False
+            job["status"] = "failed"
+            job["error"] = "Cancelled by user"
+            job["finished_at"] = now_iso()
+            self._persist_unlocked()
+            return True
+
+    def complete_job_if_running(
+        self, job_id: str, worker_id: str, output_path: str
+    ) -> dict[str, Any] | None:
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            if job.get("worker_id") != worker_id:
+                return None
+            status = job.get("status")
+            if status == "running":
+                pass
+            elif not (
+                status == "failed"
+                and job.get("error") == "Cancelled by user"
+                and job.get("finished_at") is not None
+            ):
+                return None
+            job["status"] = "completed"
+            job["finished_at"] = now_iso()
+            job["output_path"] = output_path
+            job["error"] = None
+            self._persist_unlocked()
+            return copy.deepcopy(job)
+
+    def fail_job_if_running(
+        self, job_id: str, worker_id: str, error: str
+    ) -> dict[str, Any] | None:
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            if job.get("status") != "running" or job.get("worker_id") != worker_id:
+                return None
+            job["status"] = "failed"
+            job["finished_at"] = now_iso()
+            job["error"] = error
+            self._persist_unlocked()
+            return copy.deepcopy(job)
+
     def delete_failed_jobs(self) -> list[str]:
         """Remove all failed jobs from the store. Returns the deleted job IDs."""
         with self._locked_store():

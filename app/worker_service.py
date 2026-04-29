@@ -89,15 +89,13 @@ def run_one_job(
 
     try:
         result = engine.run(job)
-        if _worker_still_owns_job(backend, job_id, worker_id):
-            backend.complete_job(job_id, result.output_path)
+        backend.complete_job_if_running(job_id, worker_id, result.output_path)
         return True
     except Exception as exc:
-        if _worker_still_owns_job(backend, job_id, worker_id):
-            # Upscale and generation failures are job-scoped errors. Re-raising here
-            # would terminate the worker loop and leave the fleet unavailable until
-            # someone manually restarts the process.
-            backend.fail_job(job_id, str(exc))
+        # Upscale and generation failures are job-scoped errors. Re-raising here
+        # would terminate the worker loop and leave the fleet unavailable until
+        # someone manually restarts the process.
+        backend.fail_job_if_running(job_id, worker_id, str(exc))
         return True
 
 

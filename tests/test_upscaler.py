@@ -307,21 +307,16 @@ class RealESRGANBackendTests(unittest.TestCase):
         result = self.backend.validate_params(scale=2)
         self.assertIsNone(result)
 
-    def test_build_command_ignores_target_resolution_fields(self) -> None:
-        cmd = self.backend.build_command(
-            input_path="/input/video.mp4",
-            output_dir="/output",
-            engine_dir="/engines/upscale",
-            weights_dir="/models",
+    def test_validate_params_rejects_target_resolution_fields(self) -> None:
+        result = self.backend.validate_params(
             scale=2,
             target_width=1280,
             target_height=720,
         )
-        cmd_str = " ".join(cmd)
-        self.assertIn("/engines/upscale/realesrgan/runner.py", cmd_str)
-        self.assertNotIn("1280", cmd_str)
-        self.assertNotIn("720", cmd_str)
-        self.assertIn("-s", cmd_str)
+        self.assertEqual(
+            result,
+            "Real-ESRGAN (Fast) does not support target_width/target_height overrides",
+        )
 
 
 class RealBasicVSRBackendTests(unittest.TestCase):

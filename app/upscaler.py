@@ -169,6 +169,8 @@ class RealESRGANBackend:
         target_width: int | None = None,
         target_height: int | None = None,
     ) -> str | None:
+        if target_width is not None or target_height is not None:
+            return f"{self.display_name} does not support target_width/target_height overrides"
         if scale > self.max_scale:
             return (
                 f"Scale {scale} exceeds maximum {self.max_scale} "

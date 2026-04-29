@@ -456,6 +456,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("multiple of 32", ctx.exception.detail)
 
+    def test_upscale_rejects_target_dimensions_for_realesrgan(self) -> None:
+        self._seed_completed_source(
+            "done-realesrgan",
+            output_path="/out.mp4",
+            params={"width": 896, "height": 448},
+        )
+        self._seed_upscale_worker(["realesrgan-animevideov3"])
+
+        with patch("app.api.os.path.exists", return_value=True):
+            with self.assertRaises(HTTPException) as ctx:
+                api.upscale(
+                    {
+                        "source_job_id": "done-realesrgan",
+                        "model": "realesrgan-animevideov3",
+                        "target_width": 1280,
+                        "target_height": 720,
+                    }
+                )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("does not support target_width/target_height", ctx.exception.detail)
+
     def test_upscale_rejects_missing_source_job(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
             api.upscale({"source_job_id": "nonexistent"})
@@ -472,10 +494,12 @@ class ApiTests(unittest.TestCase):
     def test_cancel_queued_job_succeeds(self) -> None:
         api._create_job_record("q1", "", "", {})
 
-        result = api.cancel_job("q1", force=False)
+        with unittest.mock.patch.object(api, "broadcast_job_event") as broadcast:
+            result = api.cancel_job("q1", force=False)
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error"], "Cancelled by user")
+        broadcast.assert_called_once_with("job_updated", result)
 
     def test_cancel_running_without_force_returns_warning(self) -> None:
         # Subprocess termination now lives in the worker (Task 6); the API
