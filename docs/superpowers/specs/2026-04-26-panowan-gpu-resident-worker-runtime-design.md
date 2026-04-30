@@ -1,8 +1,12 @@
 # PanoWan GPU-Resident Worker Runtime Design
 
-> Final implementation target: upgrade the existing GPU Worker into a long-lived PanoWan runtime owner that keeps compatible model state resident in VRAM across jobs and supports explicit preload / eviction behavior.
+> Superseded by [Platform Resident Runtime Host Design](2026-04-30-platform-resident-runtime-host-design.md).
+>
+> This document remains useful as migration history for the original PanoWan-specific resident-runtime design. It is no longer the authoritative final-state implementation target.
 
-This document defines the implementation-level design that follows ADR 0007. The ADR records the architectural decision. This spec records how version 1 should realize that decision inside the current panowan-worker codebase.
+> Original target: upgrade the existing GPU Worker into a long-lived PanoWan runtime owner that keeps compatible model state resident in VRAM across jobs and supports explicit preload / eviction behavior.
+
+This document defined the implementation-level design that followed ADR 0007. The active architecture direction now follows [ADR 0009: Worker-Owned Resident Runtime Host](../../adr/0009-worker-owned-resident-runtime-host.md), and the active implementation target is the platform-level resident runtime host design.
 
 ## 1. Goal and Non-Goals
 

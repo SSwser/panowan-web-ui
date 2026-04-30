@@ -1,7 +1,11 @@
 # ADR 0007: GPU-Resident Worker Runtime for PanoWan
 
 Date: 2026-04-26
-Status: Proposed
+Status: Superseded by ADR 0009
+
+> Superseded by [ADR 0009: Worker-Owned Resident Runtime Host](0009-worker-owned-resident-runtime-host.md).
+>
+> This ADR remains useful as historical context for why the project chose worker-owned residency over a separate shared service. Its PanoWan-specific framing and its version-1 decision to stop short of a backend-generic runtime host are no longer the active architecture direction.
 
 ## Context
 
