@@ -1,0 +1,44 @@
+[backend]
+name = "panowan"
+display_name = "PanoWan"
+
+[source]
+type = "git"
+url = "https://github.com/SSwser/PanoWan.git"
+revision = "main"
+
+[filter]
+include = []
+exclude = []
+
+[output]
+target = "vendor"
+
+[runtime_inputs]
+root = "sources"
+authoritative = true
+files = ["runtime_adapter.py"]
+
+[runtime]
+required_commands = ["python"]
+
+[weights]
+family = "PanoWan"
+required_files = [
+    "Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors",
+    "Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth",
+    "PanoWan/latest-lora.ckpt",
+]
+
+[resident_provider]
+enabled = true
+provider_key = "panowan"
+entrypoint_module = "sources.runtime_provider"
+load_attr = "load_resident_runtime"
+execute_attr = "run_job_inprocess"
+teardown_attr = "teardown_resident_runtime"
+identity_attr = "runtime_identity_from_job"
+failure_classifier_attr = "classify_runtime_failure"
+startup_preload = false
+idle_evict_seconds = 600.0
+resource_class = "gpu-large"
