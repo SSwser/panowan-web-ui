@@ -252,9 +252,13 @@ def healthcheck() -> dict:
     ) and os.path.exists(settings.wan_t5_absolute_path)
     lora_exists = os.path.exists(settings.lora_absolute_path)
     model_ready = wan_model_ready and lora_exists
+    # In the split topology the API container is intentionally CPU-only and does
+    # not mount worker-only engine/model trees, so API readiness cannot depend on
+    # local asset visibility without keeping /health stuck on "starting" forever.
+    status = "ready" if settings.service_title and os.getenv("SERVICE_ROLE", "api") == "api" else ("ready" if model_ready else "starting")
 
     return {
-        "status": "ready" if model_ready else "starting",
+        "status": status,
         "service_started": True,
         "model_ready": model_ready,
         "panowan_engine_dir_exists": panowan_engine_dir_exists,

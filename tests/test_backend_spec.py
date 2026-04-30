@@ -85,6 +85,37 @@ def test_real_esrgan_backend_is_discoverable() -> None:
     assert realesrgan.weights.required_files == ["Real-ESRGAN/realesr-animevideov3.pth"]
 
 
+def test_panowan_backend_spec_declares_runtime_python_modules() -> None:
+    spec = load_backend_spec(Path("third_party/PanoWan/backend.toml"))
+
+    assert spec.runtime.required_commands == ["python"]
+    assert spec.runtime.required_python_modules == [
+        "torch",
+        "diffusers",
+        "transformers",
+        "accelerate",
+        "pandas",
+        "einops",
+        "PIL",
+        "tqdm",
+        "imageio",
+        "imageio_ffmpeg",
+        "ftfy",
+        "regex",
+        "torchvision",
+        "modelscope",
+    ]
+    assert spec.resident_provider.enabled is True
+    assert spec.resident_provider.entrypoint_module == "sources.runtime_provider"
+    assert spec.resident_provider.execute_attr == "run_job_inprocess"
+    assert spec.resident_provider.resource_class == "gpu-large"
+    assert spec.weights.required_files is not None
+    assert "PanoWan/latest-lora.ckpt" in spec.weights.required_files
+    assert "Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors" in spec.weights.required_files
+    assert "Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth" in spec.weights.required_files
+    assert "Wan-AI/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth" in spec.weights.required_files
+
+
 def _assert_realesrgan_spec(realesrgan: BackendSpec, backend_dir: Path) -> None:
     assert realesrgan.root == backend_dir
     assert realesrgan.backend.name == "realesrgan"

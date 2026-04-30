@@ -36,6 +36,29 @@ class DockerfileTests(unittest.TestCase):
         self.assertIn("/engines/upscale", worker_section)
         self.assertIn("start-worker.sh", worker_section)
 
+    def test_engine_panowan_deps_installs_runtime_python_modules(self):
+        deps_section = self.dockerfile.split("FROM api-deps AS engine-panowan-deps", 1)[1].split(
+            "FROM", 1
+        )[0]
+        for module_name in [
+            "torch",
+            "diffusers",
+            "transformers",
+            "accelerate",
+            "pandas",
+            "einops",
+            "pillow",
+            "tqdm",
+            "imageio",
+            "imageio-ffmpeg",
+            "ftfy",
+            "regex",
+            "torchvision",
+            "modelscope",
+        ]:
+            self.assertIn(module_name, deps_section)
+        self.assertIn("uv pip install", deps_section)
+
     def test_panowan_build_no_longer_assumes_backend_local_uv_project(self):
         self.assertNotIn("third_party/PanoWan/pyproject.toml", self.dockerfile)
         self.assertNotIn("third_party/PanoWan/uv.lock", self.dockerfile)

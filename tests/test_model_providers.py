@@ -19,6 +19,7 @@ from app.backends.spec import (
     RuntimeSpec,
     SourceSpec,
     WeightsSpec,
+    load_backend_spec,
 )
 from app.backends.verify import ensure_backend, expected_backend_files, verify_backend
 from app.settings import load_settings
@@ -706,6 +707,11 @@ class LoadSpecsTests(unittest.TestCase):
             ["__main__.py", "realesrgan/__init__.py"],
         )
 
+    def test_panowan_backend_spec_materializes_upstream_vendor_tree(self) -> None:
+        spec = load_backend_spec(Path("third_party/PanoWan/backend.toml"))
+        self.assertFalse(spec.runtime_inputs.authoritative)
+        self.assertIn("src/diffsynth", expected_backend_files(spec))
+
     def test_ensure_backend_rebuilds_from_authoritative_runtime_inputs_without_upstream(
         self,
     ) -> None:
@@ -1073,6 +1079,85 @@ class LoadSpecsTests(unittest.TestCase):
                 "v1",
             )
 
+    def test_acquire_backend_source_without_include_keeps_full_checkout(self) -> None:
+        spec = BackendSpec(
+            root=Path("third_party/PanoWan"),
+            backend=BackendSection(name="panowan", display_name="PanoWan"),
+            source=SourceSpec(
+                type="git", url="https://example.invalid/panowan.git", revision="main"
+            ),
+            filter=FilterSpec(include=[], exclude=[]),
+            output=OutputSpec(target="vendor"),
+        )
+
+        calls: list[list[str]] = []
+
+        def _record_run(cmd, **kwargs):
+            calls.append(cmd)
+            return MagicMock()
+
+        with patch("app.backends.acquire.subprocess.run", side_effect=_record_run):
+            from app.backends.acquire import acquire_backend_source
+
+            temp_dir = acquire_backend_source(spec)
+            temp_dir.cleanup()
+
+        self.assertEqual(calls[0][:4], ["git", "clone", "--no-checkout", "--depth"])
+        self.assertNotIn(
+            ["git", "sparse-checkout", "init", "--cone"],
+            calls,
+        )
+
+    def test_ensure_backend_full_checkout_skips_git_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as src:
+            root = Path(td)
+            (root / "sources").mkdir(parents=True)
+            (root / "sources" / "runtime_provider.py").write_text("provider", encoding="utf-8")
+            (root / "sources" / "runtime_adapter.py").write_text("adapter", encoding="utf-8")
+
+            src_root = Path(src)
+            (src_root / ".git" / "objects").mkdir(parents=True)
+            (src_root / ".git" / "objects" / "pack.idx").write_text("pack", encoding="utf-8")
+            (src_root / "src" / "diffsynth").mkdir(parents=True)
+            (src_root / "src" / "diffsynth" / "__init__.py").write_text("pkg", encoding="utf-8")
+            (src_root / "README.md").write_text("readme", encoding="utf-8")
+
+            spec = BackendSpec(
+                root=root,
+                backend=BackendSection(name="panowan", display_name="PanoWan"),
+                source=SourceSpec(
+                    type="git",
+                    url="https://example.invalid/panowan.git",
+                    revision="main",
+                ),
+                filter=FilterSpec(include=[], exclude=[]),
+                output=OutputSpec(
+                    target="vendor",
+                    expected_files=["src/diffsynth", "runtime_adapter.py", "runtime_provider.py"],
+                ),
+                runtime_inputs=RuntimeInputsSpec(
+                    root="sources",
+                    files=["runtime_adapter.py", "runtime_provider.py"],
+                ),
+            )
+
+            class TempDirStub:
+                def __init__(self, name: str) -> None:
+                    self.name = name
+
+                def cleanup(self) -> None:
+                    return None
+
+            with patch(
+                "app.backends.verify.acquire_backend_source",
+                return_value=TempDirStub(src),
+            ):
+                status = ensure_backend(spec)
+
+            self.assertEqual(status, "rebuilt")
+            self.assertTrue((root / "vendor" / "src" / "diffsynth").is_dir())
+            self.assertFalse((root / "vendor" / ".git").exists())
+
     def test_acquire_backend_source_failure_bubbles_up(self) -> None:
         spec = BackendSpec(
             root=Path("third_party/Upscale/realesrgan"),
@@ -1121,8 +1206,12 @@ class LoadSpecsTests(unittest.TestCase):
             patch("app.backends.cli.load_model_specs", return_value=[]),
             patch("app.backends.cli.ensure_backend") as mock_backend_ensure,
             patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            patch("app.backends.cli.settings") as mock_settings,
             contextlib.redirect_stdout(buf),
         ):
+            # Point panowan_engine_dir at a nonexistent path so the extra
+            # load_backend_spec call for PanoWan is skipped during this unit test.
+            mock_settings.panowan_engine_dir = "/nonexistent/panowan"
             main(["install"])
         mock_backend_ensure.assert_called_once_with(backend_spec)
         mock_manager_cls.return_value.ensure.assert_called_once_with([])
@@ -1258,8 +1347,10 @@ class LoadSpecsTests(unittest.TestCase):
             patch("app.backends.cli.load_model_specs", return_value=[]),
             patch("app.backends.cli.ensure_backend") as mock_backend_ensure,
             patch("app.backends.cli.ModelManager") as mock_manager_cls,
+            patch("app.backends.cli.settings") as mock_settings,
             contextlib.redirect_stdout(buf),
         ):
+            mock_settings.panowan_engine_dir = "/nonexistent/panowan"
             main(["rebuild"])
         mock_backend_ensure.assert_called_once_with(backend_spec, force=True)
         mock_manager_cls.return_value.ensure.assert_called_once_with([])

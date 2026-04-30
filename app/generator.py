@@ -45,7 +45,9 @@ def _resolve_task(payload: dict) -> str:
 def resolve_inference_params(payload: dict) -> dict:
     raw_params = payload.get("params")
     stored_params = raw_params if isinstance(raw_params, dict) else {}
-    preset_name = payload.get("quality")
+    # Defaulting to the draft preset keeps real-chain validation fast unless a
+    # caller explicitly asks for a more expensive quality tier.
+    preset_name = payload.get("quality") or "draft"
     preset = _QUALITY_PRESETS.get(preset_name, {})
     return {
         "num_inference_steps": (

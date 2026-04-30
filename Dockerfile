@@ -41,6 +41,23 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM api-deps AS engine-panowan-deps
 
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /opt/venv/bin/python \
+    torch \
+    diffusers \
+    transformers \
+    accelerate \
+    pandas \
+    einops \
+    pillow \
+    tqdm \
+    imageio \
+    imageio-ffmpeg \
+    ftfy \
+    regex \
+    torchvision \
+    modelscope
+
 FROM engine-panowan-deps AS upscale-realesrgan-deps
 
 ARG PYPI_INDEX=

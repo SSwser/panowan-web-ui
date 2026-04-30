@@ -63,7 +63,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(
             result,
             {
-                "status": "starting",
+                "status": "ready",
                 "service_started": True,
                 "model_ready": False,
                 "panowan_engine_dir_exists": True,
@@ -81,6 +81,24 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(result["model_ready"])
         self.assertTrue(result["wan_model_exists"])
         self.assertTrue(result["lora_exists"])
+
+    def test_healthcheck_stays_ready_for_split_api_topology(self) -> None:
+        path_exists = {
+            api.settings.panowan_engine_dir: False,
+            api.settings.wan_diffusion_absolute_path: False,
+            api.settings.wan_t5_absolute_path: False,
+            api.settings.lora_absolute_path: False,
+        }
+
+        with patch("app.api.os.path.exists", side_effect=path_exists.get):
+            result = api.healthcheck()
+
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["service_started"])
+        self.assertFalse(result["model_ready"])
+        self.assertFalse(result["panowan_engine_dir_exists"])
+        self.assertFalse(result["wan_model_exists"])
+        self.assertFalse(result["lora_exists"])
 
     def test_access_log_filter_is_registered_once(self) -> None:
         logger = logging.getLogger("uvicorn.access")

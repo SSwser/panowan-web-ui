@@ -53,6 +53,15 @@ class ResolveInferenceParamsTests(unittest.TestCase):
         self.assertEqual(params["seed"], 7)
         self.assertEqual(params["num_frames"], 49)
 
+    def test_defaults_to_draft_quality_when_unspecified(self) -> None:
+        params = resolve_inference_params({})
+
+        self.assertEqual(params["num_inference_steps"], 20)
+        self.assertEqual(params["width"], 448)
+        self.assertEqual(params["height"], 224)
+        self.assertEqual(params["seed"], 0)
+        self.assertEqual(params["num_frames"], 81)
+
 
 class BuildRunnerPayloadTests(unittest.TestCase):
     def test_build_runner_payload_includes_required_fields(self):
