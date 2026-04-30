@@ -44,7 +44,9 @@ class RuntimeProvider(Protocol):
 
     def runtime_identity_from_job(self, job: Mapping[str, Any]) -> Hashable: ...
     def load(self, identity: Hashable) -> Any: ...
-    def execute(self, loaded_runtime: Any, job: Mapping[str, Any]) -> Mapping[str, Any]: ...
+    def execute(
+        self, loaded_runtime: Any, job: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
     def teardown(self, loaded_runtime: Any) -> None: ...
     def classify_failure(self, exc: BaseException) -> bool: ...
 
@@ -111,7 +113,9 @@ class ResidentRuntimeHost:
 
     # ---- internal helpers --------------------------------------------
 
-    def _require(self, provider_key: str) -> tuple[RuntimeProvider, RuntimeInstance, threading.Lock]:
+    def _require(
+        self, provider_key: str
+    ) -> tuple[RuntimeProvider, RuntimeInstance, threading.Lock]:
         with self._state_lock:
             if provider_key not in self._providers:
                 raise KeyError(provider_key)
@@ -125,7 +129,9 @@ class ResidentRuntimeHost:
         with self._state_lock:
             instance.state = state
 
-    def _safe_teardown(self, provider: RuntimeProvider, instance: RuntimeInstance) -> None:
+    def _safe_teardown(
+        self, provider: RuntimeProvider, instance: RuntimeInstance
+    ) -> None:
         """Tear down loaded runtime, swallowing errors.
 
         Teardown failures must not propagate to callers — the host's job is to
@@ -151,7 +157,9 @@ class ResidentRuntimeHost:
                 instance.identity = None
                 instance.state = RuntimeState.COLD
 
-    def _load(self, provider: RuntimeProvider, instance: RuntimeInstance, identity: Hashable) -> None:
+    def _load(
+        self, provider: RuntimeProvider, instance: RuntimeInstance, identity: Hashable
+    ) -> None:
         self._set_state(instance, RuntimeState.LOADING)
         try:
             loaded = provider.load(identity)

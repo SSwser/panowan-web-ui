@@ -77,9 +77,7 @@ class PanoWanEngineTests(unittest.TestCase):
         self.assertIsNone(engine.validate_runtime())
 
     def test_engine_run_delegates_to_host(self):
-        host = _FakeHost(
-            run_result={"status": "ok", "output_path": "/tmp/o.mp4"}
-        )
+        host = _FakeHost(run_result={"status": "ok", "output_path": "/tmp/o.mp4"})
         engine = PanoWanEngine(host)
 
         with mock.patch("app.engines.panowan.build_runner_payload") as mock_payload:

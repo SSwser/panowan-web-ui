@@ -67,9 +67,7 @@ def resolve_inference_params(payload: dict) -> dict:
             or settings.default_height
         ),
         "seed": (
-            _payload_int(stored_params, "seed")
-            or _payload_int(payload, "seed")
-            or 0
+            _payload_int(stored_params, "seed") or _payload_int(payload, "seed") or 0
         ),
         "num_frames": (
             _payload_int(stored_params, "num_frames")

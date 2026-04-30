@@ -90,7 +90,9 @@ class _Clock:
 
 
 class ResidentRuntimeHostTests(unittest.TestCase):
-    def _build(self, **provider_kwargs: Any) -> tuple[ResidentRuntimeHost, FakeProvider, _Clock]:
+    def _build(
+        self, **provider_kwargs: Any
+    ) -> tuple[ResidentRuntimeHost, FakeProvider, _Clock]:
         clock = _Clock()
         host = ResidentRuntimeHost(clock=clock)
         provider = FakeProvider(**provider_kwargs)

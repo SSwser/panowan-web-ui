@@ -222,7 +222,9 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(job["status"], "failed")
             self.assertEqual(job["error"], "engine exploded")
 
-    def test_run_one_job_completes_success_if_engine_finishes_before_cancel_is_observed(self):
+    def test_run_one_job_completes_success_if_engine_finishes_before_cancel_is_observed(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             output_path = f"{tmp}/outputs/output_job-1.mp4"

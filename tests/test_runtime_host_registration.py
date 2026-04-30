@@ -7,9 +7,7 @@ from pathlib import Path
 from app.backends.spec import ResidentProviderSpec, load_backend_spec
 from app.runtime_host_registration import build_provider_from_spec
 
-
-_PROVIDER_MODULE_TEMPLATE = textwrap.dedent(
-    '''
+_PROVIDER_MODULE_TEMPLATE = textwrap.dedent("""
     from dataclasses import dataclass
 
     @dataclass(frozen=True)
@@ -30,11 +28,12 @@ _PROVIDER_MODULE_TEMPLATE = textwrap.dedent(
 
     def classify(exc):
         return isinstance(exc, MemoryError)
-    '''
-)
+    """)
 
 
-def _make_spec(module_name: str, *, with_default_identity: bool = False) -> ResidentProviderSpec:
+def _make_spec(
+    module_name: str, *, with_default_identity: bool = False
+) -> ResidentProviderSpec:
     return ResidentProviderSpec(
         enabled=True,
         provider_key="synthetic",
@@ -121,12 +120,10 @@ class BuildProviderFromSpecTests(unittest.TestCase):
             self.assertEqual(loaded, {})
 
     def test_default_identity_exposed_when_module_defines_it(self) -> None:
-        body = _PROVIDER_MODULE_TEMPLATE + textwrap.dedent(
-            '''
+        body = _PROVIDER_MODULE_TEMPLATE + textwrap.dedent("""
             def default_identity():
                 return _Identity(wan="default")
-            '''
-        )
+            """)
         with tempfile.TemporaryDirectory() as tmp:
             module_name = self._unique_module()
             _write_synthetic_backend(Path(tmp), module_name, body=body)

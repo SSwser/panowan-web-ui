@@ -17,7 +17,6 @@ from typing import Any
 from app.backends.spec import ResidentProviderSpec
 from app.runtime_host import RuntimeProvider
 
-
 _REQUIRED_ATTRS = (
     "provider_key",
     "entrypoint_module",
@@ -36,7 +35,9 @@ class _SpecBoundProvider:
     constant — no repeated ``getattr`` on every job.
     """
 
-    def __init__(self, *, provider_key: str, module: Any, spec: ResidentProviderSpec) -> None:
+    def __init__(
+        self, *, provider_key: str, module: Any, spec: ResidentProviderSpec
+    ) -> None:
         # getattr without a default — surface AttributeError from the original
         # module so the operator sees which attribute is missing in which file.
         self.provider_key = provider_key
@@ -57,9 +58,7 @@ class _SpecBoundProvider:
     def load(self, identity: Hashable) -> Any:
         return self._load(identity)
 
-    def execute(
-        self, loaded_runtime: Any, job: Mapping[str, Any]
-    ) -> Mapping[str, Any]:
+    def execute(self, loaded_runtime: Any, job: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._execute(loaded_runtime, job)
 
     def teardown(self, loaded_runtime: Any) -> None:

@@ -75,7 +75,9 @@ class BackendSpec:
     runtime_inputs: RuntimeInputsSpec = field(default_factory=RuntimeInputsSpec)
     runtime: RuntimeSpec = field(default_factory=RuntimeSpec)
     weights: WeightsSpec = field(default_factory=WeightsSpec)
-    resident_provider: ResidentProviderSpec = field(default_factory=ResidentProviderSpec)
+    resident_provider: ResidentProviderSpec = field(
+        default_factory=ResidentProviderSpec
+    )
 
     # Backend specs in tests often only care about the acquisition/materialization
     # contract, so runtime input metadata should stay optional unless a test exercises it.
@@ -116,7 +118,9 @@ def load_backend_spec(path: Path) -> BackendSpec:
     if "enabled" in resident_provider_data:
         resident_provider_data["enabled"] = bool(resident_provider_data["enabled"])
     if "startup_preload" in resident_provider_data:
-        resident_provider_data["startup_preload"] = bool(resident_provider_data["startup_preload"])
+        resident_provider_data["startup_preload"] = bool(
+            resident_provider_data["startup_preload"]
+        )
     if resident_provider_data.get("idle_evict_seconds") is not None:
         resident_provider_data["idle_evict_seconds"] = float(
             resident_provider_data["idle_evict_seconds"]

@@ -82,9 +82,7 @@ def test_real_esrgan_backend_is_discoverable() -> None:
     assert realesrgan.runtime.required_python_modules == ["cv2", "ffmpeg", "tqdm"]
     assert realesrgan.weights.family == "Real-ESRGAN"
     assert realesrgan.weights.filename == "realesr-animevideov3.pth"
-    assert realesrgan.weights.required_files == [
-        "Real-ESRGAN/realesr-animevideov3.pth"
-    ]
+    assert realesrgan.weights.required_files == ["Real-ESRGAN/realesr-animevideov3.pth"]
 
 
 def _assert_realesrgan_spec(realesrgan: BackendSpec, backend_dir: Path) -> None:
@@ -123,7 +121,9 @@ def _assert_realesrgan_spec(realesrgan: BackendSpec, backend_dir: Path) -> None:
     assert realesrgan.root.exists()
 
 
-def test_load_realesrgan_backend_spec_accepts_runtime_backend_root(tmp_path: Path) -> None:
+def test_load_realesrgan_backend_spec_accepts_runtime_backend_root(
+    tmp_path: Path,
+) -> None:
     backend_dir = tmp_path / "realesrgan"
     backend_dir.mkdir()
     (backend_dir / "backend.toml").write_text(
@@ -166,9 +166,7 @@ exclude = []
 
 [output]
 target = "vendor"
-""".strip()
-        + ("\n" + extra if extra else "")
-        + "\n",
+""".strip() + ("\n" + extra if extra else "") + "\n",
         encoding="utf-8",
     )
     return toml_path

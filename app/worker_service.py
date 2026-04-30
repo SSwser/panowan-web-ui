@@ -189,9 +189,7 @@ def main() -> None:
     for engine in registry.all():
         engine.validate_runtime()
 
-    worker_state = publish_worker_state(
-        worker_registry, worker_id, registry, host
-    )
+    worker_state = publish_worker_state(worker_registry, worker_id, registry, host)
     caps = worker_state["capabilities"]
     upscale_models = worker_state["available_upscale_models"]
 
