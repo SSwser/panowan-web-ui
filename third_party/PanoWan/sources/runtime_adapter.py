@@ -64,7 +64,7 @@ def validate_job(payload: dict[str, Any]) -> dict[str, Any]:
     if "prompt" not in payload:
         raise InvalidRunnerJob("prompt is required")
     if "negative_prompt" not in payload:
-        raise InvalidRunnerJob("negative_prompt is required")
+        payload["negative_prompt"] = ""
     resolution = payload.get("resolution")
     if not isinstance(resolution, dict):
         raise InvalidRunnerJob("resolution is required")

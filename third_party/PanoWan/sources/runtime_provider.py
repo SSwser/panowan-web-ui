@@ -49,9 +49,7 @@ def load_resident_runtime(identity: PanoWanRuntimeIdentity) -> dict[str, Any]:
     return {"identity": identity, "pipeline": pipeline}
 
 
-def run_job_inprocess(
-    loaded: dict[str, Any], job: Mapping[str, Any]
-) -> dict[str, Any]:
+def run_job_inprocess(loaded: dict[str, Any], job: Mapping[str, Any]) -> dict[str, Any]:
     # Mirror runner.py: validate_job enforces the runner contract identically
     # whether we're in-process (resident) or subprocess (CLI/debug).
     payload = validate_job(dict(job))

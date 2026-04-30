@@ -22,6 +22,19 @@ class PanoWanEngine:
         return None
 
     def run(self, job: Mapping[str, object]) -> EngineResult:
-        runner_payload = build_runner_payload(dict(job))
+        # Worker passes the full job record (status, params, payload, …);
+        # build_runner_payload expects the API-originated payload dict.
+        raw = dict(job)
+        api_payload = raw.get("payload")
+        if isinstance(api_payload, dict):
+            # Carry job-level fields that build_runner_payload also reads.
+            api_payload = {
+                "id": raw.get("id") or raw.get("job_id"),
+                "output_path": raw.get("output_path"),
+                **api_payload,
+            }
+        else:
+            api_payload = raw
+        runner_payload = build_runner_payload(api_payload)
         result = self._host.run_job(self.provider_key, runner_payload)
         return EngineResult(output_path=result["output_path"], metadata={})

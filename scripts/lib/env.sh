@@ -14,9 +14,25 @@ panowan_env_load_dotenv() {
   fi
 }
 
+panowan_resolve_host_python() {
+  if [[ -n "${PYTHON:-}" ]]; then
+    printf '%s\n' "${PYTHON}"
+    return
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    printf '%s\n' "uv run python"
+    return
+  fi
+
+  printf '%s\n' "python3"
+}
+
 panowan_export_python_settings() {
   local repo_root="$1"
-  PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" "${PYTHON:-python3}" - <<'PY'
+  local python_cmd
+  python_cmd="$(panowan_resolve_host_python)"
+  PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" bash -lc 'exec "$@"' _ ${python_cmd} - <<'PY'
 import shlex
 
 from app.settings import load_settings

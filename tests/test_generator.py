@@ -110,9 +110,9 @@ class BuildRunnerPayloadTests(unittest.TestCase):
         self.assertEqual(payload["input_image_path"], "/tmp/frame0.png")
         self.assertEqual(payload["denoising_strength"], 0.7)
 
-    def test_build_runner_payload_requires_negative_prompt(self) -> None:
-        with self.assertRaisesRegex(ValueError, "negative_prompt"):
-            build_runner_payload({"id": "job-1", "prompt": "test"})
+    def test_build_runner_payload_defaults_missing_negative_prompt(self) -> None:
+        payload = build_runner_payload({"id": "job-1", "prompt": "test"})
+        self.assertEqual(payload["negative_prompt"], "")
 
 
 if __name__ == "__main__":

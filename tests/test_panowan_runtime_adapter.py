@@ -32,11 +32,11 @@ class ValidateJobTests(unittest.TestCase):
         result = validate_job(payload)
         self.assertEqual(result["task"], "t2v")
 
-    def test_missing_negative_prompt_raises(self) -> None:
+    def test_missing_negative_prompt_defaults_empty_string(self) -> None:
         payload = self._base_payload()
         del payload["negative_prompt"]
-        with self.assertRaisesRegex(InvalidRunnerJob, "negative_prompt"):
-            validate_job(payload)
+        result = validate_job(payload)
+        self.assertEqual(result["negative_prompt"], "")
 
     def test_unknown_fields_raise(self) -> None:
         payload = {**self._base_payload(), "extra_field": "bad"}

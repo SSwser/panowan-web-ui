@@ -30,7 +30,11 @@ make setup-backends # download model weights and verify backends (required befor
 >
 > Host-side Docker usage should follow the existing wrappers in `Makefile` and `scripts/docker-proxy.sh` instead of ad-hoc `docker compose ...` commands. Those entry points preserve this repo's host/WSL environment propagation and compose interpolation contract.
 >
+> On Windows hosts, Docker may exist only inside WSL rather than on the native PATH. In this repo, that is expected: use `make ...` targets or `bash scripts/docker-proxy.sh ...`, which will fall back to WSL Docker automatically.
+>
 > If you need a direct Docker command, copy the calling pattern from `Makefile` or route it through `scripts/docker-proxy.sh` rather than inventing a new shell wrapper.
+>
+> Avoid treating `docker` missing from the host PATH as proof that Docker is unavailable in this project. Check `make docker-env` or run `bash scripts/docker-proxy.sh version` first.
 >
 > After changing `pyproject.toml`, run `uv lock` before `make build` — the build will fail otherwise.
 >

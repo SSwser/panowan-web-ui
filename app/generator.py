@@ -81,7 +81,7 @@ def resolve_inference_params(payload: dict) -> dict:
 def build_runner_payload(payload: dict) -> dict:
     job_id = str(payload.get("job_id") or payload.get("id") or uuid.uuid4())
     prompt = extract_prompt(payload)
-    negative_prompt = _require_field(payload, "negative_prompt")
+    negative_prompt = payload.get("negative_prompt", "")
     params = resolve_inference_params(payload)
     task = _resolve_task(payload)
     output_path = payload.get("output_path") or os.path.join(

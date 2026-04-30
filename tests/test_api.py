@@ -243,9 +243,12 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(job["payload"]["negative_prompt"], "rain")
         self.assertEqual(job["payload"]["task"], "t2v")
 
-    def test_generate_rejects_missing_negative_prompt(self) -> None:
+    def test_generate_defaults_missing_negative_prompt(self) -> None:
         response = self.client.post("/generate", json={"prompt": "mountains"})
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["negative_prompt"], "")
 
     def test_generate_persists_i2v_task_fields(self) -> None:
         response = self.client.post(
