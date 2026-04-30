@@ -51,6 +51,21 @@ class WeightsSpec:
 
 
 @dataclass(frozen=True)
+class ResidentProviderSpec:
+    enabled: bool = False
+    provider_key: str | None = None
+    entrypoint_module: str | None = None
+    load_attr: str | None = None
+    execute_attr: str | None = None
+    teardown_attr: str | None = None
+    identity_attr: str | None = None
+    failure_classifier_attr: str | None = None
+    startup_preload: bool = False
+    idle_evict_seconds: float | None = None
+    resource_class: str | None = None
+
+
+@dataclass(frozen=True)
 class BackendSpec:
     root: Path
     backend: BackendSection
@@ -60,6 +75,7 @@ class BackendSpec:
     runtime_inputs: RuntimeInputsSpec = field(default_factory=RuntimeInputsSpec)
     runtime: RuntimeSpec = field(default_factory=RuntimeSpec)
     weights: WeightsSpec = field(default_factory=WeightsSpec)
+    resident_provider: ResidentProviderSpec = field(default_factory=ResidentProviderSpec)
 
     # Backend specs in tests often only care about the acquisition/materialization
     # contract, so runtime input metadata should stay optional unless a test exercises it.
@@ -96,6 +112,16 @@ def load_backend_spec(path: Path) -> BackendSpec:
     if required_files is not None:
         weights_data["required_files"] = list(required_files)
 
+    resident_provider_data = dict(data.get("resident_provider", {}))
+    if "enabled" in resident_provider_data:
+        resident_provider_data["enabled"] = bool(resident_provider_data["enabled"])
+    if "startup_preload" in resident_provider_data:
+        resident_provider_data["startup_preload"] = bool(resident_provider_data["startup_preload"])
+    if resident_provider_data.get("idle_evict_seconds") is not None:
+        resident_provider_data["idle_evict_seconds"] = float(
+            resident_provider_data["idle_evict_seconds"]
+        )
+
     return BackendSpec(
         root=path.parent,
         backend=BackendSection(**data["backend"]),
@@ -108,4 +134,5 @@ def load_backend_spec(path: Path) -> BackendSpec:
         runtime_inputs=RuntimeInputsSpec(**runtime_inputs_data),
         runtime=RuntimeSpec(**runtime_data),
         weights=WeightsSpec(**weights_data),
+        resident_provider=ResidentProviderSpec(**resident_provider_data),
     )

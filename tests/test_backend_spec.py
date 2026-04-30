@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.backends.registry import discover
-from app.backends.spec import BackendSpec
+from app.backends.spec import BackendSpec, load_backend_spec
 from app.upscaler import _load_realesrgan_backend_spec
 
 
@@ -145,3 +145,111 @@ def test_upscaler_module_registers_realesrgan_backend_without_eager_assets() -> 
     assert backend.default_scale == 2
     assert backend.max_scale == 4
     assert callable(type(backend).assets.fget)
+
+
+def _write_minimal_backend_toml(backend_dir: Path, extra: str = "") -> Path:
+    toml_path = backend_dir / "backend.toml"
+    toml_path.write_text(
+        """
+[backend]
+name = "demo"
+display_name = "Demo"
+
+[source]
+type = "git"
+url = "https://example.invalid/demo.git"
+revision = "v1"
+
+[filter]
+include = []
+exclude = []
+
+[output]
+target = "vendor"
+""".strip()
+        + ("\n" + extra if extra else "")
+        + "\n",
+        encoding="utf-8",
+    )
+    return toml_path
+
+
+def test_resident_provider_defaults_when_absent(tmp_path: Path) -> None:
+    backend_dir = tmp_path / "demo"
+    backend_dir.mkdir()
+    toml_path = _write_minimal_backend_toml(backend_dir)
+
+    spec = load_backend_spec(toml_path)
+
+    assert spec.resident_provider.enabled is False
+    assert spec.resident_provider.provider_key is None
+    assert spec.resident_provider.entrypoint_module is None
+    assert spec.resident_provider.load_attr is None
+    assert spec.resident_provider.execute_attr is None
+    assert spec.resident_provider.teardown_attr is None
+    assert spec.resident_provider.identity_attr is None
+    assert spec.resident_provider.failure_classifier_attr is None
+    assert spec.resident_provider.startup_preload is False
+    assert spec.resident_provider.idle_evict_seconds is None
+    assert spec.resident_provider.resource_class is None
+
+
+def test_resident_provider_parsed_when_present(tmp_path: Path) -> None:
+    backend_dir = tmp_path / "demo"
+    backend_dir.mkdir()
+    toml_path = _write_minimal_backend_toml(
+        backend_dir,
+        extra="""
+[resident_provider]
+enabled = true
+provider_key = "demo"
+entrypoint_module = "sources.runtime_provider"
+load_attr = "load_resident_runtime"
+execute_attr = "run_job_inprocess"
+teardown_attr = "teardown_resident_runtime"
+identity_attr = "runtime_identity_from_job"
+failure_classifier_attr = "classify_runtime_failure"
+startup_preload = true
+idle_evict_seconds = 120.0
+resource_class = "gpu-small"
+""".strip(),
+    )
+
+    spec = load_backend_spec(toml_path)
+    rp = spec.resident_provider
+
+    assert rp.enabled is True
+    assert rp.provider_key == "demo"
+    assert rp.entrypoint_module == "sources.runtime_provider"
+    assert rp.load_attr == "load_resident_runtime"
+    assert rp.execute_attr == "run_job_inprocess"
+    assert rp.teardown_attr == "teardown_resident_runtime"
+    assert rp.identity_attr == "runtime_identity_from_job"
+    assert rp.failure_classifier_attr == "classify_runtime_failure"
+    assert rp.startup_preload is True
+    assert rp.idle_evict_seconds == 120.0
+    assert rp.resource_class == "gpu-small"
+
+
+def test_panowan_backend_declares_resident_provider() -> None:
+    spec = load_backend_spec(Path("third_party/PanoWan/backend.toml"))
+    rp = spec.resident_provider
+
+    assert rp.enabled is True
+    assert rp.provider_key == "panowan"
+    assert rp.entrypoint_module == "sources.runtime_provider"
+    assert rp.load_attr == "load_resident_runtime"
+    assert rp.execute_attr == "run_job_inprocess"
+    assert rp.teardown_attr == "teardown_resident_runtime"
+    assert rp.identity_attr == "runtime_identity_from_job"
+    assert rp.failure_classifier_attr == "classify_runtime_failure"
+    assert rp.startup_preload is False
+    assert rp.idle_evict_seconds == 600.0
+    assert rp.resource_class == "gpu-large"
+
+
+def test_realesrgan_backend_opts_out_of_resident_provider() -> None:
+    specs = discover(Path("third_party/Upscale"))
+    realesrgan = next(spec for spec in specs if spec.backend.name == "realesrgan")
+    assert realesrgan.resident_provider.enabled is False
+    assert realesrgan.resident_provider.provider_key is None
