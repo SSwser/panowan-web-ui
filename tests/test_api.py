@@ -128,8 +128,10 @@ class ApiTests(unittest.TestCase):
         snapshots = {record["job_id"]: api._job_event_snapshot(record)}
 
         api.get_job_backend().claim_next_job(worker_id="worker-1")
-        api.get_job_backend().complete_job(
+        api.get_job_backend().mark_running("job-1", "worker-1")
+        api.get_job_backend().mark_succeeded(
             "job-1",
+            "worker-1",
             os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
         )
 
@@ -139,8 +141,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(events[0]["event"], "job_updated")
         payload = json.loads(events[0]["data"])
         self.assertEqual(payload["job_id"], "job-1")
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(snapshots["job-1"]["status"], "completed")
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(snapshots["job-1"]["status"], "succeeded")
 
     def test_update_job_broadcasts_full_snapshot(self) -> None:
         record = api._create_job_record(
@@ -327,7 +329,7 @@ class ApiTests(unittest.TestCase):
                         },
                         "done-job": {
                             "job_id": "done-job",
-                            "status": "completed",
+                            "status": "succeeded",
                             "prompt": "finished",
                             "output_path": completed_output,
                             "created_at": "now",
@@ -350,7 +352,7 @@ class ApiTests(unittest.TestCase):
             queued_job["error"],
             "Service restarted before the job completed",
         )
-        self.assertEqual(done_job["status"], "completed")
+        self.assertEqual(done_job["status"], "succeeded")
 
     def test_root_returns_index_html(self) -> None:
         response = api.root()
@@ -364,7 +366,7 @@ class ApiTests(unittest.TestCase):
         backend.create_job(
             {
                 "job_id": "job-a",
-                "status": "completed",
+                "status": "succeeded",
                 "prompt": "first",
                 "output_path": "",
                 "created_at": "2026-01-01T00:00:00+00:00",
@@ -405,7 +407,7 @@ class ApiTests(unittest.TestCase):
         api._create_job_record(job_id, "test", temp_path, {})
         api._update_job(
             job_id,
-            status="completed",
+            status="succeeded",
             started_at="now",
             finished_at="now",
             output_path=temp_path,
@@ -434,7 +436,7 @@ class ApiTests(unittest.TestCase):
         )
         api._update_job(
             source_id,
-            status="completed",
+            status="succeeded",
             started_at="now",
             finished_at="now",
             output_path=output_path,
@@ -571,8 +573,8 @@ class ApiTests(unittest.TestCase):
         with unittest.mock.patch.object(api, "broadcast_job_event") as broadcast:
             result = api.cancel_job("q1", force=False)
 
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "Cancelled by user")
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["error"])
         broadcast.assert_called_once_with("job_updated", result)
 
     def test_cancel_running_without_force_returns_warning(self) -> None:
@@ -589,7 +591,7 @@ class ApiTests(unittest.TestCase):
 
     def test_cancel_completed_job_raises(self) -> None:
         api._create_job_record("c1", "", "/out.mp4", {})
-        api._update_job("c1", status="completed", finished_at="now")
+        api._update_job("c1", status="succeeded", finished_at="now")
 
         with self.assertRaises(HTTPException) as ctx:
             api.cancel_job("c1", force=False)
@@ -600,16 +602,17 @@ class ApiTests(unittest.TestCase):
             api.cancel_job("nonexistent", force=False)
         self.assertEqual(ctx.exception.status_code, 404)
 
-    def test_cancel_running_with_force_marks_failed(self) -> None:
-        # Subprocess termination now lives in the worker (Task 6). Force-cancel
-        # from the API just flips the status; the worker must observe and abort.
+    def test_cancel_running_with_force_marks_cancelling(self) -> None:
+        # ADR 0010: force-cancel from the API moves running -> cancelling so
+        # the worker can observe _should_cancel(), abort cooperatively, and
+        # write the terminal cancelled record itself.
         api._create_job_record("r2", "", "", {})
-        api._update_job("r2", status="running", started_at="now")
+        api._update_job("r2", status="running", started_at="now", worker_id="worker-x")
 
         result = api.cancel_job("r2", force=True)
 
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "Cancelled by user")
+        self.assertEqual(result["status"], "cancelling")
+        self.assertIsNone(result["error"])
 
     def test_upscale_and_cancel_queued_job(self) -> None:
         """End-to-end: create source job, upscale it, cancel the upscale."""
@@ -631,8 +634,8 @@ class ApiTests(unittest.TestCase):
 
         # Cancel the queued upscale job
         result = api.cancel_job(upscale_id, force=False)
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "Cancelled by user")
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["error"])
 
     def test_upscale_job_record_has_source_info(self) -> None:
         source_id = "src-2"

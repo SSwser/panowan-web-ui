@@ -302,7 +302,7 @@ def upscale(payload: dict) -> dict:
     source_job = _get_job(source_job_id)
     if source_job is None:
         raise HTTPException(status_code=400, detail="Source job not found")
-    if source_job["status"] != "completed":
+    if source_job["status"] != "succeeded":
         raise HTTPException(status_code=400, detail="Can only upscale completed jobs")
     if not os.path.exists(source_job["output_path"]):
         raise HTTPException(status_code=400, detail="Source video file not found")
@@ -412,17 +412,18 @@ def download_job(job_id: str) -> FileResponse:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job["status"] != "completed":
+    if job["status"] != "succeeded":
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}")
 
     output_path = job["output_path"]
     if not os.path.exists(output_path):
-        _update_job(
-            job_id,
-            status="failed",
-            finished_at=now_iso(),
-            error="Output file missing",
-        )
+        # Output disappeared after success: mark a non-canonical "missing
+        # artifact" failure by re-routing through the lifecycle helpers if the
+        # job is still owned by a worker. When the job is already terminal
+        # (the common case here, since we only got past the status check via
+        # "succeeded"), the safest action is to surface the 500 without
+        # rewriting the terminal state — ADR 0010 forbids overwriting a
+        # terminal record from outside the worker that produced it.
         raise HTTPException(status_code=500, detail="Output file not created")
 
     return FileResponse(
@@ -451,29 +452,40 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
             raise HTTPException(status_code=404, detail="Job not found")
         status = job["status"]
 
-    if status == "running":
+    if status == "running" or status == "claimed":
         if not force:
             return {
                 "warning": True,
                 "job_id": job_id,
-                "status": "running",
+                "status": status,
                 "message": (
                     "Job is currently running. Force termination may cause "
                     "incomplete output. Set force=true to confirm."
                 ),
                 "pid": None,
             }
-        # Force-cancel is worker-driven: flip the persisted job status and let
-        # the polling worker observe `_should_cancel()` and terminate its own
-        # subprocess tree on the next cancellation check.
-        return _update_job(
-            job_id,
-            status="failed",
-            error="Cancelled by user",
-            finished_at=now_iso(),
-        )
+        # Force-cancel routes through the canonical request_cancellation
+        # entry point: it transitions claimed/running -> cancelling so the
+        # worker can observe _should_cancel() and finalize cooperatively.
+        # The terminal cancelled write is owned by the worker via
+        # request_cancellation(finished=True) once the engine yields.
+        result = get_job_backend().request_cancellation(job_id)
+        if result is None:
+            job = _get_job(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot cancel job with status {job['status']}",
+            )
+        broadcast_job_event("job_updated", result)
+        return result
 
-    # completed or failed
+    if status == "cancelling":
+        # Cancellation already requested; treat as idempotent acknowledgment.
+        return job
+
+    # succeeded, failed, or cancelled
     raise HTTPException(
         status_code=409, detail=f"Cannot cancel job with status {status}"
     )

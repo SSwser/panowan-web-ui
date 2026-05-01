@@ -72,22 +72,22 @@ def _resolve_engine(registry: EngineRegistry, job: dict):
     return registry.get(engine_name)
 
 
-def _worker_still_owns_job(
+def _should_cancel_job(
     backend: LocalJobBackend, job_id: str, worker_id: str
 ) -> bool:
-    """True while ``worker_id`` still holds an active in-flight lease.
+    """True when the engine should bail out of its current run.
 
-    The check spans ``claimed``, ``running``, and ``cancelling`` because all
-    three are legal worker-owned states under ADR 0010, and the worker must
-    treat the cooperative ``cancelling`` window as ongoing ownership rather
-    than as a release.
+    Engines must stop work either when cancellation has been requested
+    (status ``cancelling``) or when this worker no longer owns the job at
+    all (lease lost / job vanished). Both signal that any further engine
+    output cannot legally land in a non-cancelled terminal state.
     """
     current = backend.get_job(job_id)
-    return bool(
-        current is not None
-        and current.get("worker_id") == worker_id
-        and current.get("status") in {"claimed", "running", "cancelling"}
-    )
+    if current is None:
+        return True
+    if current.get("worker_id") != worker_id:
+        return True
+    return current.get("status") not in {"claimed", "running"}
 
 
 def publish_worker_state(
@@ -177,7 +177,7 @@ def run_one_job(
 
     job = {
         **job,
-        "_should_cancel": lambda: not _worker_still_owns_job(
+        "_should_cancel": lambda: _should_cancel_job(
             backend, job_id, worker_id
         ),
     }
