@@ -72,7 +72,7 @@ class SettingsTests(unittest.TestCase):
             lora_checkpoint_path("/workspace/models"),
         )
 
-    def test_load_settings_uses_runtime_root_override_but_ignores_leaf_path_overrides(self) -> None:
+    def test_load_settings_uses_runtime_root_override_but_ignores_leaf(self) -> None:
         env = {
             "SERVICE_ROLE": "worker",
             "MODEL_ROOT": "/models-x",
@@ -172,6 +172,16 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(loaded.worker_poll_interval_seconds, 1.5)
         self.assertEqual(loaded.worker_stale_seconds, 45.0)
 
+    def test_load_settings_reads_panowan_runtime_controls(self) -> None:
+        env = {
+            "PANOWAN_STARTUP_PRELOAD": "1",
+            "PANOWAN_IDLE_EVICT_SECONDS": "300",
+        }
+        with patch.dict(os.environ, env):
+            loaded = load_settings()
+        self.assertTrue(loaded.panowan_startup_preload)
+        self.assertEqual(loaded.panowan_idle_evict_seconds, 300.0)
+
     def test_container_path_join_uses_posix_separators(self):
         from app.paths import container_join
 
@@ -184,3 +194,15 @@ class SettingsTests(unittest.TestCase):
         from app.paths import container_join
 
         self.assertEqual(container_join("/", "models/foo"), "/models/foo")
+
+
+class PanoWanRunnerScratchPathTests(unittest.TestCase):
+    def test_default_runner_job_dir_lives_under_runtime_root(self) -> None:
+        loaded = load_settings()
+        expected_suffix = os.path.join("runtime", "panowan-runner")
+        self.assertTrue(loaded.panowan_runner_job_dir.endswith(expected_suffix))
+
+    def test_runner_job_dir_can_be_overridden_via_env(self) -> None:
+        with patch.dict(os.environ, {"PANOWAN_RUNNER_JOB_DIR": "/custom/scratch"}):
+            loaded = load_settings()
+        self.assertEqual(loaded.panowan_runner_job_dir, "/custom/scratch")

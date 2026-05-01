@@ -109,6 +109,9 @@ def ensure_backend(spec: BackendSpec, *, force: bool = False) -> str:
             if path.is_file()
         ]
         filtered = filter_paths(all_files, spec.filter.include, spec.filter.exclude)
+        # Vendor materialization should copy runtime inputs and upstream source,
+        # not VCS internals that can later block Windows cleanup/rebuild flows.
+        filtered = [path for path in filtered if path != ".git" and not path.startswith(".git/")]
         materialize_backend(spec, source_root, filtered)
         return "rebuilt"
     finally:

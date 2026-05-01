@@ -7,6 +7,7 @@ from .paths import (
     lora_checkpoint_path,
     model_root_path,
     output_dir_path,
+    panowan_runner_dir_path,
     repo_root_from,
     wan_diffusion_path,
     wan_t5_path,
@@ -19,7 +20,7 @@ def _in_container() -> bool:
     if os.path.isfile("/.dockerenv"):
         return True
     try:
-        with open("/proc/1/cgroup", "r", encoding="utf-8") as handle:
+        with open("/proc/1/cgroup", encoding="utf-8") as handle:
             return "docker" in handle.read()
     except OSError:
         pass
@@ -41,6 +42,7 @@ class Settings:
     output_dir: str
     job_store_path: str
     worker_store_path: str
+    panowan_runner_job_dir: str
     default_prompt: str
     generation_timeout_seconds: int
     default_num_inference_steps: int
@@ -55,6 +57,8 @@ class Settings:
     port: int
     worker_poll_interval_seconds: float
     worker_stale_seconds: float
+    panowan_startup_preload: bool = False
+    panowan_idle_evict_seconds: float = 600.0
 
     @property
     def wan_model_absolute_path(self) -> str:
@@ -92,6 +96,10 @@ def load_settings() -> Settings:
         output_dir=output_dir,
         job_store_path=job_store_path(runtime_dir),
         worker_store_path=worker_store_path(runtime_dir),
+        panowan_runner_job_dir=os.getenv(
+            "PANOWAN_RUNNER_JOB_DIR",
+            panowan_runner_dir_path(runtime_dir),
+        ),
         default_prompt=os.getenv(
             "DEFAULT_PROMPT", "A beautiful mountain landscape at sunset"
         ),
@@ -113,6 +121,10 @@ def load_settings() -> Settings:
             os.getenv("WORKER_POLL_INTERVAL_SECONDS", "2")
         ),
         worker_stale_seconds=float(os.getenv("WORKER_STALE_SECONDS", "60")),
+        panowan_startup_preload=os.getenv("PANOWAN_STARTUP_PRELOAD", "0") == "1",
+        panowan_idle_evict_seconds=float(
+            os.getenv("PANOWAN_IDLE_EVICT_SECONDS", "600")
+        ),
     )
 
 

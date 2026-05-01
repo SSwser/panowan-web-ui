@@ -1,5 +1,5 @@
 from .model_spec import ModelSpec
-from .providers import HuggingFaceProvider, HttpProvider, SubmoduleProvider
+from .providers import HttpProvider, HuggingFaceProvider, SubmoduleProvider
 
 
 class ModelManager:

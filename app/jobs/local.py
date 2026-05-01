@@ -11,9 +11,9 @@ Concurrency model:
 import copy
 import json
 import os
-import time
 import threading
-from datetime import datetime, timezone
+import time
+from datetime import UTC, datetime
 from typing import Any
 
 if os.name == "nt":
@@ -23,7 +23,7 @@ else:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _env_flag(name: str) -> bool:
@@ -245,7 +245,7 @@ class LocalJobBackend:
         if not os.path.exists(self.job_store_path):
             self._jobs = {}
             return
-        with open(self.job_store_path, "r", encoding="utf-8") as handle:
+        with open(self.job_store_path, encoding="utf-8") as handle:
             payload = json.load(handle)
         raw_jobs = payload.get("jobs", payload)
         if not isinstance(raw_jobs, dict):

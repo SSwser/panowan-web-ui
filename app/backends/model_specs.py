@@ -34,6 +34,7 @@ def load_model_specs(settings: Settings) -> list[ModelSpec]:
             files=[
                 FileCheck(path="diffusion_pytorch_model.safetensors"),
                 FileCheck(path="models_t5_umt5-xxl-enc-bf16.pth"),
+                FileCheck(path="Wan2.1_VAE.pth"),
             ],
         ),
         ModelSpec(

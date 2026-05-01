@@ -1,0 +1,72 @@
+[backend]
+name = "panowan"
+display_name = "PanoWan"
+
+[source]
+type = "git"
+url = "https://github.com/SSwser/PanoWan.git"
+revision = "main"
+
+[filter]
+include = []
+exclude = []
+
+[output]
+target = "vendor"
+# Keep a sentinel from the upstream source tree in the verification contract so
+# `make setup-backends` self-heals older runtime-only vendor directories.
+expected_files = ["src/diffsynth", "runtime_adapter.py", "runtime_provider.py"]
+
+[runtime_inputs]
+root = "sources"
+# Resident runtime imports upstream diffsynth modules from vendor/src, so the
+# backend install contract must preserve the upstream tree and then overlay the
+# project-owned runtime entrypoints on top.
+authoritative = false
+files = ["runtime_adapter.py", "runtime_provider.py"]
+
+[runtime]
+required_commands = ["python"]
+# Resident execution imports upstream diffsynth modules directly from vendor/src,
+# so this list must cover both the obvious model stack and transitive modules
+# pulled in by package-level imports on the real t2v execution path.
+# The final mp4 artifact is written through imageio, so the runtime contract must
+# also require its ffmpeg plugin instead of assuming the system ffmpeg binary is enough.
+required_python_modules = [
+    "torch",
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "pandas",
+    "einops",
+    "PIL",
+    "tqdm",
+    "imageio",
+    "imageio_ffmpeg",
+    "ftfy",
+    "regex",
+    "torchvision",
+    "modelscope",
+]
+
+[weights]
+family = "PanoWan"
+required_files = [
+    "Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors",
+    "Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth",
+    "Wan-AI/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth",
+    "PanoWan/latest-lora.ckpt",
+]
+
+[resident_provider]
+enabled = true
+provider_key = "panowan"
+entrypoint_module = "sources.runtime_provider"
+load_attr = "load_resident_runtime"
+execute_attr = "run_job_inprocess"
+teardown_attr = "teardown_resident_runtime"
+identity_attr = "runtime_identity_from_job"
+failure_classifier_attr = "classify_runtime_failure"
+startup_preload = false
+idle_evict_seconds = 600.0
+resource_class = "gpu-large"

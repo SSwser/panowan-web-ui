@@ -1,13 +1,12 @@
-from dataclasses import replace
 import importlib.util
 import json
 import logging
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest import mock
 from unittest.mock import patch
-
 
 FASTAPI_AVAILABLE = importlib.util.find_spec("fastapi") is not None
 
@@ -15,9 +14,9 @@ if FASTAPI_AVAILABLE:
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
     from fastapi.testclient import TestClient
+
     from app import api
     from app.jobs import LocalWorkerRegistry
-    from app.upscaler import UPSCALE_BACKENDS
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
@@ -64,7 +63,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(
             result,
             {
-                "status": "starting",
+                "status": "ready",
                 "service_started": True,
                 "model_ready": False,
                 "panowan_engine_dir_exists": True,
@@ -82,6 +81,24 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(result["model_ready"])
         self.assertTrue(result["wan_model_exists"])
         self.assertTrue(result["lora_exists"])
+
+    def test_healthcheck_stays_ready_for_split_api_topology(self) -> None:
+        path_exists = {
+            api.settings.panowan_engine_dir: False,
+            api.settings.wan_diffusion_absolute_path: False,
+            api.settings.wan_t5_absolute_path: False,
+            api.settings.lora_absolute_path: False,
+        }
+
+        with patch("app.api.os.path.exists", side_effect=path_exists.get):
+            result = api.healthcheck()
+
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["service_started"])
+        self.assertFalse(result["model_ready"])
+        self.assertFalse(result["panowan_engine_dir_exists"])
+        self.assertFalse(result["wan_model_exists"])
+        self.assertFalse(result["lora_exists"])
 
     def test_access_log_filter_is_registered_once(self) -> None:
         logger = logging.getLogger("uvicorn.access")
@@ -175,7 +192,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(snapshots, {})
 
     def test_generate_returns_queued_job_metadata(self) -> None:
-        response = api.generate({"prompt": "test"})
+        response = api.generate({"prompt": "test", "negative_prompt": "bad"})
 
         self.assertEqual(response["status"], "queued")
         self.assertIn("job_id", response)
@@ -184,7 +201,7 @@ class ApiTests(unittest.TestCase):
             response["download_url"], f"/jobs/{response['job_id']}/download"
         )
 
-        with open(api.settings.job_store_path, "r", encoding="utf-8") as handle:
+        with open(api.settings.job_store_path, encoding="utf-8") as handle:
             persisted = json.load(handle)
 
         self.assertEqual(
@@ -222,12 +239,67 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(record["status"], "queued")
 
     def test_generate_endpoint_only_queues_job(self) -> None:
-        response = self.client.post("/generate", json={"prompt": "sky"})
+        response = self.client.post(
+            "/generate",
+            json={"prompt": "sky", "negative_prompt": "clouds"},
+        )
 
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(payload["status"], "queued")
         job = self.client.get(f"/jobs/{payload['job_id']}").json()
+        self.assertEqual(job["status"], "queued")
+
+    def test_generate_persists_negative_prompt_in_queued_job(self) -> None:
+        response = self.client.post(
+            "/generate",
+            json={"prompt": "mountains", "negative_prompt": "rain"},
+        )
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["negative_prompt"], "rain")
+        self.assertEqual(job["payload"]["task"], "t2v")
+
+    def test_generate_defaults_missing_negative_prompt(self) -> None:
+        response = self.client.post("/generate", json={"prompt": "mountains"})
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["negative_prompt"], "")
+
+    def test_generate_persists_i2v_task_fields(self) -> None:
+        response = self.client.post(
+            "/generate",
+            json={
+                "prompt": "pan right",
+                "negative_prompt": "blur",
+                "task": "i2v",
+                "input_image_path": "/tmp/frame.png",
+                "denoising_strength": 0.7,
+            },
+        )
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["task"], "i2v")
+        self.assertEqual(job["payload"]["input_image_path"], "/tmp/frame.png")
+
+    def test_generate_preserves_i2v_for_future_worker_support(self) -> None:
+        response = self.client.post(
+            "/generate",
+            json={
+                "prompt": "pan right",
+                "task": "i2v",
+                "input_image_path": "/tmp/frame.png",
+                "denoising_strength": 0.7,
+            },
+        )
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["task"], "i2v")
+        self.assertEqual(job["payload"]["denoising_strength"], 0.7)
         self.assertEqual(job["status"], "queued")
 
     def test_restore_jobs_marks_running_job_failed_after_restart(self) -> None:
@@ -476,7 +548,9 @@ class ApiTests(unittest.TestCase):
                 )
 
         self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("does not support target_width/target_height", ctx.exception.detail)
+        self.assertIn(
+            "does not support target_width/target_height", ctx.exception.detail
+        )
 
     def test_upscale_rejects_missing_source_job(self) -> None:
         with self.assertRaises(HTTPException) as ctx:

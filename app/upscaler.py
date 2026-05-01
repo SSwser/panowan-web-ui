@@ -4,9 +4,10 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.backends.registry import discover
 from app.backends.verify import expected_backend_files

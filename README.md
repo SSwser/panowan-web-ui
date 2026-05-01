@@ -187,12 +187,13 @@ make up
 开发模式（源码挂载 + dev 镜像）：
 
 ```bash
+make setup-backends
 make build DEV=1
 make up DEV=1
 make logs DEV=1
 ```
 
-开发 override 通过 `docker-compose-dev.yml` 注入，仅作为开发便利层，不改变默认产品拓扑。
+开发 override 通过 `docker-compose-dev.yml` 注入，仅作为开发便利层，不改变默认产品拓扑。DEV 启动不再编排一次性 `model-setup` 容器；后端源码树、模型权重与运行时校验统一由宿主机侧 `make setup-backends` 负责准备。
 
 ### 5. 验证健康状态
 

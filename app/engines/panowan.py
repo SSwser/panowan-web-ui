@@ -1,7 +1,7 @@
-import os
+from typing import Mapping
 
-from app.generator import generate_video
-from app.settings import settings
+from app.generator import build_runner_payload
+from app.runtime_host import ResidentRuntimeHost
 
 from .base import EngineResult
 
@@ -9,24 +9,41 @@ from .base import EngineResult
 class PanoWanEngine:
     name = "panowan"
     capabilities = ("t2v", "i2v")
+    provider_key = "panowan"
+    i2v_not_implemented_message = (
+        "task='i2v' is reserved in the runner contract but is not implemented yet"
+    )
+
+    def __init__(self, host: ResidentRuntimeHost) -> None:
+        self._host = host
 
     def validate_runtime(self) -> None:
-        missing = []
-        for path in (
-            settings.panowan_engine_dir,
-            settings.wan_diffusion_absolute_path,
-            settings.wan_t5_absolute_path,
-            settings.lora_absolute_path,
-        ):
-            if not os.path.exists(path):
-                missing.append(path)
-        if missing:
-            joined = "\n".join(f"- {path}" for path in missing)
-            raise FileNotFoundError(
-                "PanoWan runtime assets are missing. Run `make setup-backends` first:\n"
-                f"{joined}"
-            )
+        # Engine no longer probes runtime files itself. Provider readiness is
+        # the host's concern at preload time. Keep the method on the Protocol
+        # surface but make it a no-op — runtime-availability errors will surface
+        # the first time the host is asked to load the provider.
+        return None
 
-    def run(self, job: dict) -> EngineResult:
-        result = generate_video(job)
+    def run(self, job: Mapping[str, object]) -> EngineResult:
+        # Worker passes the full job record (status, params, payload, …);
+        # build_runner_payload expects the API-originated payload dict.
+        raw = dict(job)
+        api_payload = raw.get("payload")
+        if isinstance(api_payload, dict):
+            # Carry job-level fields that build_runner_payload also reads.
+            api_payload = {
+                "id": raw.get("id") or raw.get("job_id"),
+                "output_path": raw.get("output_path"),
+                **api_payload,
+            }
+        else:
+            api_payload = raw
+        task = api_payload.get("task") or api_payload.get("mode") or "t2v"
+        # Keep i2v visible in the public contract so the API/worker boundary is
+        # already shaped for the upcoming implementation, but fail here with a
+        # stable error instead of letting the request reach deeper runtime code.
+        if task == "i2v":
+            raise NotImplementedError(self.i2v_not_implemented_message)
+        runner_payload = build_runner_payload(api_payload)
+        result = self._host.run_job(self.provider_key, runner_payload)
         return EngineResult(output_path=result["output_path"], metadata={})

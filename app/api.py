@@ -9,12 +9,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from .sse import broadcast_job_event, subscribe, unsubscribe
-
 from .generator import extract_prompt, resolve_inference_params
-from .upscaler import UPSCALE_BACKENDS
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
 from .settings import settings
+from .sse import broadcast_job_event, subscribe, unsubscribe
+from .upscaler import UPSCALE_BACKENDS
 
 
 @asynccontextmanager
@@ -253,9 +252,13 @@ def healthcheck() -> dict:
     ) and os.path.exists(settings.wan_t5_absolute_path)
     lora_exists = os.path.exists(settings.lora_absolute_path)
     model_ready = wan_model_ready and lora_exists
+    # In the split topology the API container is intentionally CPU-only and does
+    # not mount worker-only engine/model trees, so API readiness cannot depend on
+    # local asset visibility without keeping /health stuck on "starting" forever.
+    status = "ready" if settings.service_title and os.getenv("SERVICE_ROLE", "api") == "api" else ("ready" if model_ready else "starting")
 
     return {
-        "status": "ready" if model_ready else "starting",
+        "status": status,
         "service_started": True,
         "model_ready": model_ready,
         "panowan_engine_dir_exists": panowan_engine_dir_exists,
@@ -266,11 +269,17 @@ def healthcheck() -> dict:
 
 @app.post("/generate", status_code=202)
 def generate(payload: dict) -> dict:
+    if "negative_prompt" not in payload:
+        payload["negative_prompt"] = ""
+    task = payload.get("task") or payload.get("mode") or "t2v"
+    if task not in {"t2v", "i2v"}:
+        raise HTTPException(status_code=422, detail="task must be 't2v' or 'i2v'")
     job_id = str(payload.get("id") or uuid.uuid4())
     prompt = extract_prompt(payload)
     output_path = os.path.join(settings.output_dir, f"output_{job_id}.mp4")
     job_payload = dict(payload)
     job_payload["id"] = job_id
+    job_payload["task"] = task
     params = resolve_inference_params(job_payload)
     record = _create_job_record(
         job_id, prompt, output_path, params, payload=job_payload
@@ -370,7 +379,7 @@ async def job_events(request: Request) -> Any:
                             known_jobs[job_id] = _job_event_snapshot(payload)
 
                     yield event
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     known_jobs, store_events = _collect_job_store_events(known_jobs)
                     if store_events:
                         for event in store_events:

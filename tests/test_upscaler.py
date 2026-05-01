@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 from app.upscaler import (
     UPSCALE_BACKENDS,
     RealBasicVSRBackend,
-    UpscaleCancelledError,
     RealESRGANBackend,
     SeedVR2Backend,
+    UpscaleCancelledError,
     get_available_upscale_backends,
     upscale_video,
 )

@@ -3,7 +3,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 if os.name == "nt":
@@ -13,7 +13,7 @@ else:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def parse_iso(value: str) -> datetime | None:
@@ -43,7 +43,7 @@ class LocalWorkerRegistry:
             workers = [copy.deepcopy(worker) for worker in self._workers.values()]
         if stale_seconds is None:
             return workers
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return [
             worker
             for worker in workers
@@ -84,7 +84,7 @@ class LocalWorkerRegistry:
         if not os.path.isfile(self.worker_store_path):
             self._workers = {}
             return
-        with open(self.worker_store_path, "r", encoding="utf-8") as handle:
+        with open(self.worker_store_path, encoding="utf-8") as handle:
             payload = json.load(handle)
         raw_workers = payload.get("workers", payload)
         if not isinstance(raw_workers, dict):

@@ -1,6 +1,6 @@
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 
 from .spec import BackendSpec
 
@@ -25,14 +25,6 @@ def acquire_backend_source(spec: BackendSpec) -> tempfile.TemporaryDirectory[str
         capture_output=True,
         text=True,
     )
-    subprocess.run(
-        ["git", "sparse-checkout", "init", "--cone"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
     top_level = sorted(
         {
             pattern.split("/", 1)[0]
@@ -41,6 +33,15 @@ def acquire_backend_source(spec: BackendSpec) -> tempfile.TemporaryDirectory[str
         }
     )
     if top_level:
+        # Empty include means "materialize the whole checkout"; enabling sparse
+        # mode without any paths would collapse the backend tree to top-level files.
+        subprocess.run(
+            ["git", "sparse-checkout", "init", "--cone"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         subprocess.run(
             ["git", "sparse-checkout", "set", *top_level],
             cwd=root,

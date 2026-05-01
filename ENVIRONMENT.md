@@ -39,6 +39,7 @@ make docker-env
 make up
 
 # 开发模式（dev）
+make setup-backends
 make up DEV=1
 
 # Docker Desktop context（prod/dev）
@@ -62,6 +63,8 @@ make doctor
 - `panowan-uv-cache:/root/.cache/uv`
 
 该 volume 使用固定名称 `panowan-uv-cache`（可通过 `UV_CACHE_VOLUME_NAME` 覆盖），因此不同 worktree 跑 `make up DEV=1` 时，会复用同一份 uv 下载缓存，避免重复下载大体积 wheel（例如 `flash-attn`）。
+
+开发模式不再通过 compose 编排一次性 `model-setup` 容器；后端源码树、模型权重与运行时预检查统一由宿主机侧 `make setup-backends` 负责。
 
 `make up DEV=1` 会在启动前自动执行 `docker volume create $(UV_CACHE_VOLUME_NAME)`，确保 external volume 存在。
 

@@ -23,7 +23,7 @@ fail() { echo "  $FAIL $*"; ISSUES=$((ISSUES + 1)); }
 warn() { echo "  $WARN $*"; WARNINGS=$((WARNINGS + 1)); }
 
 docker_gpu_access_ok() {
-  docker run --rm --gpus all --entrypoint nvidia-smi \
+  bash "${REPO_ROOT}/scripts/docker-proxy.sh" run --rm --gpus all --entrypoint nvidia-smi \
     nvidia/cuda:12.2.0-base-ubuntu22.04 \
     --query-gpu=name --format=csv,noheader &>/dev/null 2>&1
 }
@@ -121,22 +121,22 @@ echo "$SECTION"
 echo ""
 echo "[1/5] Docker"
 
-if command -v docker &>/dev/null; then
-  ok "Docker CLI 已安装: $(docker --version)"
+if bash "${REPO_ROOT}/scripts/docker-proxy.sh" version >/dev/null 2>&1; then
+  ok "Docker CLI 可通过 scripts/docker-proxy.sh 使用"
 else
-  fail "Docker 未找到 — 请安装 Docker Desktop 或 Docker Engine"
+  fail "Docker 不可用 — 请确认 Docker Desktop/Engine 已启动，且 WSL 中可通过 scripts/docker-proxy.sh 访问"
 fi
 
-if docker info &>/dev/null 2>&1; then
+if bash "${REPO_ROOT}/scripts/docker-proxy.sh" info &>/dev/null 2>&1; then
   ok "Docker Daemon 正在运行"
 else
-  fail "Docker Daemon 未响应 — 请确保 Docker 已启动"
+  fail "Docker Daemon 未响应 — 请确保 Docker 已启动且 WSL Docker 可访问"
 fi
 
-if docker compose version &>/dev/null 2>&1; then
-  ok "Docker Compose 已安装: $(docker compose version --short 2>/dev/null || docker compose version)"
+if bash "${REPO_ROOT}/scripts/docker-proxy.sh" compose version &>/dev/null 2>&1; then
+  ok "Docker Compose 可通过 scripts/docker-proxy.sh 使用"
 else
-  fail "Docker Compose 插件未安装"
+  fail "Docker Compose 插件未安装或不可用"
 fi
 
 # ── 2. NVIDIA / CUDA ────────────────────────────────────────────────────────

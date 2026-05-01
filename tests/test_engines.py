@@ -5,12 +5,32 @@ from app.engines.base import EngineResult
 from app.engines.panowan import PanoWanEngine
 from app.engines.registry import EngineRegistry
 from app.engines.upscale import UpscaleEngine
+from app.runtime_host import ResidentRuntimeHost
 from app.settings import settings
+
+
+class _FakeHost:
+    """Minimal stand-in for ResidentRuntimeHost used in engine-level tests."""
+
+    def __init__(self, run_result=None):
+        self.run_calls = []
+        self._run_result = run_result or {
+            "status": "ok",
+            "output_path": "/tmp/o.mp4",
+        }
+
+    def run_job(self, provider_key, job):
+        self.run_calls.append((provider_key, dict(job)))
+        return self._run_result
+
+
+def _make_engine(host=None) -> PanoWanEngine:
+    return PanoWanEngine(host or _FakeHost())
 
 
 class EngineRegistryTests(unittest.TestCase):
     def test_register_and_get_engine(self):
-        engine = PanoWanEngine()
+        engine = _make_engine()
         registry = EngineRegistry()
         registry.register(engine)
 
@@ -23,7 +43,7 @@ class EngineRegistryTests(unittest.TestCase):
             registry.get("missing")
 
     def test_register_duplicate_engine_raises_value_error(self):
-        engine = PanoWanEngine()
+        engine = _make_engine()
         registry = EngineRegistry()
         registry.register(engine)
 
@@ -31,7 +51,7 @@ class EngineRegistryTests(unittest.TestCase):
             registry.register(engine)
 
     def test_all_returns_registered_engines(self):
-        engine = PanoWanEngine()
+        engine = _make_engine()
         registry = EngineRegistry()
         registry.register(engine)
 
@@ -49,22 +69,33 @@ class EngineResultTests(unittest.TestCase):
 
 
 class PanoWanEngineTests(unittest.TestCase):
-    @mock.patch("app.engines.panowan.generate_video")
-    def test_run_generate_delegates_to_generator(self, generate_video):
-        generate_video.return_value = {
-            "output_path": "/app/runtime/outputs/output_job-1.mp4"
-        }
-        engine = PanoWanEngine()
+    def test_validate_runtime_is_noop(self) -> None:
+        # Engine no longer probes runtime files; runtime errors surface from
+        # the host on first load, not from validate_runtime().
+        engine = _make_engine()
+        # Must not raise even when no real runtime assets exist.
+        self.assertIsNone(engine.validate_runtime())
 
-        result = engine.run({"job_id": "job-1", "type": "generate", "prompt": "sky"})
+    def test_engine_run_delegates_to_host(self):
+        host = _FakeHost(run_result={"status": "ok", "output_path": "/tmp/o.mp4"})
+        engine = PanoWanEngine(host)
 
-        self.assertEqual(
-            result,
-            EngineResult(
-                output_path="/app/runtime/outputs/output_job-1.mp4", metadata={}
-            ),
-        )
-        generate_video.assert_called_once()
+        with mock.patch("app.engines.panowan.build_runner_payload") as mock_payload:
+            payload = {
+                "version": "v1",
+                "task": "t2v",
+                "prompt": "sky",
+                "negative_prompt": "blur",
+                "output_path": "/tmp/o.mp4",
+                "resolution": {"width": 896, "height": 448},
+                "num_frames": 81,
+            }
+            mock_payload.return_value = payload
+            result = engine.run({"prompt": "sky", "negative_prompt": "blur"})
+
+        self.assertEqual(host.run_calls, [("panowan", payload)])
+        self.assertEqual(result.output_path, "/tmp/o.mp4")
+        self.assertEqual(result.metadata, {})
 
 
 class UpscaleEngineTests(unittest.TestCase):
@@ -109,7 +140,10 @@ class UpscaleEngineTests(unittest.TestCase):
             "scale": 2,
         }
         engine = UpscaleEngine()
-        cancel_probe = lambda: False
+
+        def cancel_probe() -> bool:
+            return False
+
         result = engine.run(
             {
                 "source_output_path": "/app/runtime/outputs/output_src.mp4",
@@ -148,6 +182,18 @@ class UpscaleEngineTests(unittest.TestCase):
 
 class PanoWanEngineCapabilitiesTests(unittest.TestCase):
     def test_panowan_engine_does_not_have_upscale_capability(self) -> None:
-        engine = PanoWanEngine()
+        engine = _make_engine()
         self.assertNotIn("upscale", engine.capabilities)
         self.assertEqual(engine.capabilities, ("t2v", "i2v"))
+
+
+class PanoWanEngineConstructorTests(unittest.TestCase):
+    def test_engine_accepts_real_resident_host(self) -> None:
+        # Construction with a real (empty) host must work without raising.
+        host = ResidentRuntimeHost()
+        engine = PanoWanEngine(host)
+        self.assertIs(engine._host, host)
+
+
+if __name__ == "__main__":
+    unittest.main()
