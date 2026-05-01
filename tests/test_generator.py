@@ -123,6 +123,49 @@ class BuildRunnerPayloadTests(unittest.TestCase):
         payload = build_runner_payload({"id": "job-1", "prompt": "test"})
         self.assertEqual(payload["negative_prompt"], "")
 
+    def test_build_runner_payload_requires_i2v_denoising_strength(self) -> None:
+        with self.assertRaisesRegex(ValueError, "denoising_strength is required"):
+            build_runner_payload(
+                {
+                    "id": "job-i2v",
+                    "task": "i2v",
+                    "prompt": "pan right",
+                    "input_image_path": "/tmp/frame0.png",
+                }
+            )
+
+    def test_build_runner_payload_rejects_non_numeric_i2v_denoising_strength(self) -> None:
+        with self.assertRaisesRegex(ValueError, "denoising_strength must be a number"):
+            build_runner_payload(
+                {
+                    "id": "job-i2v",
+                    "task": "i2v",
+                    "prompt": "pan right",
+                    "input_image_path": "/tmp/frame0.png",
+                    "denoising_strength": "0.7",
+                }
+            )
+
+    def test_build_runner_payload_keeps_i2v_shape_for_future_runtime_support(self) -> None:
+        payload = build_runner_payload(
+            {
+                "id": "job-i2v",
+                "task": "i2v",
+                "prompt": "pan right",
+                "negative_prompt": "blur",
+                "input_image_path": "/tmp/frame0.png",
+                "denoising_strength": 0.7,
+                "output_path": os.path.join(settings.output_dir, "output_job-i2v.mp4"),
+            }
+        )
+        self.assertEqual(payload["task"], "i2v")
+        self.assertEqual(payload["input_image_path"], "/tmp/frame0.png")
+        self.assertEqual(payload["denoising_strength"], 0.7)
+        self.assertEqual(payload["prompt"], "pan right")
+        self.assertEqual(payload["negative_prompt"], "blur")
+        self.assertIn("resolution", payload)
+        self.assertIn("num_frames", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,9 @@ class PanoWanEngine:
     name = "panowan"
     capabilities = ("t2v", "i2v")
     provider_key = "panowan"
+    i2v_not_implemented_message = (
+        "task='i2v' is reserved in the runner contract but is not implemented yet"
+    )
 
     def __init__(self, host: ResidentRuntimeHost) -> None:
         self._host = host
@@ -35,6 +38,12 @@ class PanoWanEngine:
             }
         else:
             api_payload = raw
+        task = api_payload.get("task") or api_payload.get("mode") or "t2v"
+        # Keep i2v visible in the public contract so the API/worker boundary is
+        # already shaped for the upcoming implementation, but fail here with a
+        # stable error instead of letting the request reach deeper runtime code.
+        if task == "i2v":
+            raise NotImplementedError(self.i2v_not_implemented_message)
         runner_payload = build_runner_payload(api_payload)
         result = self._host.run_job(self.provider_key, runner_payload)
         return EngineResult(output_path=result["output_path"], metadata={})

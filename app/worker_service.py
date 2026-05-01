@@ -55,7 +55,11 @@ def build_host() -> ResidentRuntimeHost:
 
 def build_registry(host: ResidentRuntimeHost) -> EngineRegistry:
     registry = EngineRegistry()
-    registry.register(PanoWanEngine(host))
+    # Worker capability telemetry must reflect executable reality. When the
+    # resident provider is absent, registering PanoWan would advertise generate
+    # support even though the first job would fail at dispatch time.
+    if host.has_provider("panowan"):
+        registry.register(PanoWanEngine(host))
     registry.register(UpscaleEngine())
     return registry
 

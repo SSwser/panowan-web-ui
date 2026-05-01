@@ -13,6 +13,7 @@ from app.worker_service import (
     _resident_runtime_status,
     _startup_preload,
     build_host,
+    build_registry,
     publish_worker_state,
     run_one_job,
 )
@@ -310,35 +311,70 @@ class WorkerServiceTests(unittest.TestCase):
 
 
 class MultiEngineRegistryTests(unittest.TestCase):
-    def test_build_registry_contains_both_engines(self) -> None:
-        from app.worker_service import build_registry
-
-        registry = build_registry(ResidentRuntimeHost())
+    def test_build_registry_contains_panowan_when_provider_registered(self) -> None:
+        registry = build_registry(FakeHost())
         self.assertIsInstance(registry.get("panowan"), PanoWanEngine)
         self.assertIsInstance(registry.get("upscale"), UpscaleEngine)
 
-    def test_resolve_engine_routes_upscale_jobs(self) -> None:
-        from app.worker_service import _resolve_engine, build_registry
+    def test_build_registry_skips_panowan_when_provider_missing(self) -> None:
+        host = FakeHost()
+        host._has = {}
+        registry = build_registry(host)
+        with self.assertRaises(KeyError):
+            registry.get("panowan")
+        self.assertIsInstance(registry.get("upscale"), UpscaleEngine)
 
-        registry = build_registry(ResidentRuntimeHost())
-        job = {"type": "upscale"}
-        engine = _resolve_engine(registry, job)
-        self.assertEqual(engine.name, "upscale")
+    def test_resolve_engine_routes_generate_jobs_only_when_provider_registered(self) -> None:
+        from app.worker_service import _resolve_engine
 
-    def test_resolve_engine_routes_generate_jobs_to_panowan(self) -> None:
-        from app.worker_service import _resolve_engine, build_registry
+        self.assertEqual(
+            _resolve_engine(build_registry(FakeHost()), {"type": "generate"}).name,
+            "panowan",
+        )
 
-        registry = build_registry(ResidentRuntimeHost())
-        job = {"type": "generate"}
-        engine = _resolve_engine(registry, job)
-        self.assertEqual(engine.name, "panowan")
+        host = FakeHost()
+        host._has = {}
+        with self.assertRaises(KeyError):
+            _resolve_engine(build_registry(host), {"type": "generate"})
 
-    def test_resolve_engine_rejects_unknown_job_type(self) -> None:
-        from app.worker_service import _resolve_engine, build_registry
+    def test_publish_worker_state_omits_panowan_capabilities_when_provider_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = LocalWorkerRegistry(f"{tmp}/workers.json")
+            host = FakeHost()
+            host._has = {}
+            record = publish_worker_state(
+                registry, "worker-test", build_registry(host), host
+            )
 
-        registry = build_registry(ResidentRuntimeHost())
-        with self.assertRaises(ValueError):
-            _resolve_engine(registry, {"type": "unknown"})
+        self.assertEqual(record["capabilities"], ["upscale"])
+        self.assertEqual(record["panowan_runtime_status"], "unknown")
+
+    def test_publish_worker_state_includes_future_panowan_capabilities_when_provider_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = LocalWorkerRegistry(f"{tmp}/workers.json")
+            host = FakeHost()
+            record = publish_worker_state(
+                registry, "worker-test", build_registry(host), host
+            )
+
+        self.assertEqual(sorted(record["capabilities"]), ["i2v", "t2v", "upscale"])
+        self.assertEqual(record["panowan_runtime_status"], "cold")
+
+    def test_publish_worker_state_returns_unknown_for_manual_registry_misalignment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = LocalWorkerRegistry(f"{tmp}/workers.json")
+            host = FakeHost()
+            host._has = {}
+            engine_registry = EngineRegistry()
+            engine_registry.register(PanoWanEngine(host))
+
+            record = publish_worker_state(
+                registry, "worker-test", engine_registry, host
+            )
+
+        self.assertEqual(record["panowan_runtime_status"], "unknown")
+        self.assertIn("t2v", record["capabilities"])
+        self.assertIn("i2v", record["capabilities"])
 
 
 class WorkerRuntimeTelemetryTests(unittest.TestCase):

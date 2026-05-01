@@ -9,7 +9,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
 panowan_env_host
 panowan_env_tool_defaults
 
-DOCKER_BIN="${DOCKER_BIN:-bash "${REPO_ROOT}/scripts/docker-proxy.sh"}"
 LORA_CHECKPOINT_FILE="${LORA_CHECKPOINT_PATH}"
 
 PASS="✓"

@@ -61,8 +61,9 @@ def validate_job(payload: dict[str, Any]) -> dict[str, Any]:
     task = payload.get("task")
     if task not in {"t2v", "i2v"}:
         raise InvalidRunnerJob("task must be 't2v' or 'i2v'")
-    if "prompt" not in payload:
-        raise InvalidRunnerJob("prompt is required")
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise InvalidRunnerJob("prompt must be a non-empty string")
     if "negative_prompt" not in payload:
         payload["negative_prompt"] = ""
     resolution = payload.get("resolution")

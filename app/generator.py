@@ -35,6 +35,15 @@ def _require_field(payload: dict, key: str) -> str:
     return value
 
 
+def _require_number(payload: dict, key: str) -> int | float:
+    if key not in payload:
+        raise ValueError(f"{key} is required")
+    value = payload[key]
+    if not isinstance(value, (int, float)):
+        raise ValueError(f"{key} must be a number")
+    return value
+
+
 def _resolve_task(payload: dict) -> str:
     task = payload.get("task") or payload.get("mode") or "t2v"
     if task not in {"t2v", "i2v"}:
@@ -105,5 +114,7 @@ def build_runner_payload(payload: dict) -> dict:
         del runner_payload["guidance_scale"]
     if task == "i2v":
         runner_payload["input_image_path"] = _require_field(payload, "input_image_path")
-        runner_payload["denoising_strength"] = payload["denoising_strength"]
+        runner_payload["denoising_strength"] = _require_number(
+            payload, "denoising_strength"
+        )
     return runner_payload

@@ -285,6 +285,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(job["payload"]["task"], "i2v")
         self.assertEqual(job["payload"]["input_image_path"], "/tmp/frame.png")
 
+    def test_generate_preserves_i2v_for_future_worker_support(self) -> None:
+        response = self.client.post(
+            "/generate",
+            json={
+                "prompt": "pan right",
+                "task": "i2v",
+                "input_image_path": "/tmp/frame.png",
+                "denoising_strength": 0.7,
+            },
+        )
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json()["job_id"]
+        job = api.get_job_backend().get_job(job_id)
+        self.assertEqual(job["payload"]["task"], "i2v")
+        self.assertEqual(job["payload"]["denoising_strength"], 0.7)
+        self.assertEqual(job["status"], "queued")
+
     def test_restore_jobs_marks_running_job_failed_after_restart(self) -> None:
         completed_output = os.path.join(self.temp_dir.name, "outputs", "done.mp4")
         os.makedirs(os.path.dirname(completed_output), exist_ok=True)
