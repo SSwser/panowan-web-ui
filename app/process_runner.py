@@ -6,7 +6,8 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+
+from app.cancellation import RuntimeCancellationProbe
 
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 ProcessOutput = str | bytes
@@ -30,7 +31,7 @@ def run_cancellable_process(
     command: list[str],
     *,
     timeout_seconds: int,
-    cancellation: Any = None,
+    cancellation: RuntimeCancellationProbe | None = None,
     cwd: str | None = None,
     text: bool = False,
 ) -> ProcessRunResult:

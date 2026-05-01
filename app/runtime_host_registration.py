@@ -9,6 +9,7 @@ runtime ``RuntimeProvider`` Protocol consumed by ``ResidentRuntimeHost``.
 from __future__ import annotations
 
 import importlib
+import inspect
 import sys
 from collections.abc import Hashable, Mapping
 from pathlib import Path
@@ -47,6 +48,15 @@ class _SpecBoundProvider:
         self._teardown = getattr(module, spec.teardown_attr)
         self._identity = getattr(module, spec.identity_attr)
         self._classify = getattr(module, spec.failure_classifier_attr)
+        # Inspect ``execute`` once so dispatch is signature-driven instead of
+        # relying on a TypeError catch — that catch could swallow legitimate
+        # TypeErrors from inside the provider and silently re-invoke it.
+        try:
+            params = inspect.signature(self._execute).parameters
+        except (TypeError, ValueError):
+            params = {}
+        self._execute_supports_cancellation = "cancellation" in params
+        self._execute_supports_should_cancel = "should_cancel" in params
         # default_identity is an optional Protocol member — only expose it when
         # the entrypoint module actually defines it.
         default_identity = getattr(module, "default_identity", None)
@@ -66,17 +76,15 @@ class _SpecBoundProvider:
         *,
         cancellation: RuntimeCancellationProbe | None = None,
     ) -> Mapping[str, Any]:
-        # Older provider modules predate the cancellation kwarg; fall back to
-        # the legacy ``should_cancel`` callable form so backends migrate at
-        # their own pace.
-        try:
+        # Dispatch is signature-driven (see __init__): older provider modules
+        # predate the cancellation kwarg and accept the legacy ``should_cancel``
+        # callable form so backends migrate at their own pace.
+        if self._execute_supports_cancellation:
             return self._execute(loaded_runtime, job, cancellation=cancellation)
-        except TypeError:
-            if cancellation is None:
-                return self._execute(loaded_runtime, job)
-            return self._execute(
-                loaded_runtime, job, should_cancel=cancellation.should_stop
-            )
+        if self._execute_supports_should_cancel:
+            legacy = cancellation.should_stop if cancellation is not None else None
+            return self._execute(loaded_runtime, job, should_cancel=legacy)
+        return self._execute(loaded_runtime, job)
 
     def teardown(self, loaded_runtime: Any) -> None:
         self._teardown(loaded_runtime)

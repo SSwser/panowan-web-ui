@@ -11,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from app.backends.registry import discover
 from app.backends.verify import expected_backend_files
+from app.cancellation import RuntimeCancellationProbe
 from app.paths import container_join, default_runtime_roots, repo_root_from
 from app.process_runner import (
     ProcessCancelledError,
@@ -446,7 +447,7 @@ def upscale_video(
     engine_dir: str = "/engines/upscale",
     weights_dir: str = "/models",
     timeout_seconds: int = 1800,
-    cancellation: Any = None,
+    cancellation: RuntimeCancellationProbe | None = None,
 ) -> dict[str, Any]:
     """Run a video upscaler backend as a subprocess.
 

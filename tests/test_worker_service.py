@@ -637,7 +637,7 @@ class RuntimeCancellationContractTests(unittest.TestCase):
             deadline_at="2026-05-01T14:00:45+00:00",
             attempt=1,
         )
-        probe = CallbackCancellationProbe(context=ctx, _stop_check=lambda: False)
+        probe = CallbackCancellationProbe(context=ctx, stop_check=lambda: False)
         job = {
             "job_id": "job-1",
             "type": "generate",
@@ -680,7 +680,7 @@ class RuntimeCancellationContractTests(unittest.TestCase):
             deadline_at="",
             attempt=1,
         )
-        probe = CallbackCancellationProbe(context=ctx, _stop_check=lambda: True)
+        probe = CallbackCancellationProbe(context=ctx, stop_check=lambda: True)
 
         result = provider_mod.run_job_inprocess(
             loaded={"pipeline": None},

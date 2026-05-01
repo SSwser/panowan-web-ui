@@ -636,7 +636,7 @@ class UpscaleVideoTests(unittest.TestCase):
                 deadline_at="",
                 attempt=0,
             ),
-            _stop_check=lambda: next(cancel_checks),
+            stop_check=lambda: next(cancel_checks),
         )
 
         with self.assertRaises(UpscaleCancelledError):

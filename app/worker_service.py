@@ -116,7 +116,7 @@ def _build_probe_for_job(
     )
     return CallbackCancellationProbe(
         context=ctx,
-        _stop_check=lambda: _should_cancel_job(backend, job_id, worker_id),
+        stop_check=lambda: _should_cancel_job(backend, job_id, worker_id),
     )
 
 

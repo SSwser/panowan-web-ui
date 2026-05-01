@@ -1,36 +1,10 @@
 from typing import Mapping
 
-from app.cancellation import (
-    CallbackCancellationProbe,
-    CancellationContext,
-    RuntimeCancellationProbe,
-)
+from app.cancellation import RuntimeCancellationProbe, legacy_probe_from_job
 from app.generator import build_runner_payload
 from app.runtime_host import ResidentRuntimeHost
 
 from .base import EngineResult
-
-
-def _legacy_probe_from(job: Mapping[str, object]) -> RuntimeCancellationProbe | None:
-    # Worker injection of ``_cancellation_probe`` lands in a follow-up task;
-    # until then, fall back to the legacy ``_should_cancel`` callable so
-    # cancellation continues to reach the host without behavioural change.
-    legacy = job.get("_should_cancel")
-    if not callable(legacy):
-        return None
-    job_id = str(job.get("job_id") or job.get("id") or "")
-    worker_id = str(job.get("worker_id") or "")
-    return CallbackCancellationProbe(
-        context=CancellationContext(
-            job_id=job_id,
-            worker_id=worker_id,
-            mode="soft",
-            requested_at="",
-            deadline_at="",
-            attempt=0,
-        ),
-        _stop_check=legacy,
-    )
 
 
 class PanoWanEngine:
@@ -72,9 +46,12 @@ class PanoWanEngine:
         if task == "i2v":
             raise NotImplementedError(self.i2v_not_implemented_message)
         runner_payload = build_runner_payload(api_payload)
+        # The worker injects ``_cancellation_probe`` directly. Fall back to
+        # wrapping a legacy ``_should_cancel`` callable for tests or external
+        # embeddings that don't go through the worker loop.
         cancellation = raw.get("_cancellation_probe")
         if not isinstance(cancellation, RuntimeCancellationProbe):
-            cancellation = _legacy_probe_from(raw)
+            cancellation = legacy_probe_from_job(raw)
         result = self._host.run_job(
             self.provider_key,
             runner_payload,

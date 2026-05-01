@@ -1,33 +1,10 @@
 import os
 
-from app.cancellation import (
-    CallbackCancellationProbe,
-    CancellationContext,
-    RuntimeCancellationProbe,
-)
+from app.cancellation import RuntimeCancellationProbe, legacy_probe_from_job
 from app.settings import settings
 from app.upscaler import get_available_upscale_backends, upscale_video
 
 from .base import EngineResult
-
-
-def _legacy_probe_from(job: dict) -> RuntimeCancellationProbe | None:
-    legacy = job.get("_should_cancel")
-    if not callable(legacy):
-        return None
-    job_id = str(job.get("job_id") or job.get("id") or "")
-    worker_id = str(job.get("worker_id") or "")
-    return CallbackCancellationProbe(
-        context=CancellationContext(
-            job_id=job_id,
-            worker_id=worker_id,
-            mode="soft",
-            requested_at="",
-            deadline_at="",
-            attempt=0,
-        ),
-        _stop_check=legacy,
-    )
 
 
 class UpscaleEngine:
@@ -59,9 +36,12 @@ class UpscaleEngine:
 
     def run(self, job: dict) -> EngineResult:
         params = job.get("upscale_params") or {}
+        # The worker injects ``_cancellation_probe`` directly. Fall back to
+        # wrapping a legacy ``_should_cancel`` callable for tests or external
+        # embeddings that don't go through the worker loop.
         cancellation = job.get("_cancellation_probe")
         if not isinstance(cancellation, RuntimeCancellationProbe):
-            cancellation = _legacy_probe_from(job)
+            cancellation = legacy_probe_from_job(job)
         result = upscale_video(
             input_path=job["source_output_path"],
             output_path=job["output_path"],
