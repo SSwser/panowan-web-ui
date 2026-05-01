@@ -6,6 +6,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 _CANCEL_POLL_INTERVAL_SECONDS = 0.25
 ProcessOutput = str | bytes
@@ -29,10 +30,17 @@ def run_cancellable_process(
     command: list[str],
     *,
     timeout_seconds: int,
-    should_cancel: Callable[[], bool] | None = None,
+    cancellation: Any = None,
     cwd: str | None = None,
     text: bool = False,
 ) -> ProcessRunResult:
+    # The boundary accepts a ``RuntimeCancellationProbe``-shaped object so the
+    # runtime cancellation contract is uniform across in-process and
+    # subprocess engines. Internally we reduce it to a callable to keep the
+    # poll loop unchanged.
+    should_cancel: Callable[[], bool] | None = (
+        cancellation.should_stop if cancellation is not None else None
+    )
     process = subprocess.Popen(
         command,
         cwd=cwd,

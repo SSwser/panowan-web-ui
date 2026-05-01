@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import importlib
 import sys
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Hashable, Mapping
 from pathlib import Path
 from typing import Any
 
 from app.backends.spec import ResidentProviderSpec
+from app.cancellation import RuntimeCancellationProbe
 from app.runtime_host import RuntimeProvider
 
 _REQUIRED_ATTRS = (
@@ -63,14 +64,19 @@ class _SpecBoundProvider:
         loaded_runtime: Any,
         job: Mapping[str, Any],
         *,
-        should_cancel: Callable[[], bool] | None = None,
+        cancellation: RuntimeCancellationProbe | None = None,
     ) -> Mapping[str, Any]:
-        # Older provider modules predate the should_cancel kwarg; fall back to
-        # the legacy two-arg signature so backends migrate at their own pace.
+        # Older provider modules predate the cancellation kwarg; fall back to
+        # the legacy ``should_cancel`` callable form so backends migrate at
+        # their own pace.
         try:
-            return self._execute(loaded_runtime, job, should_cancel=should_cancel)
+            return self._execute(loaded_runtime, job, cancellation=cancellation)
         except TypeError:
-            return self._execute(loaded_runtime, job)
+            if cancellation is None:
+                return self._execute(loaded_runtime, job)
+            return self._execute(
+                loaded_runtime, job, should_cancel=cancellation.should_stop
+            )
 
     def teardown(self, loaded_runtime: Any) -> None:
         self._teardown(loaded_runtime)

@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
+from app.cancellation import RuntimeCancellationProbe
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +51,7 @@ class RuntimeProvider(Protocol):
         loaded_runtime: Any,
         job: Mapping[str, Any],
         *,
-        should_cancel: Callable[[], bool] | None = None,
+        cancellation: RuntimeCancellationProbe | None = None,
     ) -> Mapping[str, Any]: ...
     def teardown(self, loaded_runtime: Any) -> None: ...
     def classify_failure(self, exc: BaseException) -> bool: ...
@@ -187,7 +189,7 @@ class ResidentRuntimeHost:
         provider_key: str,
         job: Mapping[str, Any],
         *,
-        should_cancel: Callable[[], bool] | None = None,
+        cancellation: RuntimeCancellationProbe | None = None,
     ) -> Mapping[str, Any]:
         provider, instance, lock = self._require(provider_key)
         with lock:
@@ -210,7 +212,7 @@ class ResidentRuntimeHost:
             loaded = instance.loaded
             self._set_state(instance, RuntimeState.RUNNING)
             try:
-                result = provider.execute(loaded, job, should_cancel=should_cancel)
+                result = provider.execute(loaded, job, cancellation=cancellation)
             except BaseException as exc:
                 corrupting = bool(provider.classify_failure(exc))
                 if corrupting:

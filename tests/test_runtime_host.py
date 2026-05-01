@@ -66,10 +66,10 @@ class FakeProvider:
         loaded_runtime: Any,
         job: Mapping[str, Any],
         *,
-        should_cancel: Any = None,
+        cancellation: Any = None,
     ) -> Mapping[str, Any]:
         self.calls.append(("execute", (loaded_runtime.identity, job.get("seq"))))
-        self.last_should_cancel = should_cancel
+        self.last_cancellation = cancellation
         if self.execute_error is not None:
             raise self.execute_error
         return dict(self.execute_result)
@@ -324,7 +324,7 @@ class ResidentRuntimeHostTests(unittest.TestCase):
         original_execute = slow.execute
 
         def slow_execute(
-            loaded: Any, job: Mapping[str, Any], *, should_cancel: Any = None
+            loaded: Any, job: Mapping[str, Any], *, cancellation: Any = None
         ) -> Mapping[str, Any]:
             gate.set()
             release.wait(timeout=2.0)

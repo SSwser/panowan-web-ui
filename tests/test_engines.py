@@ -19,9 +19,9 @@ class _FakeHost:
             "output_path": "/tmp/o.mp4",
         }
 
-    def run_job(self, provider_key, job, *, should_cancel=None):
+    def run_job(self, provider_key, job, *, cancellation=None):
         self.run_calls.append((provider_key, dict(job)))
-        self.last_should_cancel = should_cancel
+        self.last_cancellation = cancellation
         return self._run_result
 
 
@@ -164,8 +164,12 @@ class UpscaleEngineTests(unittest.TestCase):
             ),
         )
         mock_upscale.assert_called_once()
+        kwargs = mock_upscale.call_args.kwargs
+        # The engine wraps the legacy callback in a probe at the boundary;
+        # assert structural fields independently from the wrapped probe object.
+        forwarded = kwargs.pop("cancellation")
         self.assertEqual(
-            mock_upscale.call_args.kwargs,
+            kwargs,
             {
                 "input_path": "/app/runtime/outputs/output_src.mp4",
                 "output_path": "/app/runtime/outputs/output_up.mp4",
@@ -176,9 +180,10 @@ class UpscaleEngineTests(unittest.TestCase):
                 "engine_dir": settings.upscale_engine_dir,
                 "weights_dir": settings.upscale_weights_dir,
                 "timeout_seconds": 1800,
-                "should_cancel": cancel_probe,
             },
         )
+        self.assertIsNotNone(forwarded)
+        self.assertFalse(forwarded.should_stop())
 
 
 class PanoWanEngineCapabilitiesTests(unittest.TestCase):

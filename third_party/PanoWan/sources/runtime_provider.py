@@ -114,17 +114,20 @@ def run_job_inprocess(
     loaded: dict[str, Any],
     job: Mapping[str, Any],
     *,
-    should_cancel: Any = None,
+    cancellation: Any = None,
 ) -> dict[str, Any]:
     """Validate the job, run inference on the warm pipeline, write the video file.
 
     Validation matches ``runner.py`` exactly so CLI and resident execution
     enforce the same payload contract (spec §9).
     """
-    # ``should_cancel`` is wiring placeholder; cooperative cancellation
-    # propagation into the diffsynth pipeline lives in a future patch.
-    del should_cancel
     payload = validate_job(dict(job))
+
+    # Cooperative cancellation is checked at safe checkpoints around the
+    # heavy diffsynth call. Polling here keeps the contract observable to
+    # the worker even though the underlying pipeline call is opaque.
+    if cancellation is not None and cancellation.should_stop():
+        return {"status": "cancelled", "output_path": payload["output_path"]}
 
     # Upstream PanoWan (https://github.com/SSwser/PanoWan) only ships a t2v
     # pipeline (``WanVideoPipeline`` + ``panowan-test`` console script). i2v
@@ -171,6 +174,9 @@ def run_job_inprocess(
         pipe_kwargs["cfg_scale"] = guidance_scale
 
     video = pipe(**pipe_kwargs)
+
+    if cancellation is not None and cancellation.should_stop():
+        return {"status": "cancelled", "output_path": output_path}
 
     # save_video imported lazily here (not at load time) so that teardown +
     # idle-evict cycles do not hold a reference to diffsynth.data.

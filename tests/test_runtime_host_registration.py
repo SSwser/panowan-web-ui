@@ -17,7 +17,7 @@ _PROVIDER_MODULE_TEMPLATE = textwrap.dedent("""
     def load(identity):
         return {"identity": identity, "loaded": True}
 
-    def execute(loaded, job, *, should_cancel=None):
+    def execute(loaded, job, *, cancellation=None):
         return {"status": "ok", "job": dict(job), "loaded": loaded}
 
     def teardown(loaded):

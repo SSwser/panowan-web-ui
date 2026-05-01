@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 from app.backends.registry import discover
+from app.cancellation import CallbackCancellationProbe, CancellationContext
 from app.engines import EngineRegistry, PanoWanEngine, UpscaleEngine
 from app.jobs import LocalJobBackend, LocalWorkerRegistry
 from app.runtime_host import ResidentRuntimeHost, RuntimeState
@@ -92,6 +93,31 @@ def _should_cancel_job(
     if current.get("worker_id") != worker_id:
         return True
     return current.get("status") not in {"claimed", "running"}
+
+
+def _build_probe_for_job(
+    backend: LocalJobBackend, job: dict, worker_id: str
+) -> CallbackCancellationProbe:
+    """Wrap the worker's stop-check with the job's cancel-governance metadata.
+
+    The probe carries the same callable used historically by ``_should_cancel``
+    plus the structured ``CancellationContext`` so providers can read mode and
+    deadline at safe checkpoints without us threading extra kwargs through
+    every layer.
+    """
+    job_id = str(job["job_id"])
+    ctx = CancellationContext(
+        job_id=job_id,
+        worker_id=worker_id,
+        mode=str(job.get("cancel_mode") or "soft"),
+        requested_at=str(job.get("cancel_requested_at") or ""),
+        deadline_at=str(job.get("cancel_deadline_at") or ""),
+        attempt=int(job.get("cancel_attempt") or 0),
+    )
+    return CallbackCancellationProbe(
+        context=ctx,
+        _stop_check=lambda: _should_cancel_job(backend, job_id, worker_id),
+    )
 
 
 def publish_worker_state(
@@ -238,11 +264,11 @@ def run_one_job(
 
     engine = _resolve_engine(registry, job)
 
+    probe = _build_probe_for_job(backend, job, worker_id)
     job = {
         **job,
-        "_should_cancel": lambda: _should_cancel_job(
-            backend, job_id, worker_id
-        ),
+        "_should_cancel": probe.should_stop,
+        "_cancellation_probe": probe,
     }
 
     try:

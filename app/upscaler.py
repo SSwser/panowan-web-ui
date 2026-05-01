@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -446,7 +446,7 @@ def upscale_video(
     engine_dir: str = "/engines/upscale",
     weights_dir: str = "/models",
     timeout_seconds: int = 1800,
-    should_cancel: Callable[[], bool] | None = None,
+    cancellation: Any = None,
 ) -> dict[str, Any]:
     """Run a video upscaler backend as a subprocess.
 
@@ -460,7 +460,8 @@ def upscale_video(
         engine_dir: Root directory containing backend-specific inference scripts.
         weights_dir: Root directory containing backend-specific model weight files.
         timeout_seconds: Maximum seconds to wait before killing the process.
-        should_cancel: Optional callback used by the worker to abort a running job.
+        cancellation: Optional ``RuntimeCancellationProbe`` used by the worker
+            to abort a running job at safe checkpoint boundaries.
 
     Returns:
         Dict with output_path, model, and scale.
@@ -505,7 +506,7 @@ def upscale_video(
         result = run_cancellable_process(
             cmd,
             timeout_seconds=timeout_seconds,
-            should_cancel=should_cancel,
+            cancellation=cancellation,
             text=False,
         )
     except subprocess.TimeoutExpired:

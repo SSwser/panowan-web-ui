@@ -40,9 +40,9 @@ class FakeHost:
         self.evict_calls.append((key, idle_seconds))
         return True
 
-    def run_job(self, key, job, *, should_cancel=None):
+    def run_job(self, key, job, *, cancellation=None):
         self.run_calls.append((key, dict(job)))
-        self.last_should_cancel = should_cancel
+        self.last_cancellation = cancellation
         return {"status": "ok", "output_path": job.get("output_path", "")}
 
     def status(self, key):
@@ -586,16 +586,18 @@ class BuildHostTests(unittest.TestCase):
 
 
 class PanowanCancellationTests(unittest.TestCase):
-    def test_panowan_engine_passes_should_cancel_to_runtime_host(self) -> None:
+    def test_panowan_engine_wraps_legacy_callable_into_probe(self) -> None:
+        # Legacy job dicts that only carry ``_should_cancel`` must still reach
+        # the host as a probe so providers see the structured contract even
+        # before the worker injects ``_cancellation_probe`` directly.
         class RecordingHost:
             def __init__(self) -> None:
                 self.provider_key = "panowan"
-                self.seen_should_cancel = None
+                self.seen_cancellation = None
 
-            def run_job(self, provider_key, payload, should_cancel=None):
-                self.seen_should_cancel = should_cancel
+            def run_job(self, provider_key, payload, *, cancellation=None):
+                self.seen_cancellation = cancellation
                 assert provider_key == "panowan"
-                assert callable(should_cancel)
                 return {"output_path": "out.mp4"}
 
         engine = PanoWanEngine(host=RecordingHost())
@@ -606,4 +608,92 @@ class PanowanCancellationTests(unittest.TestCase):
         })
 
         self.assertEqual(result.output_path, "out.mp4")
-        self.assertTrue(callable(engine._host.seen_should_cancel))
+        forwarded = engine._host.seen_cancellation
+        self.assertIsNotNone(forwarded)
+        self.assertFalse(forwarded.should_stop())
+
+
+class RuntimeCancellationContractTests(unittest.TestCase):
+    def test_panowan_engine_passes_cancellation_probe_to_host(self) -> None:
+        from app.cancellation import (
+            CallbackCancellationProbe,
+            CancellationContext,
+        )
+        from app.engines.panowan import PanoWanEngine
+
+        seen = {}
+
+        class FakeHost:
+            def run_job(self, provider_key, payload, *, cancellation=None):
+                seen["cancellation"] = cancellation
+                return {"output_path": payload.get("output_path", "out.mp4")}
+
+        engine = PanoWanEngine(FakeHost())
+        ctx = CancellationContext(
+            job_id="job-1",
+            worker_id="worker-1",
+            mode="soft",
+            requested_at="2026-05-01T14:00:00+00:00",
+            deadline_at="2026-05-01T14:00:45+00:00",
+            attempt=1,
+        )
+        probe = CallbackCancellationProbe(context=ctx, _stop_check=lambda: False)
+        job = {
+            "job_id": "job-1",
+            "type": "generate",
+            "prompt": "demo",
+            "task": "t2v",
+            "worker_id": "worker-1",
+            "output_path": "out.mp4",
+            "_cancellation_probe": probe,
+        }
+
+        engine.run(job)
+
+        self.assertIs(seen["cancellation"], probe)
+        self.assertEqual(seen["cancellation"].context.mode, "soft")
+        self.assertEqual(
+            seen["cancellation"].context.deadline_at,
+            "2026-05-01T14:00:45+00:00",
+        )
+
+    def test_runtime_provider_observes_cancel_probe_instead_of_discarding_it(
+        self,
+    ) -> None:
+        # Assert the provider observes the probe BEFORE reaching the
+        # "runtime is not loaded" guard. We cannot import diffsynth in the
+        # test environment, so we rely on the very first checkpoint being
+        # the cancellation poll: passing ``loaded={"pipeline": None}`` would
+        # otherwise raise RuntimeError; with a stop-on-first probe the
+        # function must return ``cancelled`` first.
+        from app.cancellation import (
+            CallbackCancellationProbe,
+            CancellationContext,
+        )
+        import third_party.PanoWan.sources.runtime_provider as provider_mod
+
+        ctx = CancellationContext(
+            job_id="job-1",
+            worker_id="worker-1",
+            mode="soft",
+            requested_at="",
+            deadline_at="",
+            attempt=1,
+        )
+        probe = CallbackCancellationProbe(context=ctx, _stop_check=lambda: True)
+
+        result = provider_mod.run_job_inprocess(
+            loaded={"pipeline": None},
+            job={
+                "version": "v1",
+                "task": "t2v",
+                "prompt": "demo",
+                "output_path": "/tmp/out.mp4",
+                "resolution": {"width": 2048, "height": 1024},
+                "num_frames": 81,
+            },
+            cancellation=probe,
+        )
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertEqual(result["output_path"], "/tmp/out.mp4")
