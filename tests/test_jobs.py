@@ -489,6 +489,49 @@ class LocalJobCancellationFlowTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["error_code"], "cancel_timeout")
 
+    def test_request_cancellation_rejects_wrong_owner(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        self.assertIsNone(
+            backend.request_cancellation("job-1", worker_id="worker-other")
+        )
+
+    def test_escalate_cancellation_rejects_non_cancelling_state(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        # Still running, not yet cancelling
+        self.assertIsNone(
+            backend.escalate_cancellation("job-1", worker_id="worker-1")
+        )
+
+    def test_escalate_cancellation_increments_attempt_repeatedly(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+        first = backend.escalate_cancellation("job-1", worker_id="worker-1")
+        second = backend.escalate_cancellation("job-1", worker_id="worker-1")
+        self.assertEqual(first["cancel_attempt"], 2)
+        self.assertEqual(second["cancel_attempt"], 3)
+
+    def test_finalize_cancellation_timeout_rejects_wrong_owner(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+        self.assertIsNone(
+            backend.finalize_cancellation_timeout(
+                "job-1", worker_id="worker-other", reason="cancel_timeout"
+            )
+        )
+
+    def test_finalize_cancellation_timeout_rejects_non_cancelling_state(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        self.assertIsNone(
+            backend.finalize_cancellation_timeout(
+                "job-1", worker_id="worker-1", reason="cancel_timeout"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
