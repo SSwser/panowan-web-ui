@@ -1036,7 +1036,7 @@
       // ── cancel job ──
       async function cancelJob(jobId, isRunning) {
         if (isRunning) {
-          const ok = confirm("该任务正在 GPU 上执行，强制终止可能产生不完整的输出。是否确认强制终止？");
+          const ok = confirm("该任务正在执行，系统会尝试软取消。是否确认取消？");
           if (!ok) return;
         }
         try {
@@ -1045,11 +1045,17 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ force: isRunning }),
           });
-          if (res.status === 202) {
-            alert("任务正在运行，请确认强制终止。");
-            return;
+          const payload = await res.json();
+          if (!res.ok && res.status !== 202) {
+            throw new Error(payload.detail || `HTTP ${res.status}`);
           }
-          refreshJobs();
+          if (payload.job_id) {
+            _jobCache[payload.job_id] = payload;
+            sseClient._renderIncremental();
+          }
+          if (payload.status === "succeeded") {
+            alert("取消未生效，任务已完成");
+          }
         } catch (err) {
           alert(`取消失败: ${err}`);
         }

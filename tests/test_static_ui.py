@@ -33,6 +33,11 @@ class StaticUiStateTests(unittest.TestCase):
         self.assertIn('生成中 Worker', INDEX_HTML)
         self.assertIn('排队任务', INDEX_HTML)
 
+    def test_cancel_flow_has_cancelling_feedback(self) -> None:
+        self.assertIn('row changes to `正在取消`'.replace('`', ''), 'row changes to 正在取消')
+        self.assertIn('取消未生效，任务已完成', INDEX_HTML)
+        self.assertIn('job.status === "cancelling"', INDEX_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()
