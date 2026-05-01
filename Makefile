@@ -19,6 +19,7 @@ include .env
 endif
 
 NORMALIZE_BIND_PATH ?= bash scripts/lib/path.sh
+DATA_SYNC ?= bash scripts/data-sync.sh
 
 define normalize_bind_var
 ifneq ($(strip $($(1))),)
@@ -28,7 +29,7 @@ endef
 
 $(eval $(call normalize_bind_var,MODEL_ROOT))
 
-.PHONY: init setup-python setup-submodules env test build setup-backends up down logs health doctor docker-env prune
+.PHONY: init setup-python setup-submodules env test build setup-backends up down logs health doctor docker-env prune data-link data-unlink data-status init-worktree
 
 # setup-backends needs host-side Python deps like huggingface_hub before it can
 # download weights, so init bootstraps the environment first instead of assuming
@@ -81,6 +82,18 @@ health:
 
 doctor:
 	bash scripts/doctor.sh
+
+data-link:
+	$(DATA_SYNC) link
+
+data-unlink:
+	$(DATA_SYNC) unlink
+
+data-status:
+	$(DATA_SYNC) status
+
+init-worktree:
+	$(DATA_SYNC) init-worktree
 
 docker-env:
 	@echo "DOCKER=$(DOCKER)"
