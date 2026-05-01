@@ -297,6 +297,80 @@ class LocalJobBackendTests(unittest.TestCase):
                 restored.get_job("real-failure")["error"], "engine exploded"
             )
 
+    def test_second_worker_cannot_mark_running_after_first_worker_owns_job(self):
+        # Two workers race for the same job: only the worker holding the lease
+        # may legally drive transitions. ADR 0010 §7 requires the second
+        # worker's writes to be silently rejected, never overwriting state.
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="worker-a")
+
+            stolen = backend.mark_running("job-1", worker_id="worker-b")
+
+            self.assertIsNone(stolen)
+            job = backend.get_job("job-1")
+            self.assertEqual(job["status"], "claimed")
+            self.assertEqual(job["worker_id"], "worker-a")
+
+    def test_late_success_cannot_overwrite_newer_terminal_state(self):
+        # A worker that returns success after cancellation has already been
+        # finalised must not rewrite the cancelled terminal record.
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {
+                    "job_id": "job-1",
+                    "status": "queued",
+                    "type": "generate",
+                    "output_path": f"{tmp}/out.mp4",
+                }
+            )
+            backend.claim_next_job(worker_id="worker-a")
+            backend.mark_running("job-1", "worker-a")
+            backend.request_cancellation("job-1")
+            backend.request_cancellation("job-1", finished=True)
+
+            late = backend.mark_succeeded("job-1", "worker-a", f"{tmp}/out.mp4")
+
+            self.assertIsNone(late)
+            job = backend.get_job("job-1")
+            self.assertEqual(job["status"], "cancelled")
+
+    def test_restore_never_fabricates_success_from_artifact_path(self):
+        # The restore path must not promote an in-flight record to succeeded
+        # just because an output_path string is present. Crashed workers leave
+        # output_path set; recovery must mark such jobs failed instead.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/jobs.json"
+            os.makedirs(tmp, exist_ok=True)
+            with open(path, "w") as handle:
+                json.dump(
+                    {
+                        "jobs": {
+                            "running": {
+                                "job_id": "running",
+                                "status": "running",
+                                "type": "generate",
+                                "output_path": f"{tmp}/out.mp4",
+                                "worker_id": "worker-a",
+                            }
+                        }
+                    },
+                    handle,
+                )
+
+            restored = LocalJobBackend(path)
+            restored.restore()
+
+            job = restored.get_job("running")
+            self.assertEqual(job["status"], "failed")
+            self.assertEqual(
+                job["error"], "Service restarted before the job completed"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
