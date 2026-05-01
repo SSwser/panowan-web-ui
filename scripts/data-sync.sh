@@ -24,31 +24,21 @@ Usage:
   bash scripts/data-sync.sh link [--runtime]
   bash scripts/data-sync.sh unlink [--runtime]
   bash scripts/data-sync.sh status
-  bash scripts/data-sync.sh init-worktree [--runtime]
 EOF
 }
 
-require_windows() {
+require_windows_shell() {
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) ;;
     *)
-      echo "This script supports Git Bash on Windows only." >&2
-      exit 2
-      ;;
-  esac
-}
-
-require_windows_worktree_paths() {
-  case "$PWD" in
-    /mnt/*)
-      echo "This script must run under Git Bash / Git for Windows, not WSL bash, because this worktree uses Windows Git metadata." >&2
+      echo "This script must run from a Windows POSIX shell such as Git Bash, because it manages Windows junctions for a worktree that uses Windows Git metadata." >&2
       exit 2
       ;;
   esac
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-require_windows_worktree_paths
+require_windows_shell
 git_worktree_output=""
 git_worktree_status=0
 if ! git_worktree_output="$(git -C "$repo_root" worktree list --porcelain 2>&1)"; then
@@ -232,8 +222,12 @@ ensure_can_link() {
   if path_exists "$link_path"; then
     if path_is_directory "$link_path"; then
       echo "$name: refusing to replace real directory ($link_path)" >&2
+      echo "  Move or remove that worktree-local directory first, then rerun setup-worktree so data-sync can link the shared copy from the main repository." >&2
+      echo "  Expected shared source: $expected_target" >&2
     else
       echo "$name: refusing to replace real file ($link_path)" >&2
+      echo "  Remove that worktree-local file first, then rerun setup-worktree so data-sync can create the shared link." >&2
+      echo "  Expected shared source: $expected_target" >&2
     fi
     exit 1
   fi
@@ -331,11 +325,7 @@ run_unlink() {
   fi
 }
 
-run_init_worktree() {
-  run_link
-}
-
-require_windows
+require_windows_shell
 
 case "$command" in
   link)
@@ -346,9 +336,6 @@ case "$command" in
     ;;
   status)
     status_all
-    ;;
-  init-worktree)
-    run_init_worktree
     ;;
   ""|-h|--help|help)
     usage

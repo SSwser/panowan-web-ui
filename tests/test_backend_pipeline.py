@@ -71,8 +71,9 @@ def test_authoritative_backend_missing_files_are_reported_for_rebuild_hint() -> 
 
     assert "backend:realesrgan" in message
     assert "missing runtime files: __main__.py, realesrgan/__init__.py" in message
-    assert "uv run python -m app.backends install" in message
-    assert "make setup-backends" in message
+    assert ".venv/Scripts/python.exe -m app.backends install" in message
+    assert "make setup" in message
+    assert "make setup-backends" not in message
     assert "delete third_party/Upscale/realesrgan/vendor" in message
 
 
@@ -98,4 +99,5 @@ def test_non_authoritative_backend_mismatch_skips_delete_vendor_hint() -> None:
 
     assert "runtime revision old-rev does not match expected v1" in message
     assert "delete third_party/Upscale/realesrgan/vendor" not in message
-    assert "uv run python -m app.backends install" not in message
+    assert ".venv/Scripts/python.exe -m app.backends install" not in message
+    assert "make setup" not in message

@@ -9,7 +9,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/env.sh"
 panowan_env_host
 panowan_env_tool_defaults
 
-LORA_CHECKPOINT_FILE="${LORA_CHECKPOINT_PATH}"
+LORA_CHECKPOINT_FILE="${LORA_CHECKPOINT_PATH:-}"
 
 PASS="✓"
 FAIL="✗"
@@ -216,6 +216,18 @@ if [[ -n "${HF_ENDPOINT:-}" ]]; then
   ok "HF_ENDPOINT=$HF_ENDPOINT"
 else
   warn "HF_ENDPOINT 未设置 — 中国大陆用户建议设置为镜像站 (如 https://hf-mirror.com)"
+fi
+
+if [[ -n "${HF_HOME:-}" ]]; then
+  case "$HF_HOME" in
+    http://*|https://*)
+      fail "HF_HOME 不能是 URL：当前为 $HF_HOME"
+      echo "       将镜像地址放在 HF_ENDPOINT；HF_HOME 应为本地目录或留空"
+      ;;
+    *)
+      ok "HF_HOME=$HF_HOME"
+      ;;
+  esac
 fi
 
 if [[ -n "${HF_HUB_ENABLE_HF_TRANSFER:-}" ]]; then
