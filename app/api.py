@@ -508,3 +508,34 @@ def delete_failed_jobs_endpoint() -> dict:
     for job_id in deleted:
         broadcast_job_event("job_deleted", {"job_id": job_id})
     return {"deleted": deleted, "count": len(deleted)}
+
+
+def _worker_summary() -> dict[str, Any]:
+    jobs = get_job_backend().list_jobs()
+    workers = get_worker_registry().list_workers(
+        stale_seconds=settings.worker_stale_seconds,
+    )
+    queued_jobs = sum(1 for job in jobs if job.get("status") in {"queued", "claimed"})
+    running_jobs = sum(1 for job in jobs if job.get("status") in {"running", "cancelling"})
+    busy_workers = sum(1 for worker in workers if int(worker.get("running_jobs") or 0) > 0)
+    total_capacity = sum(int(worker.get("max_concurrent_jobs") or 0) for worker in workers)
+    occupied_capacity = sum(int(worker.get("running_jobs") or 0) for worker in workers)
+    runtime_counts: dict[str, int] = {}
+    for worker in workers:
+        runtime = str(worker.get("panowan_runtime_status") or "unknown")
+        runtime_counts[runtime] = runtime_counts.get(runtime, 0) + 1
+    return {
+        "total_workers": len(workers),
+        "online_workers": len(workers),
+        "busy_workers": busy_workers,
+        "queued_jobs": queued_jobs,
+        "running_jobs": running_jobs,
+        "total_capacity": total_capacity,
+        "occupied_capacity": occupied_capacity,
+        "panowan_runtime_status": runtime_counts,
+    }
+
+
+@app.get("/workers/summary")
+def worker_summary() -> dict[str, Any]:
+    return _worker_summary()

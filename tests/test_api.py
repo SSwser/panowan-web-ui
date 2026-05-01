@@ -37,6 +37,10 @@ class ApiTests(unittest.TestCase):
         # Backend state lives on the per-test tmpdir stores; no module globals to clear.
         self.client = TestClient(api.app)
 
+        from app.jobs import LocalJobBackend
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self.worker_registry = LocalWorkerRegistry(api.settings.worker_store_path)
+
     def _seed_upscale_worker(self, models: list[str] | None = None) -> None:
         LocalWorkerRegistry(api.settings.worker_store_path).upsert_worker(
             "test-worker",
@@ -661,3 +665,79 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(job["upscale_params"]["target_height"], 896)
         self.assertEqual(job["source_output_path"], "/fake/out2.mp4")
         self.assertEqual(job["payload"]["source_output_path"], "/fake/out2.mp4")
+
+    def test_worker_summary_reports_worker_and_queue_counts(self) -> None:
+        self.backend.create_job({
+            "job_id": "queued-job",
+            "status": "queued",
+            "type": "generate",
+            "prompt": "queued",
+            "params": {},
+            "output_path": "queued.mp4",
+            "created_at": "2026-05-01T12:00:00Z",
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "source_job_id": None,
+            "upscale_params": None,
+            "payload": {},
+            "source_output_path": None,
+        })
+        self.backend.create_job({
+            "job_id": "running-job",
+            "status": "running",
+            "type": "generate",
+            "prompt": "running",
+            "params": {},
+            "output_path": "running.mp4",
+            "created_at": "2026-05-01T12:00:01Z",
+            "started_at": "2026-05-01T12:00:02Z",
+            "finished_at": None,
+            "error": None,
+            "source_job_id": None,
+            "upscale_params": None,
+            "payload": {},
+            "source_output_path": None,
+            "worker_id": "worker-a",
+        })
+        self.worker_registry.upsert_worker(
+            "worker-a",
+            {
+                "status": "online",
+                "running_jobs": 1,
+                "max_concurrent_jobs": 2,
+                "panowan_runtime_status": "ready",
+                "capabilities": ["generate"],
+                "available_upscale_models": [],
+            },
+        )
+        self.worker_registry.upsert_worker(
+            "worker-b",
+            {
+                "status": "online",
+                "running_jobs": 0,
+                "max_concurrent_jobs": 1,
+                "panowan_runtime_status": "warming",
+                "capabilities": ["generate"],
+                "available_upscale_models": [],
+            },
+        )
+
+        response = self.client.get("/workers/summary")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "total_workers": 2,
+                "online_workers": 2,
+                "busy_workers": 1,
+                "queued_jobs": 1,
+                "running_jobs": 1,
+                "total_capacity": 3,
+                "occupied_capacity": 1,
+                "panowan_runtime_status": {
+                    "ready": 1,
+                    "warming": 1,
+                },
+            },
+        )
