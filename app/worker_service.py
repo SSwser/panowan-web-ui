@@ -75,11 +75,18 @@ def _resolve_engine(registry: EngineRegistry, job: dict):
 def _worker_still_owns_job(
     backend: LocalJobBackend, job_id: str, worker_id: str
 ) -> bool:
+    """True while ``worker_id`` still holds an active in-flight lease.
+
+    The check spans ``claimed``, ``running``, and ``cancelling`` because all
+    three are legal worker-owned states under ADR 0010, and the worker must
+    treat the cooperative ``cancelling`` window as ongoing ownership rather
+    than as a release.
+    """
     current = backend.get_job(job_id)
     return bool(
         current is not None
-        and current.get("status") == "running"
         and current.get("worker_id") == worker_id
+        and current.get("status") in {"claimed", "running", "cancelling"}
     )
 
 
@@ -158,12 +165,16 @@ def run_one_job(
     if job is None:
         return False
 
-    if not _worker_still_owns_job(backend, job["job_id"], worker_id):
+    job_id = job["job_id"]
+    started = backend.mark_running(job_id, worker_id)
+    if started is None:
+        # Cancellation or another writer raced ahead between claim and start;
+        # release the polling tick without invoking the engine.
         return True
+    job = started
 
     engine = _resolve_engine(registry, job)
 
-    job_id = job["job_id"]
     job = {
         **job,
         "_should_cancel": lambda: not _worker_still_owns_job(
@@ -173,13 +184,19 @@ def run_one_job(
 
     try:
         result = engine.run(job)
-        backend.complete_job_if_running(job_id, worker_id, result.output_path)
+        # mark_succeeded refuses to overwrite a terminal state, so a cancel
+        # observed while the engine was running stays cancelled instead of
+        # being silently rewritten to succeeded by a late completion report.
+        if backend.mark_succeeded(job_id, worker_id, result.output_path) is None:
+            backend.request_cancellation(job_id, finished=True)
         return True
     except Exception as exc:
-        # Upscale and generation failures are job-scoped errors. Re-raising here
-        # would terminate the worker loop and leave the fleet unavailable until
-        # someone manually restarts the process.
-        backend.fail_job_if_running(job_id, worker_id, str(exc))
+        # Engine failures are job-scoped; re-raising would terminate the
+        # worker loop and leave the fleet idle until a manual restart.
+        if backend.mark_failed(job_id, worker_id, str(exc)) is None:
+            # Job was already moved to a terminal state (e.g., cancelled)
+            # while the engine ran; leave the existing terminal record alone.
+            pass
         return True
 
 

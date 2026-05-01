@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import json
 from unittest.mock import patch
 
 from app.jobs.local import LocalJobBackend
@@ -29,7 +30,7 @@ class LocalJobBackendTests(unittest.TestCase):
             listed = backend.list_jobs()
             self.assertEqual([job["job_id"] for job in listed], ["job-1"])
 
-    def test_claim_next_job_marks_it_running(self):
+    def test_claim_next_job_marks_it_claimed(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             backend.create_job(
@@ -40,9 +41,34 @@ class LocalJobBackendTests(unittest.TestCase):
 
             self.assertIsNotNone(claimed)
             self.assertEqual(claimed["job_id"], "job-1")
-            self.assertEqual(claimed["status"], "running")
+            self.assertEqual(claimed["status"], "claimed")
+            self.assertIsNone(claimed["started_at"])
             self.assertEqual(claimed["worker_id"], "worker-a")
             self.assertIsNone(backend.claim_next_job(worker_id="worker-a"))
+
+    def test_mark_running_transitions_claimed_to_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="worker-a")
+
+            running = backend.mark_running("job-1", "worker-a")
+
+            self.assertIsNotNone(running)
+            self.assertEqual(running["status"], "running")
+            self.assertIsNotNone(running["started_at"])
+
+    def test_mark_running_rejects_wrong_owner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="worker-a")
+
+            self.assertIsNone(backend.mark_running("job-1", "worker-b"))
 
     def test_restore_marks_incomplete_jobs_failed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -64,14 +90,17 @@ class LocalJobBackendTests(unittest.TestCase):
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             backend.create_job({"job_id": "j1", "status": "queued", "type": "generate"})
             backend.create_job({"job_id": "j2", "status": "queued", "type": "generate"})
-            backend.claim_next_job(worker_id="w")  # claims j1
+            backend.claim_next_job(worker_id="w")  # j1 -> claimed
+            backend.mark_running("j1", "w")  # claimed -> running
+            backend.claim_next_job(worker_id="w")  # j2 -> claimed
+            backend.mark_running("j2", "w")  # claimed -> running
 
-            completed = backend.complete_job("j1", "/out/j1.mp4")
-            self.assertEqual(completed["status"], "completed")
+            completed = backend.mark_succeeded("j1", "w", "/out/j1.mp4")
+            self.assertEqual(completed["status"], "succeeded")
             self.assertEqual(completed["output_path"], "/out/j1.mp4")
             self.assertIsNotNone(completed["finished_at"])
 
-            failed = backend.fail_job("j2", "boom")
+            failed = backend.mark_failed("j2", "w", "boom")
             self.assertEqual(failed["status"], "failed")
             self.assertEqual(failed["error"], "boom")
             self.assertIsNotNone(failed["finished_at"])
@@ -93,7 +122,7 @@ class LocalJobBackendTests(unittest.TestCase):
                 }
             )
             backend.create_job(
-                {"job_id": "j2", "status": "completed", "type": "generate"}
+                {"job_id": "j2", "status": "succeeded", "type": "generate"}
             )
 
             deleted = backend.delete_failed_jobs()
@@ -170,6 +199,103 @@ class LocalJobBackendTests(unittest.TestCase):
                 second.create_job(
                     {"job_id": "j1", "status": "queued", "type": "generate"}
                 )
+
+    def test_cancel_queued_job_marks_job_cancelled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+
+            self.assertTrue(backend.cancel_queued_job("job-1"))
+            job = backend.get_job("job-1")
+            self.assertEqual(job["status"], "cancelled")
+            self.assertIsNone(job["error"])
+            self.assertIsNotNone(job["finished_at"])
+
+    def test_request_cancellation_on_running_job_marks_cancelling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="w")
+            backend.mark_running("job-1", "w")
+
+            updated = backend.request_cancellation("job-1")
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["status"], "cancelling")
+
+    def test_request_cancellation_finalizes_cancelling_to_cancelled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="w")
+            backend.mark_running("job-1", "w")
+            backend.request_cancellation("job-1")
+
+            finalized = backend.request_cancellation("job-1", finished=True)
+
+            self.assertIsNotNone(finalized)
+            self.assertEqual(finalized["status"], "cancelled")
+            self.assertIsNotNone(finalized["finished_at"])
+
+    def test_request_cancellation_refuses_terminal_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="w")
+            backend.mark_running("job-1", "w")
+            backend.mark_succeeded("job-1", "w", "/out.mp4")
+
+            self.assertIsNone(backend.request_cancellation("job-1"))
+            self.assertEqual(backend.get_job("job-1")["status"], "succeeded")
+
+    def test_restore_normalizes_legacy_completed_and_cancelled_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/jobs.json"
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "jobs": {
+                            "done": {
+                                "job_id": "done",
+                                "status": "completed",
+                                "type": "generate",
+                            },
+                            "cancelled": {
+                                "job_id": "cancelled",
+                                "status": "failed",
+                                "error": "Cancelled by user",
+                                "type": "generate",
+                            },
+                            "real-failure": {
+                                "job_id": "real-failure",
+                                "status": "failed",
+                                "error": "engine exploded",
+                                "type": "generate",
+                            },
+                        }
+                    },
+                    handle,
+                )
+
+            restored = LocalJobBackend(path)
+            restored.restore()
+
+            self.assertEqual(restored.get_job("done")["status"], "succeeded")
+            self.assertEqual(restored.get_job("cancelled")["status"], "cancelled")
+            self.assertIsNone(restored.get_job("cancelled")["error"])
+            self.assertEqual(restored.get_job("real-failure")["status"], "failed")
+            self.assertEqual(
+                restored.get_job("real-failure")["error"], "engine exploded"
+            )
 
 
 if __name__ == "__main__":
