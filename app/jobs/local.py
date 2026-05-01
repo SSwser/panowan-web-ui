@@ -474,6 +474,30 @@ class LocalJobBackend:
             if isinstance(record, dict)
         }
 
+    # --- Test scaffolding (not for production use) ---
+    # These helpers bypass the canonical guarded-transition path so tests
+    # can synthesize states (e.g., an already-elapsed cancel deadline) that
+    # cannot be produced by replaying real API/worker calls in wall-clock
+    # time. They must not be invoked from app code.
+    def force_job_fields(
+        self, job_id: str, **fields: Any
+    ) -> dict[str, Any] | None:
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            for key, value in fields.items():
+                job[key] = value
+            self._persist_unlocked()
+            return copy.deepcopy(job)
+
+    def force_job_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(record["job_id"])
+        with self._locked_store():
+            self._jobs[job_id] = copy.deepcopy(record)
+            self._persist_unlocked()
+            return copy.deepcopy(self._jobs[job_id])
+
     def _locked_store(self) -> "_StoreLock":
         return _StoreLock(self)
 

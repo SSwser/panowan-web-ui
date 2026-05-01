@@ -697,3 +697,97 @@ class RuntimeCancellationContractTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "cancelled")
         self.assertEqual(result["output_path"], "/tmp/out.mp4")
+
+
+class WorkerCancellationGovernanceTests(unittest.TestCase):
+    def make_backend(self) -> LocalJobBackend:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        return LocalJobBackend(f"{self._tmp.name}/jobs.json")
+
+    def make_worker_store(self) -> LocalWorkerRegistry:
+        self._tmp_w = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp_w.cleanup)
+        return LocalWorkerRegistry(f"{self._tmp_w.name}/workers.json")
+
+    def make_running_job(
+        self, backend: LocalJobBackend, *, worker_id: str
+    ) -> dict:
+        backend.create_job(
+            {"job_id": "job-1", "status": "queued", "type": "generate"}
+        )
+        backend.claim_next_job(worker_id=worker_id)
+        return backend.mark_running("job-1", worker_id)
+
+    def _get_worker(
+        self, registry: LocalWorkerRegistry, worker_id: str
+    ) -> dict:
+        for worker in registry.list_workers():
+            if worker.get("worker_id") == worker_id:
+                return worker
+        raise AssertionError(f"worker {worker_id} not found in registry")
+
+    def test_worker_times_out_cancelling_job_to_failed(self) -> None:
+        from app.worker_service import reconcile_overdue_cancellations
+
+        backend = self.make_backend()
+        worker_id = "worker-1"
+        self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+        backend.force_job_fields(
+            "job-1",
+            cancel_deadline_at="2026-05-01T13:59:00+00:00",
+        )
+
+        reconciled = reconcile_overdue_cancellations(
+            backend, worker_id=worker_id
+        )
+
+        self.assertEqual(len(reconciled), 1)
+        self.assertEqual(reconciled[0]["status"], "failed")
+        self.assertEqual(reconciled[0]["error_code"], "cancel_timeout")
+
+    def test_reconcile_skips_jobs_with_future_deadline(self) -> None:
+        from app.worker_service import reconcile_overdue_cancellations
+
+        backend = self.make_backend()
+        worker_id = "worker-1"
+        self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+        backend.force_job_fields(
+            "job-1",
+            cancel_deadline_at="2099-01-01T00:00:00+00:00",
+        )
+
+        reconciled = reconcile_overdue_cancellations(
+            backend, worker_id=worker_id
+        )
+
+        self.assertEqual(reconciled, [])
+        job = backend.get_job("job-1")
+        self.assertEqual(job["status"], "cancelling")
+
+    def test_worker_releases_occupancy_when_runtime_confirms_cancel(self) -> None:
+        from app.worker_service import finalize_runtime_cancellation
+
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+        # Pre-populate registry with a busy worker so the test asserts on
+        # the actual occupancy-release effect rather than a default zero.
+        worker_store.upsert_worker(worker_id, {"running_jobs": 1})
+
+        result = finalize_runtime_cancellation(
+            backend,
+            worker_store,
+            job_id="job-1",
+            worker_id=worker_id,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], "cancelled")
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+

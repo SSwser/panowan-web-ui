@@ -3,6 +3,7 @@ import os
 import socket
 import time
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.backends.registry import discover
@@ -320,6 +321,62 @@ def run_one_job(
                 reason="engine_exception",
             )
         return True
+
+
+def reconcile_overdue_cancellations(
+    backend: LocalJobBackend,
+    *,
+    worker_id: str | None = None,
+    now: datetime | None = None,
+) -> list[dict[str, object]]:
+    """Force jobs whose cancel deadline has elapsed into terminal ``failed``.
+
+    Owned by the worker loop: cancellation convergence is a worker-side
+    responsibility per ADR 0010, so the API never needs to police deadlines.
+    """
+    now = now or datetime.now(UTC)
+    reconciled: list[dict[str, object]] = []
+    for job in backend.list_jobs():
+        if job.get("status") != "cancelling":
+            continue
+        if worker_id is not None and job.get("worker_id") != worker_id:
+            continue
+        deadline_raw = job.get("cancel_deadline_at")
+        if not deadline_raw:
+            continue
+        try:
+            deadline_at = datetime.fromisoformat(str(deadline_raw))
+        except ValueError:
+            continue
+        if deadline_at > now:
+            continue
+        result = backend.finalize_cancellation_timeout(
+            str(job["job_id"]),
+            worker_id=str(job["worker_id"]),
+            reason="cancel_timeout",
+        )
+        if result is not None:
+            reconciled.append(result)
+    return reconciled
+
+
+def finalize_runtime_cancellation(
+    backend: LocalJobBackend,
+    worker_registry: LocalWorkerRegistry,
+    *,
+    job_id: str,
+    worker_id: str,
+) -> dict[str, object] | None:
+    """Confirm cooperative cancellation and release the worker's occupancy.
+
+    Routing the running-jobs decrement through the worker registry here
+    keeps occupancy accounting co-located with the cancellation outcome,
+    so the next telemetry tick cannot observe a phantom in-flight slot.
+    """
+    result = backend.request_cancellation(job_id, worker_id=worker_id, finished=True)
+    if result is not None:
+        worker_registry.upsert_worker(worker_id, {"running_jobs": 0})
+    return result
 
 
 def main() -> None:
