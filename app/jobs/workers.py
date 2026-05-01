@@ -38,20 +38,18 @@ class LocalWorkerRegistry:
             self._persist_unlocked()
             return copy.deepcopy(normalized)
 
-    def set_running_jobs(self, worker_id: str, count: int) -> dict[str, Any] | None:
-        """Update only the running_jobs counter on an existing worker record.
+    def adjust_running_jobs(self, worker_id: str, delta: int) -> dict[str, Any] | None:
+        """Atomically nudge running_jobs by ``delta``, clamped at zero.
 
-        Used when occupancy changes outside the heartbeat path (e.g. the
-        worker finalizes a cancellation between ticks). Avoids the
-        partial-record hazard of upsert_worker, which would replace the
-        entire record and silently wipe capabilities, concurrency limits,
-        and runtime status until the next telemetry tick.
+        Used when occupancy changes outside the heartbeat path. Going through a
+        delta keeps the call correct for workers that run multiple jobs
+        concurrently — releasing one slot must not zero the counter.
         """
         with self._locked_store():
             existing = self._workers.get(worker_id)
             if existing is None:
                 return None
-            existing["running_jobs"] = int(count)
+            existing["running_jobs"] = max(0, int(existing.get("running_jobs", 0)) + int(delta))
             existing["last_seen"] = now_iso()
             self._persist_unlocked()
             return copy.deepcopy(existing)

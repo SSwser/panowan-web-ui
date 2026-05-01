@@ -14,8 +14,10 @@ from app.worker_service import (
     _startup_preload,
     build_host,
     build_registry,
+    finalize_runtime_cancellation,
     log_worker_summary,
     publish_worker_state,
+    reconcile_overdue_cancellations,
     run_one_job,
 )
 
@@ -728,8 +730,6 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         raise AssertionError(f"worker {worker_id} not found in registry")
 
     def test_worker_times_out_cancelling_job_to_failed(self) -> None:
-        from app.worker_service import reconcile_overdue_cancellations
-
         backend = self.make_backend()
         worker_id = "worker-1"
         self.make_running_job(backend, worker_id=worker_id)
@@ -748,8 +748,6 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         self.assertEqual(reconciled[0]["error_code"], "cancel_timeout")
 
     def test_reconcile_skips_jobs_with_future_deadline(self) -> None:
-        from app.worker_service import reconcile_overdue_cancellations
-
         backend = self.make_backend()
         worker_id = "worker-1"
         self.make_running_job(backend, worker_id=worker_id)
@@ -768,8 +766,6 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         self.assertEqual(job["status"], "cancelling")
 
     def test_worker_releases_occupancy_when_runtime_confirms_cancel(self) -> None:
-        from app.worker_service import finalize_runtime_cancellation
-
         backend = self.make_backend()
         worker_store = self.make_worker_store()
         worker_id = "worker-1"
@@ -808,18 +804,18 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         self.assertEqual(summary["panowan_runtime_status"], "ready")
 
 
-class LocalWorkerRegistrySetRunningJobsTests(unittest.TestCase):
+class LocalWorkerRegistryAdjustRunningJobsTests(unittest.TestCase):
     def _make_registry(self) -> LocalWorkerRegistry:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         return LocalWorkerRegistry(f"{tmp.name}/workers.json")
 
-    def test_set_running_jobs_preserves_other_fields(self) -> None:
+    def test_adjust_running_jobs_preserves_other_fields(self) -> None:
         registry = self._make_registry()
         registry.upsert_worker(
             "worker-1",
             {
-                "running_jobs": 2,
+                "running_jobs": 1,
                 "capabilities": ["generate", "upscale"],
                 "max_concurrent_jobs": 4,
                 "available_upscale_models": ["realesr-animevideov3"],
@@ -827,7 +823,7 @@ class LocalWorkerRegistrySetRunningJobsTests(unittest.TestCase):
             },
         )
 
-        updated = registry.set_running_jobs("worker-1", 0)
+        updated = registry.adjust_running_jobs("worker-1", -1)
 
         self.assertIsNotNone(updated)
         self.assertEqual(updated["running_jobs"], 0)
@@ -838,7 +834,28 @@ class LocalWorkerRegistrySetRunningJobsTests(unittest.TestCase):
         )
         self.assertEqual(updated["panowan_runtime_status"], "ready")
 
-    def test_set_running_jobs_returns_none_for_unknown_worker(self) -> None:
+    def test_adjust_running_jobs_decrements_multi_job_worker(self) -> None:
         registry = self._make_registry()
-        self.assertIsNone(registry.set_running_jobs("missing", 0))
+        registry.upsert_worker(
+            "worker-1",
+            {"running_jobs": 2, "max_concurrent_jobs": 4},
+        )
+
+        updated = registry.adjust_running_jobs("worker-1", -1)
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["running_jobs"], 1)
+
+    def test_adjust_running_jobs_returns_none_for_unknown_worker(self) -> None:
+        registry = self._make_registry()
+        self.assertIsNone(registry.adjust_running_jobs("missing", -1))
+
+    def test_adjust_running_jobs_clamps_at_zero(self) -> None:
+        registry = self._make_registry()
+        registry.upsert_worker("worker-1", {"running_jobs": 0})
+
+        updated = registry.adjust_running_jobs("worker-1", -1)
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["running_jobs"], 0)
 
