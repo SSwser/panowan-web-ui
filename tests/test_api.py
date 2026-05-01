@@ -728,16 +728,76 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(
             response.json(),
             {
-                "total_workers": 2,
+                "known_workers": 2,
                 "online_workers": 2,
                 "busy_workers": 1,
+                "stuck_cancelling_workers": 0,
                 "queued_jobs": 1,
                 "running_jobs": 1,
+                "cancelling_jobs": 0,
                 "total_capacity": 3,
                 "occupied_capacity": 1,
-                "panowan_runtime_status": {
-                    "ready": 1,
-                    "warming": 1,
-                },
+                "effective_available_capacity": 2,
             },
         )
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class WorkerSummaryContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        patched_settings = replace(
+            api.settings,
+            output_dir=os.path.join(self.temp_dir.name, "outputs"),
+            job_store_path=os.path.join(self.temp_dir.name, "jobs.json"),
+            worker_store_path=os.path.join(self.temp_dir.name, "workers.json"),
+            worker_stale_seconds=60.0,
+        )
+        self.settings_patch = patch("app.api.settings", patched_settings)
+        self.settings_patch.start()
+        self.addCleanup(self.settings_patch.stop)
+
+        from app.jobs import LocalJobBackend
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self.worker_registry = LocalWorkerRegistry(api.settings.worker_store_path)
+
+    def test_summary_keeps_known_workers_when_all_are_stale(self) -> None:
+        self.worker_registry.upsert_worker(
+            "worker-1",
+            {"status": "online", "running_jobs": 0, "max_concurrent_jobs": 1},
+        )
+        self.worker_registry.upsert_worker(
+            "worker-2",
+            {"status": "online", "running_jobs": 1, "max_concurrent_jobs": 1},
+        )
+        # Backdate last_seen far enough that the staleness filter excludes both.
+        self.worker_registry.force_worker_fields(
+            "worker-1", last_seen="2000-01-01T00:00:00+00:00"
+        )
+        self.worker_registry.force_worker_fields(
+            "worker-2", last_seen="2000-01-01T00:00:00+00:00"
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["known_workers"], 2)
+        self.assertEqual(summary["online_workers"], 0)
+
+    def test_summary_reports_stuck_cancelling_workers_separately(self) -> None:
+        self.backend.force_job_record({
+            "job_id": "job-1",
+            "status": "cancelling",
+            "worker_id": "worker-2",
+            "cancel_deadline_at": "2026-05-01T14:30:00+00:00",
+        })
+        self.worker_registry.upsert_worker(
+            "worker-2",
+            {"status": "online", "running_jobs": 1, "max_concurrent_jobs": 1},
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["cancelling_jobs"], 1)
+        self.assertEqual(summary["stuck_cancelling_workers"], 1)

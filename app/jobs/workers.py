@@ -73,6 +73,22 @@ class LocalWorkerRegistry:
             for worker in self.list_workers(stale_seconds=stale_seconds)
         )
 
+    # --- Test scaffolding (not for production use) ---
+    # Bypasses the normalize/heartbeat path so tests can synthesize states
+    # (e.g., a backdated last_seen) that cannot be produced by replaying real
+    # heartbeat calls in wall-clock time. Must not be invoked from app code.
+    def force_worker_fields(
+        self, worker_id: str, **fields: Any
+    ) -> dict[str, Any] | None:
+        with self._locked_store():
+            worker = self._workers.get(worker_id)
+            if worker is None:
+                return None
+            for key, value in fields.items():
+                worker[key] = value
+            self._persist_unlocked()
+            return copy.deepcopy(worker)
+
     def _normalize_worker(self, worker_id: str, record: dict[str, Any]) -> dict[str, Any]:
         normalized = copy.deepcopy(record)
         normalized["worker_id"] = worker_id

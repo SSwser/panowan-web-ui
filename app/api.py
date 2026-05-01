@@ -512,27 +512,33 @@ def delete_failed_jobs_endpoint() -> dict:
 
 def _worker_summary() -> dict[str, Any]:
     jobs = get_job_backend().list_jobs()
-    workers = get_worker_registry().list_workers(
-        stale_seconds=settings.worker_stale_seconds,
-    )
-    queued_jobs = sum(1 for job in jobs if job.get("status") in {"queued", "claimed"})
-    running_jobs = sum(1 for job in jobs if job.get("status") in {"running", "cancelling"})
-    busy_workers = sum(1 for worker in workers if int(worker.get("running_jobs") or 0) > 0)
-    total_capacity = sum(int(worker.get("max_concurrent_jobs") or 0) for worker in workers)
-    occupied_capacity = sum(int(worker.get("running_jobs") or 0) for worker in workers)
-    runtime_counts: dict[str, int] = {}
-    for worker in workers:
-        runtime = str(worker.get("panowan_runtime_status") or "unknown")
-        runtime_counts[runtime] = runtime_counts.get(runtime, 0) + 1
+    registry = get_worker_registry()
+    known_workers = registry.list_workers(stale_seconds=None)
+    online_workers = registry.list_workers(stale_seconds=settings.worker_stale_seconds)
+    online_ids = {str(worker.get("worker_id")) for worker in online_workers}
+    cancelling_by_worker = {
+        str(job.get("worker_id"))
+        for job in jobs
+        if job.get("status") == "cancelling" and job.get("worker_id")
+    }
+    busy_ids = {
+        str(worker.get("worker_id"))
+        for worker in online_workers
+        if int(worker.get("running_jobs") or 0) > 0
+    }
+    total_capacity = sum(int(worker.get("max_concurrent_jobs") or 0) for worker in online_workers)
+    occupied_capacity = sum(int(worker.get("running_jobs") or 0) for worker in online_workers)
     return {
-        "total_workers": len(workers),
-        "online_workers": len(workers),
-        "busy_workers": busy_workers,
-        "queued_jobs": queued_jobs,
-        "running_jobs": running_jobs,
+        "known_workers": len(known_workers),
+        "online_workers": len(online_workers),
+        "busy_workers": len(busy_ids),
+        "stuck_cancelling_workers": len(cancelling_by_worker & online_ids),
+        "queued_jobs": sum(1 for job in jobs if job.get("status") in {"queued", "claimed"}),
+        "running_jobs": sum(1 for job in jobs if job.get("status") == "running"),
+        "cancelling_jobs": sum(1 for job in jobs if job.get("status") == "cancelling"),
         "total_capacity": total_capacity,
         "occupied_capacity": occupied_capacity,
-        "panowan_runtime_status": runtime_counts,
+        "effective_available_capacity": max(total_capacity - occupied_capacity, 0),
     }
 
 
