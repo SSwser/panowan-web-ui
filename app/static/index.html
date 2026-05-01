@@ -233,7 +233,7 @@
       /* --- worker summary --- */
       .worker-summary {
         display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
         gap: 12px;
         padding: 16px 20px;
       }
@@ -585,9 +585,11 @@
       <!-- History panel -->
       <div class="panel">
         <div id="worker-summary" class="worker-summary" aria-live="polite">
-          <div class="worker-card"><span>Worker 总数</span><strong id="workers-total">-</strong></div>
+          <div class="worker-card"><span>已知 Worker</span><strong id="workers-total">-</strong></div>
           <div class="worker-card"><span>在线 Worker</span><strong id="workers-online">-</strong></div>
           <div class="worker-card"><span>生成中 Worker</span><strong id="workers-busy">-</strong></div>
+          <div class="worker-card"><span>卡在取消</span><strong id="workers-stuck-cancelling">-</strong></div>
+          <div class="worker-card"><span>可用容量</span><strong id="workers-available-capacity">-</strong></div>
           <div class="worker-card"><span>排队任务</span><strong id="jobs-queued">-</strong></div>
           <div class="worker-card"><span>生成中任务</span><strong id="jobs-running">-</strong></div>
         </div>
@@ -1034,16 +1036,12 @@
       });
 
       // ── cancel job ──
-      async function cancelJob(jobId, isRunning) {
-        if (isRunning) {
-          const ok = confirm("该任务正在执行，系统会尝试软取消。是否确认取消？");
-          if (!ok) return;
-        }
+      async function cancelJob(jobId) {
         try {
           const res = await fetch(`/jobs/${jobId}/cancel`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ force: isRunning }),
+            body: JSON.stringify({}),
           });
           const payload = await res.json();
           if (!res.ok && res.status !== 202) {
@@ -1053,11 +1051,30 @@
             _jobCache[payload.job_id] = payload;
             sseClient._renderIncremental();
           }
-          if (payload.status === "succeeded") {
-            alert("取消未生效，任务已完成");
-          }
         } catch (err) {
           alert(`取消失败: ${err}`);
+        }
+      }
+
+      // ── escalate cancel (force) ──
+      async function escalateCancel(jobId) {
+        if (!confirm("确认强制取消？该操作可能导致 worker 被标记不健康。")) return;
+        try {
+          const res = await fetch(`/jobs/${jobId}/cancel/escalate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          const payload = await res.json();
+          if (!res.ok && res.status !== 202) {
+            throw new Error(payload.detail || `HTTP ${res.status}`);
+          }
+          if (payload.job_id) {
+            _jobCache[payload.job_id] = payload;
+            sseClient._renderIncremental();
+          }
+        } catch (err) {
+          alert(`强制取消失败: ${err}`);
         }
       }
 
@@ -1152,10 +1169,11 @@
           }
           parts.push(`<button class="preview-btn" data-action="upscale" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--queued-soft);color:var(--accent);">提升画质</button>`);
         } else if (job.status === "queued" || job.status === "claimed" || job.status === "running") {
-          const running = job.status === "running" ? ' data-running="true"' : "";
-          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}"${running} style="background:var(--error-soft);color:var(--error);">取消</button>`);
+          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--error-soft);color:var(--error);">取消</button>`);
         } else if (job.status === "cancelling") {
           parts.push(`<span class="badge badge-running">正在取消…</span>`);
+          parts.push(`<button class="preview-btn" data-action="retry-cancel" data-job-id="${escapeHtml(job.job_id)}">重试取消</button>`);
+          parts.push(`<button class="preview-btn" data-action="escalate-cancel" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--error-soft);color:var(--error);">确认强制取消</button>`);
         } else if (job.status === "failed" && job.error) {
           parts.push(`<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`);
         }
@@ -1174,6 +1192,8 @@
         const previewBtn = event.target.closest('[data-action="preview"], .preview-btn:not([data-action])');
         const upscaleBtn = event.target.closest('[data-action="upscale"]');
         const cancelBtn = event.target.closest('[data-action="cancel"]');
+        const retryCancelBtn = event.target.closest('[data-action="retry-cancel"]');
+        const escalateBtn = event.target.closest('[data-action="escalate-cancel"]');
 
         if (previewBtn) {
           const job = _jobCache[previewBtn.dataset.jobId];
@@ -1186,9 +1206,15 @@
           return;
         }
         if (cancelBtn) {
-          const jobId = cancelBtn.dataset.jobId;
-          const isRunning = cancelBtn.dataset.running === "true";
-          cancelJob(jobId, isRunning);
+          cancelJob(cancelBtn.dataset.jobId);
+          return;
+        }
+        if (retryCancelBtn) {
+          cancelJob(retryCancelBtn.dataset.jobId);
+          return;
+        }
+        if (escalateBtn) {
+          escalateCancel(escalateBtn.dataset.jobId);
           return;
         }
       });
@@ -1241,15 +1267,19 @@
           const res = await fetch("/workers/summary");
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const summary = await res.json();
-          document.getElementById("workers-total").textContent = String(summary.total_workers ?? "-");
+          document.getElementById("workers-total").textContent = String(summary.known_workers ?? "-");
           document.getElementById("workers-online").textContent = String(summary.online_workers ?? "-");
           document.getElementById("workers-busy").textContent = String(summary.busy_workers ?? "-");
+          document.getElementById("workers-stuck-cancelling").textContent = String(summary.stuck_cancelling_workers ?? "-");
+          document.getElementById("workers-available-capacity").textContent = String(summary.effective_available_capacity ?? "-");
           document.getElementById("jobs-queued").textContent = String(summary.queued_jobs ?? "-");
           document.getElementById("jobs-running").textContent = String(summary.running_jobs ?? "-");
         } catch {
           document.getElementById("workers-total").textContent = "-";
           document.getElementById("workers-online").textContent = "-";
           document.getElementById("workers-busy").textContent = "-";
+          document.getElementById("workers-stuck-cancelling").textContent = "-";
+          document.getElementById("workers-available-capacity").textContent = "-";
           document.getElementById("jobs-queued").textContent = "-";
           document.getElementById("jobs-running").textContent = "-";
         }

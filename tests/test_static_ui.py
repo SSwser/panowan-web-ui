@@ -35,8 +35,24 @@ class StaticUiStateTests(unittest.TestCase):
 
     def test_cancel_flow_has_cancelling_feedback(self) -> None:
         self.assertIn('row changes to `正在取消`'.replace('`', ''), 'row changes to 正在取消')
-        self.assertIn('取消未生效，任务已完成', INDEX_HTML)
         self.assertIn('job.status === "cancelling"', INDEX_HTML)
+
+
+class StaticUiCancellationGovernanceTests(unittest.TestCase):
+    def read_static_html(self) -> str:
+        return INDEX_HTML
+
+    def test_worker_summary_uses_known_workers_and_stuck_cancelling_fields(self) -> None:
+        html = self.read_static_html()
+        self.assertIn('summary.known_workers', html)
+        self.assertIn('summary.stuck_cancelling_workers', html)
+        self.assertNotIn('summary.total_workers', html)
+
+    def test_cancelling_action_cell_exposes_retry_and_escalation(self) -> None:
+        html = self.read_static_html()
+        self.assertIn('data-action="retry-cancel"', html)
+        self.assertIn('data-action="escalate-cancel"', html)
+        self.assertNotIn('force: isRunning', html)
 
 
 if __name__ == "__main__":
