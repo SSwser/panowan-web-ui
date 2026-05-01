@@ -1070,8 +1070,14 @@
       }
 
       function statusBadge(status) {
-        const cls = ["queued","running","completed","failed"].includes(status) ? status : "unknown";
-        const label = { queued: "排队中", running: "生成中", completed: "已完成", failed: "失败" }[cls] || status;
+        const label = {
+          "queued": "排队中", "claimed": "排队中", "running": "生成中",
+          "cancelling": "正在取消", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消",
+        }[status] || status;
+        const cls = {
+          "queued": "queued", "claimed": "queued", "running": "running",
+          "cancelling": "running", "succeeded": "completed", "failed": "failed", "cancelled": "failed",
+        }[status] || "unknown";
         return `<span class="badge badge-${cls}">${label}</span>`;
       }
 
@@ -1087,7 +1093,7 @@
 
       function actionCell(job) {
         const parts = [];
-        if (job.status === "completed") {
+        if (job.status === "succeeded") {
           parts.push(`<button class="preview-btn" data-job-id="${escapeHtml(job.job_id)}">预览</button>`);
           if (job.type === "upscale") {
             const srcId = job.source_job_id || "";
@@ -1098,10 +1104,11 @@
             parts.push(`<a class="download-btn" href="${url}" download="${escapeHtml(job.job_id)}.mp4">下载</a>`);
           }
           parts.push(`<button class="preview-btn" data-action="upscale" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--queued-soft);color:var(--accent);">提升画质</button>`);
-        } else if (job.status === "queued") {
-          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--error-soft);color:var(--error);">取消</button>`);
-        } else if (job.status === "running") {
-          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}" data-running="true" style="background:var(--error-soft);color:var(--error);">取消</button>`);
+        } else if (job.status === "queued" || job.status === "claimed" || job.status === "running") {
+          const running = job.status === "running" ? ' data-running="true"' : "";
+          parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}"${running} style="background:var(--error-soft);color:var(--error);">取消</button>`);
+        } else if (job.status === "cancelling") {
+          parts.push(`<span class="badge badge-running">正在取消…</span>`);
         } else if (job.status === "failed" && job.error) {
           parts.push(`<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`);
         }
