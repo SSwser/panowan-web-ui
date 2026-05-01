@@ -775,9 +775,19 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         worker_id = "worker-1"
         self.make_running_job(backend, worker_id=worker_id)
         backend.request_cancellation("job-1", worker_id=worker_id)
-        # Pre-populate registry with a busy worker so the test asserts on
-        # the actual occupancy-release effect rather than a default zero.
-        worker_store.upsert_worker(worker_id, {"running_jobs": 1})
+        # Pre-populate registry with a fully-described busy worker so the
+        # test asserts that occupancy release does not collaterally wipe
+        # capability / concurrency / runtime-status fields between ticks.
+        worker_store.upsert_worker(
+            worker_id,
+            {
+                "running_jobs": 1,
+                "capabilities": ["generate", "upscale"],
+                "max_concurrent_jobs": 4,
+                "available_upscale_models": ["realesr-animevideov3"],
+                "panowan_runtime_status": "ready",
+            },
+        )
 
         result = finalize_runtime_cancellation(
             backend,
@@ -790,4 +800,45 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         self.assertEqual(result["status"], "cancelled")
         summary = self._get_worker(worker_store, worker_id)
         self.assertEqual(summary["running_jobs"], 0)
+        self.assertEqual(summary["capabilities"], ["generate", "upscale"])
+        self.assertEqual(summary["max_concurrent_jobs"], 4)
+        self.assertEqual(
+            summary["available_upscale_models"], ["realesr-animevideov3"]
+        )
+        self.assertEqual(summary["panowan_runtime_status"], "ready")
+
+
+class LocalWorkerRegistrySetRunningJobsTests(unittest.TestCase):
+    def _make_registry(self) -> LocalWorkerRegistry:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return LocalWorkerRegistry(f"{tmp.name}/workers.json")
+
+    def test_set_running_jobs_preserves_other_fields(self) -> None:
+        registry = self._make_registry()
+        registry.upsert_worker(
+            "worker-1",
+            {
+                "running_jobs": 2,
+                "capabilities": ["generate", "upscale"],
+                "max_concurrent_jobs": 4,
+                "available_upscale_models": ["realesr-animevideov3"],
+                "panowan_runtime_status": "ready",
+            },
+        )
+
+        updated = registry.set_running_jobs("worker-1", 0)
+
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["running_jobs"], 0)
+        self.assertEqual(updated["capabilities"], ["generate", "upscale"])
+        self.assertEqual(updated["max_concurrent_jobs"], 4)
+        self.assertEqual(
+            updated["available_upscale_models"], ["realesr-animevideov3"]
+        )
+        self.assertEqual(updated["panowan_runtime_status"], "ready")
+
+    def test_set_running_jobs_returns_none_for_unknown_worker(self) -> None:
+        registry = self._make_registry()
+        self.assertIsNone(registry.set_running_jobs("missing", 0))
 

@@ -375,7 +375,7 @@ def finalize_runtime_cancellation(
     """
     result = backend.request_cancellation(job_id, worker_id=worker_id, finished=True)
     if result is not None:
-        worker_registry.upsert_worker(worker_id, {"running_jobs": 0})
+        worker_registry.set_running_jobs(worker_id, 0)
     return result
 
 
