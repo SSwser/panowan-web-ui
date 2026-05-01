@@ -14,6 +14,7 @@ from app.worker_service import (
     _startup_preload,
     build_host,
     build_registry,
+    log_worker_summary,
     publish_worker_state,
     run_one_job,
 )
@@ -22,12 +23,12 @@ from app.worker_service import (
 class FakeHost:
     """Records preload/maybe_evict_idle/run_job/status calls for assertions."""
 
-    def __init__(self, status=RuntimeState.COLD):
+    def __init__(self, status=RuntimeState.COLD, provider_present: bool = True):
         self.preload_calls = []
         self.evict_calls = []
         self.run_calls = []
         self._status_state = status
-        self._has = {"panowan": True}
+        self._has = {"panowan": bool(provider_present)}
 
     def has_provider(self, key):
         return self._has.get(key, False)
@@ -60,11 +61,17 @@ class FakeEngine:
     name = "panowan"
     capabilities = ("generate",)
 
+    def __init__(self, output_path: str = "output.mp4"):
+        self._output_path = output_path
+
     def validate_runtime(self):
         return None
 
     def run(self, job):
-        return EngineResult(output_path=job["output_path"], metadata={"ok": True})
+        return EngineResult(
+            output_path=job.get("output_path", self._output_path),
+            metadata={"ok": True},
+        )
 
 
 class CancelledDuringRunEngine:
@@ -117,6 +124,63 @@ def _registry_with(engine) -> EngineRegistry:
 
 
 class WorkerServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Pre-existing tests in this class manage their own TemporaryDirectory
+        # contexts and ignore self.jobs_path/self.workers_path. The shared
+        # tmpdir below exists only for newer tests that use the _job_record
+        # helper and the canonical paths.
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.jobs_path = f"{self._tmpdir.name}/jobs.json"
+        self.workers_path = f"{self._tmpdir.name}/workers.json"
+
+    def _job_record(
+        self,
+        *,
+        job_id: str,
+        status: str = "queued",
+        job_type: str = "generate",
+        worker_id: str | None = None,
+    ) -> dict:
+        record = {
+            "job_id": job_id,
+            "status": status,
+            "type": job_type,
+            "output_path": f"{self._tmpdir.name}/outputs/output_{job_id}.mp4",
+        }
+        if worker_id is not None:
+            record["worker_id"] = worker_id
+        return record
+
+    def test_run_one_job_logs_terminal_transition(self) -> None:
+        backend = LocalJobBackend(self.jobs_path)
+        backend.create_job(self._job_record(job_id="job-log", status="queued"))
+        registry = _registry_with(FakeEngine(output_path="done.mp4"))
+        with self.assertLogs("app.worker_service", level="INFO") as cm:
+            run_one_job(backend, registry, worker_id="worker-1")
+        joined = "\n".join(cm.output)
+        self.assertIn("from_status=running", joined)
+        self.assertIn("to_status=succeeded", joined)
+        self.assertIn("job_id=job-log", joined)
+
+    def test_publish_worker_state_logs_queue_summary(self) -> None:
+        backend = LocalJobBackend(self.jobs_path)
+        backend.create_job(self._job_record(job_id="queued-1", status="queued"))
+        backend.create_job(
+            self._job_record(job_id="running-1", status="running", worker_id="worker-1")
+        )
+        registry = LocalWorkerRegistry(self.workers_path)
+        host = FakeHost(provider_present=True)
+        engine_registry = _registry_with(FakeEngine(output_path="done.mp4"))
+        with self.assertLogs("app.worker_service", level="INFO") as cm:
+            log_worker_summary(
+                backend, registry, host=host, engine_registry=engine_registry
+            )
+        joined = "\n".join(cm.output)
+        self.assertIn("queued=1", joined)
+        self.assertIn("running=1", joined)
+        self.assertIn("online_workers=0", joined)
+
     def test_run_one_job_claims_and_completes_job(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")

@@ -1,6 +1,8 @@
+import logging
 import os
 import socket
 import time
+from collections import Counter
 from pathlib import Path
 
 from app.backends.registry import discover
@@ -10,6 +12,8 @@ from app.runtime_host import ResidentRuntimeHost, RuntimeState
 from app.runtime_host_registration import build_provider_from_spec
 from app.settings import settings
 from app.upscaler import get_available_upscale_backends
+
+logger = logging.getLogger(__name__)
 
 JOB_TYPE_TO_ENGINE = {
     "generate": "panowan",
@@ -158,6 +162,56 @@ def _maybe_evict_idle(host: ResidentRuntimeHost) -> None:
         )
 
 
+def log_transition(
+    job_id: str,
+    from_status: str,
+    to_status: str,
+    *,
+    job_type: str,
+    worker_id: str | None,
+    reason: str,
+) -> None:
+    logger.info(
+        "job_transition job_id=%s from_status=%s to_status=%s job_type=%s worker_id=%s reason=%s",
+        job_id,
+        from_status,
+        to_status,
+        job_type,
+        worker_id or "-",
+        reason,
+    )
+
+
+def log_worker_summary(
+    backend: LocalJobBackend,
+    registry: LocalWorkerRegistry,
+    *,
+    host: ResidentRuntimeHost,
+    engine_registry: EngineRegistry,
+) -> None:
+    jobs = backend.list_jobs()
+    workers = registry.list_workers(stale_seconds=settings.worker_stale_seconds)
+    counts = Counter(str(job.get("status") or "unknown") for job in jobs)
+    active_ids = [
+        str(job.get("job_id"))
+        for job in jobs
+        if job.get("status") in {"claimed", "running", "cancelling"}
+    ]
+    logger.info(
+        "worker_summary queued=%s claimed=%s running=%s cancelling=%s succeeded=%s failed=%s cancelled=%s online_workers=%s busy_workers=%s active_jobs=%s",
+        counts.get("queued", 0),
+        counts.get("claimed", 0),
+        counts.get("running", 0),
+        counts.get("cancelling", 0),
+        counts.get("succeeded", 0),
+        counts.get("failed", 0),
+        counts.get("cancelled", 0),
+        len(workers),
+        sum(1 for w in workers if int(w.get("running_jobs") or 0) > 0),
+        ",".join(active_ids) or "-",
+    )
+
+
 def run_one_job(
     backend: LocalJobBackend, registry: EngineRegistry, worker_id: str
 ) -> bool:
@@ -166,10 +220,19 @@ def run_one_job(
         return False
 
     job_id = job["job_id"]
+    job_type = job.get("type", "generate")
     started = backend.mark_running(job_id, worker_id)
     if started is None:
         # Cancellation or another writer raced ahead between claim and start;
         # release the polling tick without invoking the engine.
+        log_transition(
+            job_id,
+            "claimed",
+            "cancelled",
+            job_type=job_type,
+            worker_id=worker_id,
+            reason="cancelled_before_start",
+        )
         return True
     job = started
 
@@ -189,6 +252,23 @@ def run_one_job(
         # being silently rewritten to succeeded by a late completion report.
         if backend.mark_succeeded(job_id, worker_id, result.output_path) is None:
             backend.request_cancellation(job_id, finished=True)
+            log_transition(
+                job_id,
+                "running",
+                "cancelled",
+                job_type=job_type,
+                worker_id=worker_id,
+                reason="cancellation_observed_after_run",
+            )
+        else:
+            log_transition(
+                job_id,
+                "running",
+                "succeeded",
+                job_type=job_type,
+                worker_id=worker_id,
+                reason="engine_completed",
+            )
         return True
     except Exception as exc:
         # Engine failures are job-scoped; re-raising would terminate the
@@ -196,7 +276,23 @@ def run_one_job(
         if backend.mark_failed(job_id, worker_id, str(exc)) is None:
             # Job was already moved to a terminal state (e.g., cancelled)
             # while the engine ran; leave the existing terminal record alone.
-            pass
+            log_transition(
+                job_id,
+                "running",
+                "cancelled",
+                job_type=job_type,
+                worker_id=worker_id,
+                reason="cancellation_observed_during_failure",
+            )
+        else:
+            log_transition(
+                job_id,
+                "running",
+                "failed",
+                job_type=job_type,
+                worker_id=worker_id,
+                reason="engine_exception",
+            )
         return True
 
 
@@ -222,6 +318,9 @@ def main() -> None:
     _startup_preload(host)
     while True:
         publish_worker_state(worker_registry, worker_id, registry, host)
+        log_worker_summary(
+            backend, worker_registry, host=host, engine_registry=registry
+        )
         _maybe_evict_idle(host)
         worked = run_one_job(backend, registry, worker_id)
         if not worked:
