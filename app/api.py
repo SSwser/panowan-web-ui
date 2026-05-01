@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 from .generator import extract_prompt, resolve_inference_params
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
@@ -434,7 +434,8 @@ def download_job(job_id: str) -> FileResponse:
     )
 
 
-def cancel_job(job_id: str, force: bool = False) -> dict:
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict[str, Any]:
     job = _get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -452,52 +453,41 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
             raise HTTPException(status_code=404, detail="Job not found")
         status = job["status"]
 
-    if status == "running" or status == "claimed":
-        if not force:
-            return {
-                "warning": True,
-                "job_id": job_id,
-                "status": status,
-                "message": (
-                    "Job is currently running. Force termination may cause "
-                    "incomplete output. Set force=true to confirm."
-                ),
-                "pid": None,
-            }
-        # Force-cancel routes through the canonical request_cancellation
-        # entry point: it transitions claimed/running -> cancelling so the
-        # worker can observe _should_cancel() and finalize cooperatively.
-        # The terminal cancelled write is owned by the worker via
-        # request_cancellation(finished=True) once the engine yields.
-        result = get_job_backend().request_cancellation(job_id)
+    if status in {"claimed", "running"}:
+        result = get_job_backend().request_cancellation(
+            job_id, worker_id=job.get("worker_id")
+        )
         if result is None:
-            job = _get_job(job_id)
-            if job is None:
+            current = _get_job(job_id)
+            if current is None:
                 raise HTTPException(status_code=404, detail="Job not found")
             raise HTTPException(
                 status_code=409,
-                detail=f"Cannot cancel job with status {job['status']}",
+                detail=f"Cannot cancel job with status {current['status']}",
             )
         broadcast_job_event("job_updated", result)
         return result
 
     if status == "cancelling":
-        # Cancellation already requested; treat as idempotent acknowledgment.
         return job
 
-    # succeeded, failed, or cancelled
     raise HTTPException(
         status_code=409, detail=f"Cannot cancel job with status {status}"
     )
 
 
-@app.post("/jobs/{job_id}/cancel")
-def cancel_job_endpoint(job_id: str, payload: dict = None) -> dict:
-    payload = payload or {}
-    force = payload.get("force", False)
-    result = cancel_job(job_id, force=force)
-    if result.get("warning"):
-        return JSONResponse(content=result, status_code=202)
+@app.post("/jobs/{job_id}/cancel/escalate")
+def escalate_cancel_job_endpoint(job_id: str) -> dict[str, Any]:
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    worker_id = job.get("worker_id")
+    if not worker_id:
+        raise HTTPException(status_code=409, detail="Job is not in cancelling state")
+    result = get_job_backend().escalate_cancellation(job_id, worker_id=worker_id)
+    if result is None:
+        raise HTTPException(status_code=409, detail="Job is not in cancelling state")
+    broadcast_job_event("job_updated", result)
     return result
 
 

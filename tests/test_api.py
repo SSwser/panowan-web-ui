@@ -575,48 +575,36 @@ class ApiTests(unittest.TestCase):
         api._create_job_record("q1", "", "", {})
 
         with unittest.mock.patch.object(api, "broadcast_job_event") as broadcast:
-            result = api.cancel_job("q1", force=False)
+            result = api.cancel_job("q1")
 
         self.assertEqual(result["status"], "cancelled")
         self.assertIsNone(result["error"])
         broadcast.assert_called_once_with("job_updated", result)
 
-    def test_cancel_running_without_force_returns_warning(self) -> None:
-        # Subprocess termination now lives in the worker (Task 6); the API
-        # cannot return a real PID and just emits the warning shape.
+    def test_cancel_running_job_transitions_to_cancelling(self) -> None:
         api._create_job_record("r1", "", "", {})
-        api._update_job("r1", status="running", started_at="now")
+        api._update_job(
+            "r1", status="running", started_at="now", worker_id="worker-x"
+        )
 
-        result = api.cancel_job("r1", force=False)
+        result = api.cancel_job("r1")
 
-        self.assertTrue(result.get("warning"))
-        self.assertEqual(result["status"], "running")
-        self.assertIsNone(result["pid"])
+        self.assertEqual(result["status"], "cancelling")
+        self.assertEqual(result["cancel_mode"], "soft")
+        self.assertNotIn("warning", result)
 
     def test_cancel_completed_job_raises(self) -> None:
         api._create_job_record("c1", "", "/out.mp4", {})
         api._update_job("c1", status="succeeded", finished_at="now")
 
         with self.assertRaises(HTTPException) as ctx:
-            api.cancel_job("c1", force=False)
+            api.cancel_job("c1")
         self.assertEqual(ctx.exception.status_code, 409)
 
     def test_cancel_nonexistent_job_raises(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
-            api.cancel_job("nonexistent", force=False)
+            api.cancel_job("nonexistent")
         self.assertEqual(ctx.exception.status_code, 404)
-
-    def test_cancel_running_with_force_marks_cancelling(self) -> None:
-        # ADR 0010: force-cancel from the API moves running -> cancelling so
-        # the worker can observe _should_cancel(), abort cooperatively, and
-        # write the terminal cancelled record itself.
-        api._create_job_record("r2", "", "", {})
-        api._update_job("r2", status="running", started_at="now", worker_id="worker-x")
-
-        result = api.cancel_job("r2", force=True)
-
-        self.assertEqual(result["status"], "cancelling")
-        self.assertIsNone(result["error"])
 
     def test_upscale_and_cancel_queued_job(self) -> None:
         """End-to-end: create source job, upscale it, cancel the upscale."""
@@ -637,7 +625,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(resp["type"], "upscale")
 
         # Cancel the queued upscale job
-        result = api.cancel_job(upscale_id, force=False)
+        result = api.cancel_job(upscale_id)
         self.assertEqual(result["status"], "cancelled")
         self.assertIsNone(result["error"])
 
@@ -801,3 +789,109 @@ class WorkerSummaryContractTests(unittest.TestCase):
 
         self.assertEqual(summary["cancelling_jobs"], 1)
         self.assertEqual(summary["stuck_cancelling_workers"], 1)
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class CancelApiContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        patched_settings = replace(
+            api.settings,
+            output_dir=os.path.join(self.temp_dir.name, "outputs"),
+            job_store_path=os.path.join(self.temp_dir.name, "jobs.json"),
+            worker_store_path=os.path.join(self.temp_dir.name, "workers.json"),
+        )
+        self.settings_patch = patch("app.api.settings", patched_settings)
+        self.settings_patch.start()
+        self.addCleanup(self.settings_patch.stop)
+
+        self.client = TestClient(api.app)
+
+        from app.jobs import LocalJobBackend, now_iso
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self._now_iso = now_iso
+
+    def _base_record(self, job_id: str, status: str, worker_id: str | None) -> dict:
+        return {
+            "job_id": job_id,
+            "status": status,
+            "type": "generate",
+            "prompt": "p",
+            "params": {},
+            "output_path": f"/tmp/{job_id}.mp4",
+            "created_at": self._now_iso(),
+            "started_at": self._now_iso() if status != "queued" else None,
+            "finished_at": None,
+            "error": None,
+            "source_job_id": None,
+            "upscale_params": None,
+            "payload": {},
+            "source_output_path": None,
+            "worker_id": worker_id,
+        }
+
+    def make_running_job(self, *, worker_id: str) -> dict:
+        record = self._base_record("running-job", "running", worker_id)
+        return self.backend.force_job_record(record)
+
+    def make_cancelling_job(self, *, worker_id: str) -> dict:
+        record = self._base_record("cancelling-job", "cancelling", worker_id)
+        record["cancel_mode"] = "soft"
+        record["cancel_attempt"] = 1
+        record["cancel_requested_at"] = self._now_iso()
+        record["cancel_deadline_at"] = "2099-01-01T00:00:00+00:00"
+        return self.backend.force_job_record(record)
+
+    def make_queued_job(self) -> dict:
+        return self.backend.force_job_record(self._base_record("queued-job", "queued", None))
+
+    def test_cancel_running_job_returns_cancelling_without_force_flag(self) -> None:
+        job = self.make_running_job(worker_id="worker-1")
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "soft")
+        self.assertNotIn("warning", payload)
+
+    def test_escalate_endpoint_updates_cancel_mode(self) -> None:
+        job = self.make_cancelling_job(worker_id="worker-1")
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel/escalate", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "escalated")
+        self.assertEqual(payload["cancel_attempt"], 2)
+
+    def test_cancel_queued_job_returns_terminal_cancelled(self) -> None:
+        job = self.make_queued_job()
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelled")
+
+    def test_cancel_nonexistent_job_returns_404(self) -> None:
+        response = self.client.post("/jobs/missing/cancel", json={})
+        self.assertEqual(response.status_code, 404)
+
+    def test_cancel_terminal_job_returns_409(self) -> None:
+        record = self._base_record("done-job", "succeeded", "worker-1")
+        record["finished_at"] = self._now_iso()
+        self.backend.force_job_record(record)
+
+        response = self.client.post("/jobs/done-job/cancel", json={})
+        self.assertEqual(response.status_code, 409)
+
+    def test_escalate_non_cancelling_job_returns_409(self) -> None:
+        self.make_running_job(worker_id="worker-1")
+
+        response = self.client.post("/jobs/running-job/cancel/escalate", json={})
+        self.assertEqual(response.status_code, 409)
