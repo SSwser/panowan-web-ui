@@ -12,6 +12,7 @@ from app.cancellation import (
     escalate_cancellation,
 )
 from app.jobs.local import LocalJobBackend
+from app.worker_service import reconcile_overdue_cancellations
 
 
 class LocalJobBackendTests(unittest.TestCase):
@@ -531,6 +532,78 @@ class LocalJobCancellationFlowTests(unittest.TestCase):
                 "job-1", worker_id="worker-1", reason="cancel_timeout"
             )
         )
+
+
+class CancellationGovernanceRegressionTests(unittest.TestCase):
+    """End-to-end races and recovery paths from ADR 0010 governance."""
+
+    def make_backend(self) -> LocalJobBackend:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        return LocalJobBackend(f"{self._tmp.name}/jobs.json")
+
+    def make_running_job(self, backend: LocalJobBackend, *, worker_id: str) -> dict:
+        backend.create_job(
+            {"job_id": "job-1", "status": "queued", "type": "generate"}
+        )
+        backend.claim_next_job(worker_id=worker_id)
+        return backend.mark_running("job-1", worker_id)
+
+    def test_completion_wins_if_engine_finishes_before_cancel_converges(self) -> None:
+        # Race semantics: engine reports success before the API cancellation
+        # request is observed against the job record. mark_succeeded only
+        # accepts JOB_STATE_RUNNING, so a cancel arriving after a terminal
+        # success must be refused — the success outcome wins.
+        backend = self.make_backend()
+        worker_id = "worker-1"
+        job = self.make_running_job(backend, worker_id=worker_id)
+
+        result = backend.mark_succeeded(job["job_id"], worker_id, "out.mp4")
+        late_cancel = backend.request_cancellation(job["job_id"], worker_id=worker_id)
+        current = backend.get_job(job["job_id"])
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(late_cancel)
+        self.assertEqual(current["status"], "succeeded")
+        self.assertEqual(current["output_path"], "out.mp4")
+
+    def test_worker_loss_during_cancelling_converges_to_failed(self) -> None:
+        backend = self.make_backend()
+        worker_id = "worker-1"
+        job = self.make_running_job(backend, worker_id=worker_id)
+        cancelling = backend.request_cancellation(job["job_id"], worker_id=worker_id)
+        backend.force_job_fields(
+            job["job_id"],
+            cancel_deadline_at="2026-05-01T13:59:00+00:00",
+            worker_id=worker_id,
+        )
+
+        reconciled = reconcile_overdue_cancellations(backend, worker_id=worker_id)
+        current = backend.get_job(job["job_id"])
+
+        self.assertEqual(len(reconciled), 1)
+        self.assertEqual(reconciled[0]["status"], "failed")
+        self.assertEqual(current["status"], "failed")
+        self.assertEqual(current["error_code"], "cancel_timeout")
+        self.assertEqual(cancelling["status"], "cancelling")
+
+    def test_terminal_state_cannot_be_overwritten_by_late_runtime_callback(self) -> None:
+        backend = self.make_backend()
+        worker_id = "worker-1"
+        job = self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation(job["job_id"], worker_id=worker_id)
+        backend.finalize_cancellation_timeout(
+            job["job_id"],
+            worker_id=worker_id,
+            reason="cancel_timeout",
+        )
+
+        late = backend.mark_succeeded(job["job_id"], worker_id, "late.mp4")
+        current = backend.get_job(job["job_id"])
+
+        self.assertIsNone(late)
+        self.assertEqual(current["status"], "failed")
+        self.assertNotEqual(current.get("output_path"), "late.mp4")
 
 
 if __name__ == "__main__":

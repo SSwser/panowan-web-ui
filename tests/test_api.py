@@ -792,6 +792,73 @@ class WorkerSummaryContractTests(unittest.TestCase):
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class WorkerSummaryRegressionTests(unittest.TestCase):
+    """End-to-end regressions for the /workers/summary capacity model."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        patched_settings = replace(
+            api.settings,
+            output_dir=os.path.join(self.temp_dir.name, "outputs"),
+            job_store_path=os.path.join(self.temp_dir.name, "jobs.json"),
+            worker_store_path=os.path.join(self.temp_dir.name, "workers.json"),
+            worker_stale_seconds=60.0,
+        )
+        self.settings_patch = patch("app.api.settings", patched_settings)
+        self.settings_patch.start()
+        self.addCleanup(self.settings_patch.stop)
+
+        from app.jobs import LocalJobBackend
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self.worker_registry = LocalWorkerRegistry(api.settings.worker_store_path)
+
+    def test_zero_online_workers_does_not_mean_zero_known_workers(self) -> None:
+        # known_workers is the operator-visible inventory and must remain
+        # non-zero even when every worker has aged past the staleness
+        # threshold; otherwise the dashboard hides workers that need attention.
+        self.worker_registry.upsert_worker(
+            "worker-1",
+            {"status": "online", "running_jobs": 0, "max_concurrent_jobs": 1},
+        )
+        self.worker_registry.upsert_worker(
+            "worker-2",
+            {"status": "online", "running_jobs": 0, "max_concurrent_jobs": 1},
+        )
+        self.worker_registry.force_worker_fields(
+            "worker-1", last_seen="2000-01-01T00:00:00+00:00"
+        )
+        self.worker_registry.force_worker_fields(
+            "worker-2", last_seen="2000-01-01T00:00:00+00:00"
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["known_workers"], 2)
+        self.assertEqual(summary["online_workers"], 0)
+
+    def test_cancellation_drag_reduces_effective_available_capacity(self) -> None:
+        self.worker_registry.upsert_worker(
+            "worker-1",
+            {"status": "online", "running_jobs": 1, "max_concurrent_jobs": 2},
+        )
+        self.backend.force_job_record(
+            {
+                "job_id": "job-1",
+                "status": "cancelling",
+                "worker_id": "worker-1",
+            }
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["busy_workers"], 1)
+        self.assertEqual(summary["stuck_cancelling_workers"], 1)
+        self.assertEqual(summary["effective_available_capacity"], 1)
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
 class CancelApiContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
