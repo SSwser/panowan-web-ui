@@ -26,6 +26,13 @@ class StaticUiStateTests(unittest.TestCase):
         self.assertIn('job.status === "cancelling"', INDEX_HTML)
         self.assertIn('正在取消…', INDEX_HTML)
 
+    def test_worker_summary_markup_and_fetch_are_present(self) -> None:
+        self.assertIn('id="worker-summary"', INDEX_HTML)
+        self.assertIn('fetch("/workers/summary")', INDEX_HTML)
+        self.assertIn('在线 Worker', INDEX_HTML)
+        self.assertIn('生成中 Worker', INDEX_HTML)
+        self.assertIn('排队任务', INDEX_HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

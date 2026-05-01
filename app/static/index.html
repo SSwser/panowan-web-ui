@@ -230,6 +230,39 @@
 
       .dot.idle { background: var(--muted); animation: none; }
 
+      /* --- worker summary --- */
+      .worker-summary {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
+        padding: 16px 20px;
+      }
+      .worker-card {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 14px 16px;
+        background: var(--surface, rgba(31, 41, 55, 0.025));
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      }
+      .worker-card span {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      .worker-card strong {
+        font-size: 1.4rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: var(--fg, inherit);
+      }
+      @media (max-width: 720px) {
+        .worker-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+
       .btn-clear-failed {
         font-size: 0.76rem;
         padding: 4px 12px;
@@ -551,6 +584,13 @@
 
       <!-- History panel -->
       <div class="panel">
+        <div id="worker-summary" class="worker-summary" aria-live="polite">
+          <div class="worker-card"><span>Worker 总数</span><strong id="workers-total">-</strong></div>
+          <div class="worker-card"><span>在线 Worker</span><strong id="workers-online">-</strong></div>
+          <div class="worker-card"><span>生成中 Worker</span><strong id="workers-busy">-</strong></div>
+          <div class="worker-card"><span>排队任务</span><strong id="jobs-queued">-</strong></div>
+          <div class="worker-card"><span>生成中任务</span><strong id="jobs-running">-</strong></div>
+        </div>
         <div class="history-header">
           <h2>历史任务</h2>
           <button id="clear-failed-btn" class="btn-clear-failed">清理失败任务</button>
@@ -642,6 +682,7 @@
           renderTable(jobs);
           const busy = jobs.some(j => j.status === "queued" || j.status === "running");
           setPollingIndicator(busy);
+          refreshWorkerSummary();
         }
 
         scheduleReconnect() {
@@ -1189,6 +1230,25 @@
         }
       }
 
+      async function refreshWorkerSummary() {
+        try {
+          const res = await fetch("/workers/summary");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const summary = await res.json();
+          document.getElementById("workers-total").textContent = String(summary.total_workers ?? "-");
+          document.getElementById("workers-online").textContent = String(summary.online_workers ?? "-");
+          document.getElementById("workers-busy").textContent = String(summary.busy_workers ?? "-");
+          document.getElementById("jobs-queued").textContent = String(summary.queued_jobs ?? "-");
+          document.getElementById("jobs-running").textContent = String(summary.running_jobs ?? "-");
+        } catch {
+          document.getElementById("workers-total").textContent = "-";
+          document.getElementById("workers-online").textContent = "-";
+          document.getElementById("workers-busy").textContent = "-";
+          document.getElementById("jobs-queued").textContent = "-";
+          document.getElementById("jobs-running").textContent = "-";
+        }
+      }
+
       async function refreshJobs() {
         const jobs = await fetchJobs();
         if (jobs !== null) {
@@ -1277,6 +1337,7 @@
       refreshJobs().then(() => {
         sseClient.connect();
       });
+      refreshWorkerSummary();
     </script>
   </body>
 </html>
