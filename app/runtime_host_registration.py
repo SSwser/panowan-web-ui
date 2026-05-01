@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from collections.abc import Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -58,8 +58,19 @@ class _SpecBoundProvider:
     def load(self, identity: Hashable) -> Any:
         return self._load(identity)
 
-    def execute(self, loaded_runtime: Any, job: Mapping[str, Any]) -> Mapping[str, Any]:
-        return self._execute(loaded_runtime, job)
+    def execute(
+        self,
+        loaded_runtime: Any,
+        job: Mapping[str, Any],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
+        # Older provider modules predate the should_cancel kwarg; fall back to
+        # the legacy two-arg signature so backends migrate at their own pace.
+        try:
+            return self._execute(loaded_runtime, job, should_cancel=should_cancel)
+        except TypeError:
+            return self._execute(loaded_runtime, job)
 
     def teardown(self, loaded_runtime: Any) -> None:
         self._teardown(loaded_runtime)

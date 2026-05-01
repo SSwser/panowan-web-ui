@@ -45,5 +45,13 @@ class PanoWanEngine:
         if task == "i2v":
             raise NotImplementedError(self.i2v_not_implemented_message)
         runner_payload = build_runner_payload(api_payload)
-        result = self._host.run_job(self.provider_key, runner_payload)
+        # Worker injects ``_should_cancel`` per AGENTS.md; thread it to the
+        # host so cooperative cancellation can reach the provider when it
+        # opts in.
+        should_cancel = raw.get("_should_cancel")
+        result = self._host.run_job(
+            self.provider_key,
+            runner_payload,
+            should_cancel=should_cancel if callable(should_cancel) else None,
+        )
         return EngineResult(output_path=result["output_path"], metadata={})

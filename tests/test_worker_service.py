@@ -39,8 +39,9 @@ class FakeHost:
         self.evict_calls.append((key, idle_seconds))
         return True
 
-    def run_job(self, key, job):
+    def run_job(self, key, job, *, should_cancel=None):
         self.run_calls.append((key, dict(job)))
+        self.last_should_cancel = should_cancel
         return {"status": "ok", "output_path": job.get("output_path", "")}
 
     def status(self, key):
@@ -518,3 +519,27 @@ class BuildHostTests(unittest.TestCase):
         # backend.toml — no mocks. Fast because it's just spec parsing + import.
         host = build_host()
         self.assertTrue(host.has_provider("panowan"))
+
+
+class PanowanCancellationTests(unittest.TestCase):
+    def test_panowan_engine_passes_should_cancel_to_runtime_host(self) -> None:
+        class RecordingHost:
+            def __init__(self) -> None:
+                self.provider_key = "panowan"
+                self.seen_should_cancel = None
+
+            def run_job(self, provider_key, payload, should_cancel=None):
+                self.seen_should_cancel = should_cancel
+                assert provider_key == "panowan"
+                assert callable(should_cancel)
+                return {"output_path": "out.mp4"}
+
+        engine = PanoWanEngine(host=RecordingHost())
+        result = engine.run({
+            "job_id": "job-1",
+            "payload": {"task": "t2v", "prompt": "demo"},
+            "_should_cancel": lambda: False,
+        })
+
+        self.assertEqual(result.output_path, "out.mp4")
+        self.assertTrue(callable(engine._host.seen_should_cancel))

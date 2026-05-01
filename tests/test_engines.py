@@ -19,8 +19,9 @@ class _FakeHost:
             "output_path": "/tmp/o.mp4",
         }
 
-    def run_job(self, provider_key, job):
+    def run_job(self, provider_key, job, *, should_cancel=None):
         self.run_calls.append((provider_key, dict(job)))
+        self.last_should_cancel = should_cancel
         return self._run_result
 
 

@@ -45,7 +45,11 @@ class RuntimeProvider(Protocol):
     def runtime_identity_from_job(self, job: Mapping[str, Any]) -> Hashable: ...
     def load(self, identity: Hashable) -> Any: ...
     def execute(
-        self, loaded_runtime: Any, job: Mapping[str, Any]
+        self,
+        loaded_runtime: Any,
+        job: Mapping[str, Any],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> Mapping[str, Any]: ...
     def teardown(self, loaded_runtime: Any) -> None: ...
     def classify_failure(self, exc: BaseException) -> bool: ...
@@ -178,7 +182,13 @@ class ResidentRuntimeHost:
 
     # ---- public lifecycle --------------------------------------------
 
-    def run_job(self, provider_key: str, job: Mapping[str, Any]) -> Mapping[str, Any]:
+    def run_job(
+        self,
+        provider_key: str,
+        job: Mapping[str, Any],
+        *,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
         provider, instance, lock = self._require(provider_key)
         with lock:
             # Auto-reset from FAILED before deciding identity, so a corrupted
@@ -200,7 +210,7 @@ class ResidentRuntimeHost:
             loaded = instance.loaded
             self._set_state(instance, RuntimeState.RUNNING)
             try:
-                result = provider.execute(loaded, job)
+                result = provider.execute(loaded, job, should_cancel=should_cancel)
             except BaseException as exc:
                 corrupting = bool(provider.classify_failure(exc))
                 if corrupting:

@@ -110,12 +110,20 @@ def load_resident_runtime(identity: PanoWanRuntimeIdentity) -> dict[str, Any]:
     }
 
 
-def run_job_inprocess(loaded: dict[str, Any], job: Mapping[str, Any]) -> dict[str, Any]:
+def run_job_inprocess(
+    loaded: dict[str, Any],
+    job: Mapping[str, Any],
+    *,
+    should_cancel: Any = None,
+) -> dict[str, Any]:
     """Validate the job, run inference on the warm pipeline, write the video file.
 
     Validation matches ``runner.py`` exactly so CLI and resident execution
     enforce the same payload contract (spec §9).
     """
+    # ``should_cancel`` is wiring placeholder; cooperative cancellation
+    # propagation into the diffsynth pipeline lives in a future patch.
+    del should_cancel
     payload = validate_job(dict(job))
 
     # Upstream PanoWan (https://github.com/SSwser/PanoWan) only ships a t2v
