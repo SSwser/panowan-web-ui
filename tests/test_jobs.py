@@ -2,8 +2,15 @@ import os
 import tempfile
 import unittest
 import json
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+from app.cancellation import (
+    CancellationCapability,
+    CancellationContext,
+    begin_cancellation,
+    escalate_cancellation,
+)
 from app.jobs.local import LocalJobBackend
 
 
@@ -370,6 +377,67 @@ class LocalJobBackendTests(unittest.TestCase):
             self.assertEqual(
                 job["error"], "Service restarted before the job completed"
             )
+
+
+class CancellationGovernanceTests(unittest.TestCase):
+    def test_begin_cancellation_adds_deadline_metadata(self) -> None:
+        now = datetime(2026, 5, 1, 22, 5, tzinfo=UTC)
+        capability = CancellationCapability(
+            supports_soft_cancel=True,
+            supports_escalated_cancel=True,
+            default_cancel_timeout_sec=45,
+            cancel_poll_interval_sec=1,
+            cancel_checkpoint_granularity="checkpoint",
+        )
+
+        record = begin_cancellation(
+            {
+                "job_id": "job-1",
+                "status": "running",
+            },
+            capability=capability,
+            now=now,
+        )
+
+        self.assertEqual(record["status"], "cancelling")
+        self.assertEqual(record["cancel_mode"], "soft")
+        self.assertEqual(record["cancel_attempt"], 1)
+        self.assertEqual(record["cancel_requested_at"], now.isoformat())
+        self.assertEqual(
+            record["cancel_deadline_at"],
+            (now + timedelta(seconds=45)).isoformat(),
+        )
+
+    def test_escalate_cancellation_increments_attempt_and_mode(self) -> None:
+        now = datetime(2026, 5, 1, 22, 6, tzinfo=UTC)
+        capability = CancellationCapability(
+            supports_soft_cancel=True,
+            supports_escalated_cancel=True,
+            default_cancel_timeout_sec=30,
+            cancel_poll_interval_sec=1,
+            cancel_checkpoint_granularity="checkpoint",
+        )
+        record = {
+            "job_id": "job-1",
+            "status": "cancelling",
+            "cancel_mode": "soft",
+            "cancel_attempt": 1,
+            "cancel_requested_at": now.isoformat(),
+            "cancel_deadline_at": (now + timedelta(seconds=30)).isoformat(),
+        }
+
+        escalated = escalate_cancellation(
+            record,
+            capability=capability,
+            now=now + timedelta(seconds=10),
+        )
+
+        self.assertEqual(escalated["cancel_mode"], "escalated")
+        self.assertEqual(escalated["cancel_attempt"], 2)
+        self.assertGreater(
+            escalated["cancel_deadline_at"],
+            record["cancel_deadline_at"],
+        )
 
 
 if __name__ == "__main__":
