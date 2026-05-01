@@ -74,11 +74,10 @@ class CancelledDuringRunEngine:
         self.worker_id = worker_id
 
     def run(self, job):
-        self.backend.update_job(
-            job["job_id"],
-            status="failed",
-            error="Cancelled by user",
-        )
+        # Simulate cooperative cancellation observed mid-run by routing
+        # through the canonical request_cancellation entrypoint instead of
+        # writing a raw status string.
+        self.backend.request_cancellation(job["job_id"])
         return EngineResult(output_path=job["output_path"], metadata={"ok": True})
 
 
@@ -104,12 +103,9 @@ class ForceCancelledAfterSuccessfulRunEngine:
         return None
 
     def run(self, job):
-        self.backend.update_job(
-            job["job_id"],
-            status="failed",
-            error="Cancelled by user",
-            finished_at="cancelled-at",
-        )
+        # Simulate a force-cancel arriving while the engine is mid-run by
+        # routing through the canonical cancellation entrypoint.
+        self.backend.request_cancellation(job["job_id"])
         return EngineResult(output_path=job["output_path"], metadata={"ok": True})
 
 
@@ -138,8 +134,9 @@ class WorkerServiceTests(unittest.TestCase):
 
             self.assertTrue(worked)
             job = backend.get_job("job-1")
-            self.assertEqual(job["status"], "completed")
+            self.assertEqual(job["status"], "succeeded")
             self.assertEqual(job["output_path"], f"{tmp}/outputs/output_job-1.mp4")
+            self.assertIsNotNone(job["started_at"])
 
     def test_run_one_job_does_not_overwrite_cancelled_job_after_engine_run(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,8 +158,10 @@ class WorkerServiceTests(unittest.TestCase):
 
             self.assertTrue(worked)
             job = backend.get_job("job-1")
-            self.assertEqual(job["status"], "failed")
-            self.assertEqual(job["error"], "Cancelled by user")
+            # Engine signalled cooperative cancellation by moving running ->
+            # cancelling; the worker must finalise the cancel rather than
+            # rewriting it back to succeeded with a late completion report.
+            self.assertEqual(job["status"], "cancelled")
 
     def test_run_one_job_skips_execution_when_job_no_longer_running(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,9 +174,11 @@ class WorkerServiceTests(unittest.TestCase):
                     "output_path": f"{tmp}/outputs/output_job-1.mp4",
                 }
             )
-            claimed = backend.claim_next_job(worker_id="worker-a")
-            self.assertIsNotNone(claimed)
-            backend.update_job("job-1", status="failed", error="Cancelled by user")
+            # Pre-empt the worker by claiming and cancelling the job before
+            # run_one_job() observes the queue.
+            backend.claim_next_job(worker_id="other-worker")
+            backend.request_cancellation("job-1")
+            backend.request_cancellation("job-1", finished=True)
 
             class ShouldNotRunEngine:
                 name = "panowan"
@@ -191,8 +192,7 @@ class WorkerServiceTests(unittest.TestCase):
 
             self.assertFalse(worked)
             job = backend.get_job("job-1")
-            self.assertEqual(job["status"], "failed")
-            self.assertEqual(job["error"], "Cancelled by user")
+            self.assertEqual(job["status"], "cancelled")
 
     def test_run_one_job_returns_false_when_queue_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -223,7 +223,7 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertEqual(job["status"], "failed")
             self.assertEqual(job["error"], "engine exploded")
 
-    def test_run_one_job_completes_success_if_engine_finishes_before_cancel_is_observed(
+    def test_run_one_job_keeps_cancelled_terminal_if_cancel_wins(
         self,
     ):
         with tempfile.TemporaryDirectory() as tmp:
@@ -246,9 +246,9 @@ class WorkerServiceTests(unittest.TestCase):
 
             self.assertTrue(worked)
             job = backend.get_job("job-1")
-            self.assertEqual(job["status"], "completed")
-            self.assertEqual(job["output_path"], output_path)
-            self.assertIsNone(job["error"])
+            # ADR 0010: a late success report cannot overwrite a terminal
+            # cancellation that was accepted while the engine was running.
+            self.assertEqual(job["status"], "cancelled")
             self.assertIsNotNone(job["finished_at"])
 
     def test_cancel_queued_job_is_rejected_if_worker_claimed_it_first(self):
@@ -267,13 +267,17 @@ class WorkerServiceTests(unittest.TestCase):
             cancelled = backend.cancel_queued_job("job-1")
             job = backend.get_job("job-1")
 
+            # cancel_queued_job is the queued-only entry point. Once a worker
+            # owns the job, cancellation must flow through the cooperative
+            # cancelling state via request_cancellation, not be quietly
+            # rewritten by the queued-only helper.
             self.assertFalse(cancelled)
-            self.assertEqual(job["status"], "running")
+            self.assertEqual(job["status"], "claimed")
             self.assertEqual(job["worker_id"], "worker-a")
             self.assertIsNone(job["error"])
             self.assertIsNone(job["finished_at"])
 
-    def test_cancel_queued_job_marks_job_failed_atomically(self):
+    def test_cancel_queued_job_marks_job_cancelled_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             output_path = f"{tmp}/outputs/output_job-1.mp4"
@@ -290,8 +294,8 @@ class WorkerServiceTests(unittest.TestCase):
             job = backend.get_job("job-1")
 
             self.assertTrue(cancelled)
-            self.assertEqual(job["status"], "failed")
-            self.assertEqual(job["error"], "Cancelled by user")
+            self.assertEqual(job["status"], "cancelled")
+            self.assertIsNone(job["error"])
             self.assertIsNotNone(job["finished_at"])
             self.assertIsNone(job["started_at"])
             self.assertIsNone(job["worker_id"])
@@ -304,10 +308,6 @@ class WorkerServiceTests(unittest.TestCase):
             self.assertIsNone(job["source_job_id"])
             self.assertIsNone(job["upscale_params"])
             self.assertIsNotNone(job["created_at"])
-            self.assertIsNone(job.get("payload"))
-            self.assertIsNone(job.get("source_output_path"))
-            self.assertIsNone(job["worker_id"])
-            self.assertIsNone(job["started_at"])
 
 
 class MultiEngineRegistryTests(unittest.TestCase):

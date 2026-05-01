@@ -245,12 +245,23 @@ class LocalJobBackend:
     def cancel_queued_job(self, job_id: str) -> bool:
         """Backward-compatible queued-only cancellation entry point.
 
-        Kept as a boolean for callers that already use it; new code should
-        prefer ``request_cancellation`` so cancellation flows through one
-        canonical path regardless of starting state.
+        Returns True iff the job was in the queued state at observation time
+        and was atomically transitioned to terminal ``cancelled``. Refuses to
+        act on jobs already owned by a worker — those must flow through the
+        cooperative ``request_cancellation`` path so the worker can observe
+        the cancel intent before any terminal write happens.
         """
-        result = self.request_cancellation(job_id)
-        return bool(result is not None and result["status"] == JOB_STATE_CANCELLED)
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.get("status") != JOB_STATE_QUEUED:
+                return False
+            job["status"] = JOB_STATE_CANCELLED
+            job["finished_at"] = now_iso()
+            job["error"] = None
+            self._persist_unlocked()
+            return True
 
     def _guarded_transition(
         self,
