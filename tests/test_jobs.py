@@ -440,5 +440,55 @@ class CancellationGovernanceTests(unittest.TestCase):
         )
 
 
+class LocalJobCancellationFlowTests(unittest.TestCase):
+    def make_backend(self) -> LocalJobBackend:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        return LocalJobBackend(f"{self._tmp.name}/jobs.json")
+
+    def make_running_job(self, backend: LocalJobBackend, *, worker_id: str) -> dict:
+        backend.create_job(
+            {"job_id": "job-1", "status": "queued", "type": "generate"}
+        )
+        backend.claim_next_job(worker_id=worker_id)
+        return backend.mark_running("job-1", worker_id)
+
+    def test_request_cancellation_sets_deadline_metadata(self) -> None:
+        backend = self.make_backend()
+        backend.create_job({"job_id": "job-1", "status": "queued", "type": "generate"})
+        backend.claim_next_job(worker_id="worker-1")
+        backend.mark_running("job-1", "worker-1")
+
+        result = backend.request_cancellation("job-1", worker_id="worker-1")
+
+        self.assertEqual(result["status"], "cancelling")
+        self.assertEqual(result["cancel_mode"], "soft")
+        self.assertIn("cancel_requested_at", result)
+        self.assertIn("cancel_deadline_at", result)
+
+    def test_escalate_cancellation_replaces_legacy_force_behavior(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+
+        result = backend.escalate_cancellation("job-1", worker_id="worker-1")
+
+        self.assertEqual(result["status"], "cancelling")
+        self.assertEqual(result["cancel_mode"], "escalated")
+        self.assertEqual(result["cancel_attempt"], 2)
+
+    def test_finalize_cancel_timeout_marks_failed(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+
+        result = backend.finalize_cancellation_timeout(
+            "job-1", worker_id="worker-1", reason="cancel_timeout",
+        )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "cancel_timeout")
+
+
 if __name__ == "__main__":
     unittest.main()
