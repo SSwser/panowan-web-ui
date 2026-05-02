@@ -298,7 +298,14 @@ def _collect_result_store_events(known_versions: dict[str, str]) -> tuple[dict[s
 
 @app.get("/")
 def root() -> FileResponse:
-    index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    index_path = os.path.join(settings.frontend_dist_dir, "index.html")
+    # The API must fail loudly when the React bundle is absent so deploy/test
+    # mistakes do not silently fall back to a stale legacy shell.
+    if not os.path.exists(index_path):
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend build not found. Run npm --prefix frontend run build.",
+        )
     return FileResponse(index_path, media_type="text/html")
 
 
