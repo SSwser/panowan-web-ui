@@ -42,7 +42,7 @@ else:
     import fcntl
 
 
-_DEFAULT_CANCEL_TIMEOUT_SEC = 45
+_DEFAULT_CANCEL_TIMEOUT_SEC = 10
 _DEFAULT_CANCEL_POLL_INTERVAL_SEC = 1
 
 
@@ -304,6 +304,33 @@ class LocalJobBackend:
             ),
         )
 
+    def retry_timed_out_cancellation(
+        self, job_id: str, *, worker_id: str
+    ) -> dict[str, Any] | None:
+        """Reopen a cancel-timeout failure as cancelling for another attempt."""
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            if job.get("status") != JOB_STATE_FAILED or job.get("error_code") != "cancel_timeout":
+                return None
+            if job.get("worker_id") != worker_id:
+                return None
+            fields = _escalate_cancellation(
+                {
+                    **job,
+                    "status": JOB_STATE_CANCELLING,
+                    "finished_at": None,
+                    "error": None,
+                    "error_code": None,
+                },
+                capability=self._cancellation_capability_for_job(job),
+                now=datetime.now(UTC),
+            )
+            job.update(fields)
+            self._persist_unlocked()
+            return copy.deepcopy(job)
+
     def finalize_cancellation_timeout(
         self,
         job_id: str,
@@ -327,6 +354,25 @@ class LocalJobBackend:
                 "error_code": reason,
             },
         )
+
+    def recover_overdue_cancellation(self, job_id: str, *, reason: str) -> dict[str, Any] | None:
+        """Resolve stale cancelling records on read/restart recovery."""
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None or job.get("status") != JOB_STATE_CANCELLING:
+                return None
+            output_path = str(job.get("output_path") or "")
+            if output_path and os.path.isfile(output_path):
+                job["status"] = JOB_STATE_SUCCEEDED
+                job["error"] = None
+                job["error_code"] = None
+            else:
+                job["status"] = JOB_STATE_FAILED
+                job["error"] = reason
+                job["error_code"] = reason
+            job["finished_at"] = job.get("finished_at") or now_iso()
+            self._persist_unlocked()
+            return copy.deepcopy(job)
 
     def _cancellation_capability_for_job(
         self, _job: dict[str, Any]
@@ -414,12 +460,12 @@ class LocalJobBackend:
             return copy.deepcopy(job)
 
     def delete_failed_jobs(self) -> list[str]:
-        """Remove all failed jobs from the store. Returns the deleted job IDs."""
+        """Remove failed or cancelled jobs from the store. Returns deleted IDs."""
         with self._locked_store():
             failed_ids = [
                 job_id
                 for job_id, job in self._jobs.items()
-                if job.get("status") == JOB_STATE_FAILED
+                if job.get("status") in {JOB_STATE_FAILED, JOB_STATE_CANCELLED}
             ]
             for job_id in failed_ids:
                 self._delete_job_artifacts_unlocked(self._jobs[job_id])

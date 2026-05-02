@@ -801,6 +801,21 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
         job = backend.get_job("job-1")
         self.assertEqual(job["status"], "cancelling")
 
+    def test_reconcile_treats_missing_deadline_as_overdue(self) -> None:
+        backend = self.make_backend()
+        worker_id = "worker-1"
+        self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+        backend.force_job_fields("job-1", cancel_deadline_at=None)
+
+        reconciled = reconcile_overdue_cancellations(
+            backend, worker_id=worker_id
+        )
+
+        self.assertEqual(len(reconciled), 1)
+        self.assertEqual(reconciled[0]["status"], "failed")
+        self.assertEqual(reconciled[0]["error_code"], "cancel_timeout")
+
     def test_worker_releases_occupancy_when_runtime_confirms_cancel(self) -> None:
         backend = self.make_backend()
         worker_store = self.make_worker_store()

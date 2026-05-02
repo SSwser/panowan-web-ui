@@ -148,6 +148,31 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload["status"], "succeeded")
         self.assertEqual(snapshots["job-1"]["status"], "succeeded")
 
+    def test_collect_job_store_events_detects_cancel_metadata_changes(self) -> None:
+        record = api._create_job_record(
+            "job-1",
+            "prompt",
+            os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
+            {"num_inference_steps": 10, "width": 448, "height": 224},
+        )
+        snapshots = {record["job_id"]: api._job_event_snapshot(record)}
+
+        api.get_job_backend().claim_next_job(worker_id="worker-1")
+        api.get_job_backend().mark_running("job-1", "worker-1")
+        api.get_job_backend().request_cancellation("job-1", worker_id="worker-1")
+
+        snapshots, events = api._collect_job_store_events(snapshots)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "job_updated")
+        payload = json.loads(events[0]["data"])
+        self.assertEqual(payload["job_id"], "job-1")
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "soft")
+        self.assertIn("cancel_requested_at", payload)
+        self.assertIn("cancel_deadline_at", payload)
+        self.assertEqual(snapshots["job-1"]["cancel_mode"], "soft")
+
     def test_update_job_broadcasts_full_snapshot(self) -> None:
         record = api._create_job_record(
             "job-1",
@@ -395,6 +420,48 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(job["error_code"], "cancel_timeout")
         self.assertEqual(job["error"], "cancel_timeout")
         self.assertIsNotNone(job["finished_at"])
+
+    def test_list_jobs_recovers_overdue_cancelling_job_on_refresh(self) -> None:
+        backend = api.get_job_backend()
+        backend.force_job_record(
+            {
+                "job_id": "cancelling-job",
+                "status": "cancelling",
+                "prompt": "stop me",
+                "output_path": os.path.join(self.temp_dir.name, "outputs", "missing.mp4"),
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "finished_at": None,
+                "error": None,
+                "cancel_deadline_at": "2026-01-01T00:00:10+00:00",
+                "cancel_requested_at": "2026-01-01T00:00:00+00:00",
+                "cancel_mode": "soft",
+                "cancel_attempt": 1,
+            }
+        )
+
+        jobs = api.list_jobs()
+
+        self.assertEqual(jobs[0]["status"], "failed")
+        self.assertEqual(jobs[0]["error_code"], "cancel_timeout")
+
+    def test_cancel_retries_cancel_timeout_failure(self) -> None:
+        backend = api.get_job_backend()
+        backend.create_job({"job_id": "job-1", "status": "queued", "type": "generate"})
+        backend.claim_next_job(worker_id="worker-1")
+        backend.mark_running("job-1", "worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+        backend.finalize_cancellation_timeout(
+            "job-1", worker_id="worker-1", reason="cancel_timeout"
+        )
+
+        response = self.client.post("/jobs/job-1/cancel")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "escalated")
+        self.assertEqual(payload["cancel_attempt"], 2)
 
     def test_root_returns_index_html(self) -> None:
         response = api.root()

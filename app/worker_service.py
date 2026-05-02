@@ -527,8 +527,8 @@ def reconcile_overdue_cancellations(
 ) -> list[dict[str, object]]:
     """Force jobs whose cancel deadline has elapsed into terminal ``failed``.
 
-    Owned by the worker loop: cancellation convergence is a worker-side
-    responsibility per ADR 0010, so the API never needs to police deadlines.
+    Worker loops call this normally; API read paths also call it to heal stale
+    persisted cancelling records when no worker is alive to own the timeout.
     """
     now = now or datetime.now(UTC)
     reconciled: list[dict[str, object]] = []
@@ -538,25 +538,31 @@ def reconcile_overdue_cancellations(
         if worker_id is not None and job.get("worker_id") != worker_id:
             continue
         deadline_raw = job.get("cancel_deadline_at")
-        if not deadline_raw:
-            continue
-        try:
-            deadline_at = datetime.fromisoformat(str(deadline_raw))
-        except ValueError:
-            continue
+        if deadline_raw:
+            try:
+                deadline_at = datetime.fromisoformat(str(deadline_raw))
+            except ValueError:
+                deadline_at = now
+        else:
+            # Older persisted cancelling records may predate cancellation deadlines; read-path healing must not leave them stuck forever.
+            deadline_at = now
         if deadline_at > now:
             continue
         owner_id = str(job.get("worker_id") or "")
-        if not owner_id:
-            continue
-        result = backend.finalize_cancellation_timeout(
-            str(job["job_id"]),
-            worker_id=owner_id,
-            reason="cancel_timeout",
-        )
+        if owner_id:
+            result = backend.finalize_cancellation_timeout(
+                str(job["job_id"]),
+                worker_id=owner_id,
+                reason="cancel_timeout",
+            )
+        else:
+            result = backend.recover_overdue_cancellation(
+                str(job["job_id"]),
+                reason="cancel_timeout",
+            )
         if result is None:
             continue
-        if worker_registry is not None:
+        if worker_registry is not None and owner_id:
             worker_registry.adjust_running_jobs(owner_id, -1)
         reconciled.append(result)
     return reconciled

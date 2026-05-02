@@ -113,12 +113,15 @@ class LocalJobBackendTests(unittest.TestCase):
             self.assertEqual(failed["error"], "boom")
             self.assertIsNotNone(failed["finished_at"])
 
-    def test_delete_failed_jobs_removes_records_and_artifacts(self):
+    def test_delete_failed_jobs_removes_failed_and_cancelled_and_preserves_succeeded(self):
         with tempfile.TemporaryDirectory() as tmp:
-            output_path = f"{tmp}/outputs/output_j1.mp4"
+            failed_output_path = f"{tmp}/outputs/output_j1.mp4"
+            cancelled_output_path = f"{tmp}/outputs/output_j2.mp4"
             os.makedirs(f"{tmp}/outputs", exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as handle:
+            with open(failed_output_path, "w", encoding="utf-8") as handle:
                 handle.write("partial")
+            with open(cancelled_output_path, "w", encoding="utf-8") as handle:
+                handle.write("cancelled")
 
             backend = LocalJobBackend(f"{tmp}/jobs.json")
             backend.create_job(
@@ -126,19 +129,29 @@ class LocalJobBackendTests(unittest.TestCase):
                     "job_id": "j1",
                     "status": "failed",
                     "type": "generate",
-                    "output_path": output_path,
+                    "output_path": failed_output_path,
                 }
             )
             backend.create_job(
-                {"job_id": "j2", "status": "succeeded", "type": "generate"}
+                {
+                    "job_id": "j2",
+                    "status": "cancelled",
+                    "type": "generate",
+                    "output_path": cancelled_output_path,
+                }
+            )
+            backend.create_job(
+                {"job_id": "j3", "status": "succeeded", "type": "generate"}
             )
 
             deleted = backend.delete_failed_jobs()
 
-            self.assertEqual(deleted, ["j1"])
+            self.assertEqual(deleted, ["j1", "j2"])
             self.assertIsNone(backend.get_job("j1"))
-            self.assertIsNotNone(backend.get_job("j2"))
-            self.assertFalse(os.path.exists(output_path))
+            self.assertIsNone(backend.get_job("j2"))
+            self.assertIsNotNone(backend.get_job("j3"))
+            self.assertFalse(os.path.exists(failed_output_path))
+            self.assertFalse(os.path.exists(cancelled_output_path))
 
     def test_restore_keeps_incomplete_jobs_in_dev_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -401,7 +414,7 @@ class CancellationGovernanceTests(unittest.TestCase):
         capability = CancellationCapability(
             supports_soft_cancel=True,
             supports_escalated_cancel=True,
-            default_cancel_timeout_sec=45,
+            default_cancel_timeout_sec=10,
             cancel_poll_interval_sec=1,
             cancel_checkpoint_granularity="checkpoint",
         )
@@ -421,7 +434,7 @@ class CancellationGovernanceTests(unittest.TestCase):
         self.assertEqual(record["cancel_requested_at"], now.isoformat())
         self.assertEqual(
             record["cancel_deadline_at"],
-            (now + timedelta(seconds=45)).isoformat(),
+            (now + timedelta(seconds=10)).isoformat(),
         )
 
     def test_escalate_cancellation_increments_attempt_and_mode(self) -> None:
@@ -538,6 +551,60 @@ class LocalJobCancellationFlowTests(unittest.TestCase):
                 "job-1", worker_id="worker-other", reason="cancel_timeout"
             )
         )
+
+    def test_retry_timed_out_cancellation_reopens_failed_cancel(self) -> None:
+        backend = self.make_backend()
+        self.make_running_job(backend, worker_id="worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+        backend.finalize_cancellation_timeout(
+            "job-1", worker_id="worker-1", reason="cancel_timeout"
+        )
+
+        result = backend.retry_timed_out_cancellation("job-1", worker_id="worker-1")
+
+        self.assertEqual(result["status"], "cancelling")
+        self.assertEqual(result["cancel_mode"], "escalated")
+        self.assertEqual(result["cancel_attempt"], 2)
+        self.assertIsNone(result["finished_at"])
+        self.assertIsNone(result["error"])
+        self.assertIsNone(result["error_code"])
+
+    def test_recover_overdue_cancellation_uses_output_if_present(self) -> None:
+        backend = self.make_backend()
+        output_path = f"{self._tmp.name}/output.mp4"
+        with open(output_path, "wb") as handle:
+            handle.write(b"video")
+        backend.force_job_record(
+            {
+                "job_id": "job-1",
+                "status": "cancelling",
+                "type": "generate",
+                "output_path": output_path,
+            }
+        )
+
+        result = backend.recover_overdue_cancellation("job-1", reason="cancel_timeout")
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertIsNone(result["error"])
+        self.assertIsNone(result["error_code"])
+
+    def test_recover_overdue_cancellation_without_output_is_retryable_failure(self) -> None:
+        backend = self.make_backend()
+        backend.force_job_record(
+            {
+                "job_id": "job-1",
+                "status": "cancelling",
+                "type": "generate",
+                "output_path": f"{self._tmp.name}/missing.mp4",
+            }
+        )
+
+        result = backend.recover_overdue_cancellation("job-1", reason="cancel_timeout")
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "cancel_timeout")
+
 
     def test_finalize_cancellation_timeout_rejects_non_cancelling_state(self) -> None:
         backend = self.make_backend()

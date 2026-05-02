@@ -83,6 +83,10 @@ _JOB_EVENT_FIELDS = (
     "source_output_path",
     "worker_id",
     "download_url",
+    "cancel_mode",
+    "cancel_attempt",
+    "cancel_requested_at",
+    "cancel_deadline_at",
 )
 
 
@@ -230,6 +234,7 @@ def _resolve_upscale_params(
 def _collect_job_store_events(
     previous_snapshots: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
+    _reconcile_overdue_cancellations_for_read()
     current_snapshots: dict[str, dict[str, Any]] = {}
     events: list[dict[str, str]] = []
 
@@ -354,8 +359,15 @@ def upscale(payload: dict) -> dict:
     }
 
 
+def _reconcile_overdue_cancellations_for_read() -> list[dict[str, Any]]:
+    # Page refresh is a read path, but it is also the only chance to heal stale
+    # cancelling records when no worker loop is alive to own the timeout.
+    return reconcile_overdue_cancellations(get_job_backend(), now=datetime.now(UTC))
+
+
 @app.get("/jobs")
 def list_jobs() -> list[dict[str, Any]]:
+    _reconcile_overdue_cancellations_for_read()
     jobs = get_job_backend().list_jobs()
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
     return jobs
@@ -500,6 +512,18 @@ def cancel_job(job_id: str) -> dict[str, Any]:
     if status == "cancelling":
         return job
 
+    if status == "failed" and job.get("error_code") == "cancel_timeout":
+        worker_id = job.get("worker_id")
+        if not worker_id:
+            raise HTTPException(status_code=409, detail="Cannot retry cancellation without worker ownership")
+        result = get_job_backend().retry_timed_out_cancellation(
+            job_id, worker_id=worker_id
+        )
+        if result is None:
+            raise HTTPException(status_code=409, detail="Cannot retry cancellation")
+        broadcast_job_event("job_updated", result)
+        return result
+
     raise HTTPException(
         status_code=409, detail=f"Cannot cancel job with status {status}"
     )
@@ -522,7 +546,7 @@ def escalate_cancel_job_endpoint(job_id: str) -> dict[str, Any]:
 
 @app.delete("/jobs/failed")
 def delete_failed_jobs_endpoint() -> dict:
-    """Delete all failed jobs from the store and notify SSE subscribers."""
+    """Delete failed and cancelled jobs from the store and notify SSE subscribers."""
     deleted = get_job_backend().delete_failed_jobs()
     for job_id in deleted:
         broadcast_job_event("job_deleted", {"job_id": job_id})
