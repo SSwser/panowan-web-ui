@@ -1089,17 +1089,11 @@ rtk git commit -m "docs: record cancellation refactor verification"
 
 ---
 
-## Recommended Execution Order
+## Verification Notes
 
-1. Task 1
-2. Task 2
-3. Task 3
-4. Task 4
-5. Task 5
-6. Task 6
-7. Task 7
-8. Task 8
-9. Task 9
-10. Task 10
-11. Task 11
-12. Task 12
+- Full targeted unittest suite passed after the refactor: `rtk python -m unittest tests.test_job_lifecycle tests.test_jobs tests.test_runtime_host tests.test_runtime_host_registration tests.test_panowan_runtime_provider tests.test_engines tests.test_worker_service tests.test_api tests.test_static_ui -v`.
+- Result: 215 tests run, 48 skipped because FastAPI is unavailable in this local environment.
+- Claimed jobs no longer enter `running` during runtime preparation.
+- Only execute-phase cancellation enters `cancelling`.
+- Restored `cancelling` jobs reconcile to `failed(cancel_timeout)`.
+- PanoWan provider truthfully declares weak interrupt capability and no step-level interrupt yet.
