@@ -29,9 +29,9 @@ class StaticUiStateTests(unittest.TestCase):
     def test_worker_summary_markup_and_fetch_are_present(self) -> None:
         self.assertIn('id="worker-summary"', INDEX_HTML)
         self.assertIn('fetch("/workers/summary")', INDEX_HTML)
-        self.assertIn('在线 Worker', INDEX_HTML)
-        self.assertIn('生成中 Worker', INDEX_HTML)
-        self.assertIn('排队任务', INDEX_HTML)
+        self.assertIn('在线 / 生成中 Worker', INDEX_HTML)
+        self.assertIn('排队 / 生成中任务', INDEX_HTML)
+        self.assertIn('可用容量', INDEX_HTML)
 
     def test_cancel_flow_has_cancelling_feedback(self) -> None:
         self.assertIn('正在取消', INDEX_HTML)
@@ -42,10 +42,15 @@ class StaticUiCancellationGovernanceTests(unittest.TestCase):
     def read_static_html(self) -> str:
         return INDEX_HTML
 
-    def test_worker_summary_uses_known_workers_and_stuck_cancelling_fields(self) -> None:
+    def test_worker_summary_uses_live_combined_fields(self) -> None:
         html = self.read_static_html()
-        self.assertIn('summary.known_workers', html)
-        self.assertIn('summary.stuck_cancelling_workers', html)
+        self.assertIn('summary.online_workers', html)
+        self.assertIn('summary.busy_workers', html)
+        self.assertIn('summary.queued_jobs', html)
+        self.assertIn('summary.running_jobs', html)
+        self.assertIn('summary.effective_available_capacity', html)
+        self.assertNotIn('summary.stuck_cancelling_workers', html)
+        self.assertNotIn('summary.known_workers', html)
         self.assertNotIn('summary.total_workers', html)
 
     def test_cancelling_action_cell_exposes_retry_and_escalation(self) -> None:

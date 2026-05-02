@@ -585,13 +585,9 @@
       <!-- History panel -->
       <div class="panel">
         <div id="worker-summary" class="worker-summary" aria-live="polite">
-          <div class="worker-card"><span>已知 Worker</span><strong id="workers-total">-</strong></div>
-          <div class="worker-card"><span>在线 Worker</span><strong id="workers-online">-</strong></div>
-          <div class="worker-card"><span>生成中 Worker</span><strong id="workers-busy">-</strong></div>
-          <div class="worker-card"><span>卡在取消</span><strong id="workers-stuck-cancelling">-</strong></div>
           <div class="worker-card"><span>可用容量</span><strong id="workers-available-capacity">-</strong></div>
-          <div class="worker-card"><span>排队任务</span><strong id="jobs-queued">-</strong></div>
-          <div class="worker-card"><span>生成中任务</span><strong id="jobs-running">-</strong></div>
+          <div class="worker-card"><span>在线 / 生成中 Worker</span><strong id="workers-online-busy">- / -</strong></div>
+          <div class="worker-card"><span>排队 / 生成中任务</span><strong id="jobs-queued-running">- / -</strong></div>
         </div>
         <div class="history-header">
           <h2>历史任务</h2>
@@ -1267,21 +1263,13 @@
           const res = await fetch("/workers/summary");
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const summary = await res.json();
-          document.getElementById("workers-total").textContent = String(summary.known_workers ?? "-");
-          document.getElementById("workers-online").textContent = String(summary.online_workers ?? "-");
-          document.getElementById("workers-busy").textContent = String(summary.busy_workers ?? "-");
-          document.getElementById("workers-stuck-cancelling").textContent = String(summary.stuck_cancelling_workers ?? "-");
+          document.getElementById("workers-online-busy").textContent = `${summary.online_workers ?? "-"} / ${summary.busy_workers ?? "-"}`;
           document.getElementById("workers-available-capacity").textContent = String(summary.effective_available_capacity ?? "-");
-          document.getElementById("jobs-queued").textContent = String(summary.queued_jobs ?? "-");
-          document.getElementById("jobs-running").textContent = String(summary.running_jobs ?? "-");
+          document.getElementById("jobs-queued-running").textContent = `${summary.queued_jobs ?? "-"} / ${summary.running_jobs ?? "-"}`;
         } catch {
-          document.getElementById("workers-total").textContent = "-";
-          document.getElementById("workers-online").textContent = "-";
-          document.getElementById("workers-busy").textContent = "-";
-          document.getElementById("workers-stuck-cancelling").textContent = "-";
+          document.getElementById("workers-online-busy").textContent = "- / -";
           document.getElementById("workers-available-capacity").textContent = "-";
-          document.getElementById("jobs-queued").textContent = "-";
-          document.getElementById("jobs-running").textContent = "-";
+          document.getElementById("jobs-queued-running").textContent = "- / -";
         }
       }
 
