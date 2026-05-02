@@ -399,30 +399,70 @@ def run_one_job(
 
     job_id = str(job["job_id"])
     job_type = str(job.get("type", "generate"))
-    started = backend.mark_running(job_id, worker_id)
-    if started is None:
-        log_transition(
-            job_id,
-            "claimed",
-            "cancelled",
-            job_type=job_type,
-            worker_id=worker_id,
-            reason="cancelled_before_start",
-        )
-        return True
-
-    job = started
-    if worker_registry is not None:
-        worker_registry.adjust_running_jobs(worker_id, 1)
-
     engine = _resolve_engine(registry, job)
-    run_job = {
+    claimed_job = {
         **job,
         "_cancellation_probe": _build_probe_for_job(backend, job, worker_id),
     }
 
     try:
-        result = engine.run(run_job)
+        if hasattr(engine, "prepare") and hasattr(engine, "execute"):
+            prepared = engine.prepare(claimed_job)
+            current = backend.get_job(job_id)
+            if current is None:
+                return True
+            if current.get("status") == "cancelled":
+                log_transition(
+                    job_id,
+                    "claimed",
+                    "cancelled",
+                    job_type=job_type,
+                    worker_id=worker_id,
+                    reason="cancelled_before_execute",
+                )
+                return True
+
+            started = backend.mark_running(job_id, worker_id)
+            if started is None:
+                log_transition(
+                    job_id,
+                    "claimed",
+                    "cancelled",
+                    job_type=job_type,
+                    worker_id=worker_id,
+                    reason="cancelled_before_start",
+                )
+                return True
+
+            if worker_registry is not None:
+                worker_registry.adjust_running_jobs(worker_id, 1)
+            run_job = {
+                **started,
+                "_prepared_runtime": prepared,
+                "_cancellation_probe": _build_probe_for_job(backend, started, worker_id),
+            }
+            result = engine.execute(run_job)
+        else:
+            started = backend.mark_running(job_id, worker_id)
+            if started is None:
+                log_transition(
+                    job_id,
+                    "claimed",
+                    "cancelled",
+                    job_type=job_type,
+                    worker_id=worker_id,
+                    reason="cancelled_before_start",
+                )
+                return True
+
+            if worker_registry is not None:
+                worker_registry.adjust_running_jobs(worker_id, 1)
+            run_job = {
+                **started,
+                "_cancellation_probe": _build_probe_for_job(backend, started, worker_id),
+            }
+            result = engine.run(run_job)
+
         outcome, _ = _finalize_job_success(
             backend,
             worker_registry,

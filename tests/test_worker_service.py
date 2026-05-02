@@ -627,7 +627,12 @@ class RuntimeCancellationContractTests(unittest.TestCase):
                 self.provider_key = "panowan"
                 self.seen_cancellation = None
 
-            def run_job(self, provider_key, payload, *, cancellation=None):
+            def prepare_runtime(self, provider_key, payload, *, cancellation=None):
+                self.seen_cancellation = cancellation
+                assert provider_key == "panowan"
+                return {"prepared": True}
+
+            def execute_job(self, provider_key, prepared, payload, *, cancellation=None):
                 self.seen_cancellation = cancellation
                 assert provider_key == "panowan"
                 return {"output_path": "out.mp4"}
@@ -653,7 +658,11 @@ class RuntimeCancellationContractTests(unittest.TestCase):
         seen = {}
 
         class FakeHost:
-            def run_job(self, provider_key, payload, *, cancellation=None):
+            def prepare_runtime(self, provider_key, payload, *, cancellation=None):
+                seen["prepare_cancellation"] = cancellation
+                return {"prepared": True}
+
+            def execute_job(self, provider_key, prepared, payload, *, cancellation=None):
                 seen["cancellation"] = cancellation
                 return {"output_path": payload.get("output_path", "out.mp4")}
 
