@@ -1,3 +1,6 @@
+import AppShell from './components/AppShell'
+import { emptyRuntimeSummary } from './stores/runtimeStore'
+
 export default function App() {
-  return <div className="app-shell">PanoWan 视频生成</div>
+  return <AppShell runtime={emptyRuntimeSummary} />
 }
