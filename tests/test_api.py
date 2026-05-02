@@ -619,6 +619,16 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(result["error"])
         broadcast.assert_called_once_with("job_updated", result)
 
+    def test_cancel_claimed_job_returns_terminal_cancelled(self) -> None:
+        api._create_job_record("c1", "", "", {})
+        api._update_job("c1", status="claimed", worker_id="worker-x")
+
+        result = api.cancel_job("c1")
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["error"])
+        self.assertIsNotNone(result["finished_at"])
+
     def test_cancel_running_job_transitions_to_cancelling(self) -> None:
         api._create_job_record("r1", "", "", {})
         api._update_job(
@@ -941,6 +951,10 @@ class CancelApiContractTests(unittest.TestCase):
         record = self._base_record("running-job", "running", worker_id)
         return self.backend.force_job_record(record)
 
+    def make_claimed_job(self, *, worker_id: str) -> dict:
+        record = self._base_record("claimed-job", "claimed", worker_id)
+        return self.backend.force_job_record(record)
+
     def make_cancelling_job(self, *, worker_id: str) -> dict:
         record = self._base_record("cancelling-job", "cancelling", worker_id)
         record["cancel_mode"] = "soft"
@@ -951,6 +965,17 @@ class CancelApiContractTests(unittest.TestCase):
 
     def make_queued_job(self) -> dict:
         return self.backend.force_job_record(self._base_record("queued-job", "queued", None))
+
+    def test_cancel_claimed_job_returns_terminal_cancelled(self) -> None:
+        job = self.make_claimed_job(worker_id="worker-1")
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelled")
+        self.assertIsNone(payload["error"])
+        self.assertIsNotNone(payload["finished_at"])
 
     def test_cancel_running_job_returns_cancelling_without_force_flag(self) -> None:
         job = self.make_running_job(worker_id="worker-1")

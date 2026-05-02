@@ -221,6 +221,21 @@ class LocalJobBackendTests(unittest.TestCase):
             self.assertIsNone(job["error"])
             self.assertIsNotNone(job["finished_at"])
 
+    def test_request_cancellation_on_claimed_job_marks_cancelled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backend = LocalJobBackend(f"{tmp}/jobs.json")
+            backend.create_job(
+                {"job_id": "job-1", "status": "queued", "type": "generate"}
+            )
+            backend.claim_next_job(worker_id="w")
+
+            updated = backend.request_cancellation("job-1", worker_id="w")
+
+            self.assertIsNotNone(updated)
+            self.assertEqual(updated["status"], "cancelled")
+            self.assertIsNone(updated["error"])
+            self.assertIsNotNone(updated["finished_at"])
+
     def test_request_cancellation_on_running_job_marks_cancelling(self):
         with tempfile.TemporaryDirectory() as tmp:
             backend = LocalJobBackend(f"{tmp}/jobs.json")

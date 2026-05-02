@@ -2,6 +2,8 @@ import unittest
 
 from app.jobs.lifecycle import (
     INFLIGHT_STATES,
+    JOB_STATE_CANCELLING,
+    JOB_STATE_CLAIMED,
     JOB_STATE_CANCELLED,
     JOB_STATE_FAILED,
     JOB_STATE_SUCCEEDED,
@@ -20,13 +22,17 @@ class CanonicalTransitionTests(unittest.TestCase):
         self.assertTrue(can_transition("queued", "claimed"))
         self.assertTrue(can_transition("queued", "cancelled"))
 
-    def test_claimed_can_become_running_cancelling_or_failed(self):
+    def test_claimed_can_cancel_without_cancelling_state(self):
         self.assertTrue(can_transition("claimed", "running"))
-        self.assertTrue(can_transition("claimed", "cancelling"))
+        self.assertTrue(can_transition("claimed", "cancelled"))
         self.assertTrue(can_transition("claimed", "failed"))
+        self.assertFalse(can_transition("claimed", "cancelling"))
 
-    def test_allows_running_to_cancelling(self):
+    def test_running_is_the_only_entry_to_cancelling(self):
+        self.assertFalse(can_transition("queued", "cancelling"))
+        self.assertFalse(can_transition("claimed", "cancelling"))
         self.assertTrue(can_transition("running", "cancelling"))
+        self.assertFalse(can_transition("cancelled", "cancelling"))
 
     def test_running_can_terminate_in_succeeded_or_failed(self):
         self.assertTrue(can_transition("running", "succeeded"))
@@ -103,8 +109,8 @@ class NormalizationTests(unittest.TestCase):
 
 
 class RestoreNormalizationTests(unittest.TestCase):
-    def test_restore_marks_inflight_as_failed(self):
-        for state in INFLIGHT_STATES:
+    def test_restore_marks_non_cancelling_inflight_as_failed(self):
+        for state in INFLIGHT_STATES - {"cancelling"}:
             record = normalize_restored_inflight_record(
                 {"status": state, "finished_at": None, "error": None},
                 "2026-05-01T00:00:00+00:00",
@@ -114,6 +120,16 @@ class RestoreNormalizationTests(unittest.TestCase):
                 record["error"], "Service restarted before the job completed"
             )
             self.assertEqual(record["finished_at"], "2026-05-01T00:00:00+00:00")
+
+    def test_restore_reconciles_cancelling_to_cancel_timeout(self):
+        record = normalize_restored_inflight_record(
+            {"status": "cancelling", "finished_at": None, "error": None},
+            "2026-05-01T00:00:00+00:00",
+        )
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["error"], "cancel_timeout")
+        self.assertEqual(record["error_code"], "cancel_timeout")
+        self.assertEqual(record["finished_at"], "2026-05-01T00:00:00+00:00")
 
     def test_restore_preserves_existing_finished_at(self):
         record = normalize_restored_inflight_record(

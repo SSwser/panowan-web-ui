@@ -224,11 +224,13 @@ class LocalJobBackend:
         """Record cancellation intent or finalize cooperative cancellation.
 
         - From ``queued`` it transitions directly to terminal ``cancelled``.
-        - From ``claimed`` or ``running`` it transitions to the intermediate
-          ``cancelling`` state, attaching governance metadata
-          (``cancel_mode``, ``cancel_attempt``, ``cancel_requested_at``,
-          ``cancel_deadline_at``) sourced from the per-job
-          :class:`CancellationCapability`.
+        - From ``claimed`` it also transitions directly to terminal
+          ``cancelled`` because engine work has not started yet, so there is no
+          cooperative runtime shutdown to wait for.
+        - From ``running`` it transitions to the intermediate ``cancelling``
+          state, attaching governance metadata (``cancel_mode``,
+          ``cancel_attempt``, ``cancel_requested_at``, ``cancel_deadline_at``)
+          sourced from the per-job :class:`CancellationCapability`.
         - With ``finished=True`` from ``cancelling`` it transitions to the
           terminal ``cancelled`` state once cooperative cancellation has
           actually been honored.
@@ -259,11 +261,23 @@ class LocalJobBackend:
         )
         if result is not None:
             return result
+        # Claimed jobs already have an owner but have not started runtime work,
+        # so cancellation should converge directly to terminal `cancelled`
+        # instead of entering the cooperative `cancelling` handshake.
+        result = self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_CANCELLED,
+            allowed_current_states={JOB_STATE_CLAIMED},
+            extra_fields={"finished_at": now_iso(), "error": None},
+        )
+        if result is not None:
+            return result
         return self._guarded_transition(
             job_id,
             worker_id=worker_id,
             target_state=JOB_STATE_CANCELLING,
-            allowed_current_states={JOB_STATE_CLAIMED, JOB_STATE_RUNNING},
+            allowed_current_states={JOB_STATE_RUNNING},
             extra_fields_factory=lambda job: begin_cancellation(
                 job,
                 capability=self._cancellation_capability_for_job(job),

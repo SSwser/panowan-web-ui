@@ -467,7 +467,22 @@ def cancel_job(job_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=404, detail="Job not found")
         status = job["status"]
 
-    if status in {"claimed", "running"}:
+    if status == "claimed":
+        result = get_job_backend().request_cancellation(
+            job_id, worker_id=job.get("worker_id")
+        )
+        if result is None:
+            current = _get_job(job_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot cancel job with status {current['status']}",
+            )
+        broadcast_job_event("job_updated", result)
+        return result
+
+    if status == "running":
         result = get_job_backend().request_cancellation(
             job_id, worker_id=job.get("worker_id")
         )
