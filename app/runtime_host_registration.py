@@ -48,6 +48,9 @@ class _SpecBoundProvider:
         self._teardown = getattr(module, spec.teardown_attr)
         self._identity = getattr(module, spec.identity_attr)
         self._classify = getattr(module, spec.failure_classifier_attr)
+        self._interrupt_capabilities = getattr(
+            module, "interrupt_capabilities", lambda: {}
+        )
         # Inspect ``execute`` once so dispatch is signature-driven instead of
         # relying on a TypeError catch — that catch could swallow legitimate
         # TypeErrors from inside the provider and silently re-invoke it.
@@ -60,6 +63,14 @@ class _SpecBoundProvider:
             raise TypeError(
                 f"Resident provider {provider_key} execute() must accept a cancellation keyword"
             )
+        try:
+            load_params = inspect.signature(self._load).parameters
+        except (TypeError, ValueError):
+            load_params = {}
+        if "cancellation" not in load_params:
+            raise TypeError(
+                f"Resident provider {provider_key} load() must accept a cancellation keyword"
+            )
         # default_identity is an optional Protocol member — only expose it when
         # the entrypoint module actually defines it.
         default_identity = getattr(module, "default_identity", None)
@@ -69,8 +80,14 @@ class _SpecBoundProvider:
     def runtime_identity_from_job(self, job: Mapping[str, Any]) -> Hashable:
         return self._identity(job)
 
-    def load(self, identity: Hashable) -> Any:
-        return self._load(identity)
+    def load(
+        self,
+        identity: Hashable,
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> Any:
+        return self._load(identity, cancellation=cancellation, context=context)
 
     def execute(
         self,
@@ -78,8 +95,17 @@ class _SpecBoundProvider:
         job: Mapping[str, Any],
         *,
         cancellation: RuntimeCancellationProbe | None = None,
+        context: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
-        return self._execute(loaded_runtime, job, cancellation=cancellation)
+        return self._execute(
+            loaded_runtime,
+            job,
+            cancellation=cancellation,
+            context=context,
+        )
+
+    def interrupt_capabilities(self) -> Mapping[str, bool]:
+        return self._interrupt_capabilities()
 
     def teardown(self, loaded_runtime: Any) -> None:
         self._teardown(loaded_runtime)
