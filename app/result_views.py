@@ -80,8 +80,11 @@ def _build_version(job: dict[str, Any], jobs_by_id: dict[str, dict[str, Any]]) -
     upscale_params = job.get("upscale_params") or {}
     params = job.get("params") or {}
     is_upscale = job.get("type") == "upscale" or bool(source_job_id)
-    width = upscale_params.get("width") or params.get("width")
-    height = upscale_params.get("height") or params.get("height")
+    # Real upscale jobs persist target dimensions under target_width/target_height.
+    # Falling back to width/height keeps older fixtures readable without surfacing
+    # the source generation size when the API recorded an upscale target.
+    width = upscale_params.get("target_width") or upscale_params.get("width") or params.get("width")
+    height = upscale_params.get("target_height") or upscale_params.get("height") or params.get("height")
     return {
         "version_id": version_id_for_job(job_id),
         "job_id": job_id,

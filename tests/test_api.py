@@ -865,10 +865,10 @@ class ApiTests(unittest.TestCase):
             generate["params"],
             job_type="upscale",
             source_job_id=generate["job_id"],
-            upscale_params={"model": "seedvr2", "scale": 4, "width": 3584, "height": 1792},
+            upscale_params={"model": "seedvr2", "scale": 4, "target_width": 3584, "target_height": 1792},
             payload={"source_job_id": generate["job_id"]},
         )
-        api.get_job_backend().update_job(
+        api.get_job_backend().force_job_fields(
             upscale["job_id"],
             status="queued",
             created_at="2026-05-02T12:14:00Z",
@@ -887,6 +887,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(result["versions"][1]["type"], "upscale")
         self.assertEqual(result["versions"][1]["parent_version_id"], "ver_job-generate-1")
         self.assertEqual(result["versions"][1]["label"], "4x SeedVR2")
+        self.assertEqual(result["versions"][1]["width"], 3584)
+        self.assertEqual(result["versions"][1]["height"], 1792)
 
     def test_result_view_exposes_failed_result_status(self) -> None:
         from app.result_views import build_result_summaries
