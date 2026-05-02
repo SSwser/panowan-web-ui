@@ -60,13 +60,21 @@ def _ensure_vendor_on_sys_path() -> None:
         sys.path.insert(0, src_str)
 
 
-def load_resident_runtime(identity: PanoWanRuntimeIdentity) -> dict[str, Any]:
+def load_resident_runtime(
+    identity: PanoWanRuntimeIdentity,
+    *,
+    cancellation: Any = None,
+    context: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the WanVideoPipeline + LoRA on GPU and return it as the loaded runtime.
 
     Mirrors upstream ``diffsynth.scripts.test.test`` (the ``panowan-test``
     console script) so resident execution and CLI/debug execution converge on
     the same model construction sequence.
     """
+    if cancellation is not None and cancellation.should_stop_now():
+        raise RuntimeError("cancelled_before_load")
+
     _ensure_vendor_on_sys_path()
 
     # Imports are local so that:
@@ -115,6 +123,7 @@ def run_job_inprocess(
     job: Mapping[str, Any],
     *,
     cancellation: Any = None,
+    context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate the job, run inference on the warm pipeline, write the video file.
 
@@ -126,7 +135,7 @@ def run_job_inprocess(
     # Cooperative cancellation is checked at safe checkpoints around the
     # heavy diffsynth call. Polling here keeps the contract observable to
     # the worker even though the underlying pipeline call is opaque.
-    if cancellation is not None and cancellation.should_stop():
+    if cancellation is not None and cancellation.should_stop_now():
         return {"status": "cancelled", "output_path": payload["output_path"]}
 
     # Upstream PanoWan (https://github.com/SSwser/PanoWan) only ships a t2v
@@ -175,7 +184,7 @@ def run_job_inprocess(
 
     video = pipe(**pipe_kwargs)
 
-    if cancellation is not None and cancellation.should_stop():
+    if cancellation is not None and cancellation.should_stop_now():
         return {"status": "cancelled", "output_path": output_path}
 
     # save_video imported lazily here (not at load time) so that teardown +
@@ -191,6 +200,16 @@ def run_job_inprocess(
     )
 
     return {"status": "ok", "output_path": output_path}
+
+
+def interrupt_capabilities() -> dict[str, bool]:
+    return {
+        "load_cancel_awareness": True,
+        "execute_soft_interrupt": True,
+        "execute_step_interrupt": False,
+        "execute_escalated_interrupt": False,
+        "requires_reset_after_failed_interrupt": False,
+    }
 
 
 def teardown_resident_runtime(loaded: dict[str, Any]) -> None:
