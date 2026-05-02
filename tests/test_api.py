@@ -2,6 +2,7 @@ import importlib.util
 import json
 import logging
 import os
+import pathlib
 import tempfile
 import unittest
 from dataclasses import replace
@@ -977,6 +978,39 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(summaries[0]["status"], "failed")
         self.assertEqual(summaries[0]["versions"][0]["error"], "runtime failed")
+
+    def test_post_api_result_version_upscale_creates_child_version(self) -> None:
+        generate = api._create_job_record(
+            "job-generate-1",
+            "A cinematic alpine valley at sunset",
+            os.path.join(self.temp_dir.name, "outputs", "job-generate-1.mp4"),
+            {"num_inference_steps": 50, "width": 896, "height": 448},
+        )
+        os.makedirs(os.path.dirname(generate["output_path"]), exist_ok=True)
+        pathlib.Path(generate["output_path"]).write_bytes(b"video")
+        api.get_job_backend().update_job(generate["job_id"], status="succeeded")
+        self._seed_upscale_worker(["seedvr2-3b"])
+
+        response = self.client.post(
+            "/api/results/res_job-generate-1/versions/ver_job-generate-1/upscale",
+            json={
+                "model": "seedvr2",
+                "scale_mode": "factor",
+                "scale": 4,
+                "target_width": 3584,
+                "target_height": 1792,
+                "replace_source": False,
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        version = response.json()["version"]
+        self.assertEqual(version["type"], "upscale")
+        self.assertEqual(version["parent_version_id"], "ver_job-generate-1")
+        self.assertEqual(version["model"], "seedvr2")
+        self.assertEqual(version["scale"], 4)
+        self.assertEqual(version["width"], 3584)
+        self.assertEqual(version["height"], 1792)
 
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")

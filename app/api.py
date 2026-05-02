@@ -169,6 +169,12 @@ def _get_job(job_id: str) -> dict[str, Any] | None:
     return get_job_backend().get_job(job_id)
 
 
+def _job_id_from_version_id(version_id: str) -> str:
+    if not version_id.startswith("ver_"):
+        raise HTTPException(status_code=404, detail="Version not found")
+    return version_id.removeprefix("ver_")
+
+
 def _job_event_snapshot(job: dict[str, Any]) -> dict[str, Any]:
     return {field: job.get(field) for field in _JOB_EVENT_FIELDS}
 
@@ -419,6 +425,46 @@ def upscale(payload: dict) -> dict:
         "source_job_id": source_job_id,
         "upscale_params": upscale_params,
     }
+
+
+@app.post("/api/results/{result_id}/versions/{version_id}/upscale", status_code=202)
+def create_upscale_version_api(result_id: str, version_id: str, payload: dict) -> dict[str, Any]:
+    source_job_id = _job_id_from_version_id(version_id)
+    result = build_result_summary(result_id, get_job_backend().list_jobs())
+    if result is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+    if not any(version["job_id"] == source_job_id for version in result["versions"]):
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    # The result/version API contract uses workbench-facing model ids like
+    # "seedvr2", but the worker runtime still dispatches by backend ids such as
+    # "seedvr2-3b". Normalize only at the API boundary so persisted versions keep
+    # the spec field name while queued jobs remain executable by the current worker.
+    requested_model = payload.get("model")
+    runtime_model = "seedvr2-3b" if requested_model == "seedvr2" else requested_model
+    upscale_payload = {
+        "source_job_id": source_job_id,
+        "model": runtime_model,
+        "scale_mode": payload.get("scale_mode", "factor"),
+        "scale": payload.get("scale"),
+        "target_width": payload.get("target_width"),
+        "target_height": payload.get("target_height"),
+        "replace_source": bool(payload.get("replace_source", False)),
+    }
+    created = upscale(upscale_payload)
+    created_job_id = created["job_id"]
+    if requested_model == "seedvr2":
+        # Result projections and the React workbench spec speak in the simplified
+        # "seedvr2" identifier, so rewrite only the persisted API-facing metadata
+        # after queueing succeeds instead of asking the frontend to know worker ids.
+        _update_job(created_job_id, upscale_params={**(created["upscale_params"] or {}), "model": "seedvr2"})
+    version = None
+    refreshed = build_result_summary(result_id, get_job_backend().list_jobs())
+    if refreshed is not None:
+        version = next((item for item in refreshed["versions"] if item["job_id"] == created_job_id), None)
+    if version is None:
+        raise HTTPException(status_code=500, detail="Created version could not be loaded")
+    return {"version": version}
 
 
 def _reconcile_overdue_cancellations_for_read() -> list[dict[str, Any]]:
