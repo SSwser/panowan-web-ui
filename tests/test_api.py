@@ -281,6 +281,73 @@ class ApiTests(unittest.TestCase):
         job = self.client.get(f"/jobs/{payload['job_id']}").json()
         self.assertEqual(job["status"], "queued")
 
+    def test_post_api_results_creates_result_view(self) -> None:
+        response = self.client.post(
+            "/api/results",
+            json={
+                "prompt": "A cinematic alpine valley at sunset",
+                "negative_prompt": "overexposed, static",
+                "quality": "standard",
+                "params": {
+                    "num_inference_steps": 50,
+                    "width": 896,
+                    "height": 448,
+                    "seed": 0,
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 202)
+        body = response.json()
+        self.assertEqual(
+            body["result"]["prompt"],
+            "A cinematic alpine valley at sunset",
+        )
+        self.assertEqual(body["result"]["status"], "queued")
+        self.assertEqual(len(body["result"]["versions"]), 1)
+        self.assertEqual(body["result"]["versions"][0]["type"], "original")
+
+    def test_get_api_results_lists_result_views(self) -> None:
+        api._create_job_record(
+            "job-generate-1",
+            "A cinematic alpine valley at sunset",
+            os.path.join(self.temp_dir.name, "outputs", "job-generate-1.mp4"),
+            {"num_inference_steps": 50, "width": 896, "height": 448},
+        )
+
+        response = self.client.get("/api/results")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["results"][0]["result_id"], "res_job-generate-1")
+        self.assertEqual(
+            body["results"][0]["versions"][0]["version_id"],
+            "ver_job-generate-1",
+        )
+
+    def test_get_api_result_returns_404_for_missing_result(self) -> None:
+        response = self.client.get("/api/results/res_missing")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["detail"], "Result not found")
+
+    def test_api_runtime_summary_uses_workbench_field_names(self) -> None:
+        self._seed_upscale_worker()
+
+        response = self.client.get("/api/runtime/summary")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["capacity"], 1)
+        self.assertEqual(body["available_capacity"], 1)
+        self.assertEqual(body["online_workers"], 1)
+        self.assertEqual(body["loading_workers"], 0)
+        self.assertEqual(body["busy_workers"], 0)
+        self.assertEqual(body["queued_jobs"], 0)
+        self.assertEqual(body["running_jobs"], 0)
+        self.assertEqual(body["cancelling_jobs"], 0)
+        self.assertTrue(body["runtime_warm"])
+
     def test_generate_persists_negative_prompt_in_queued_job(self) -> None:
         response = self.client.post(
             "/generate",

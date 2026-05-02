@@ -12,6 +12,12 @@ from fastapi.responses import FileResponse
 
 from .generator import extract_prompt, resolve_inference_params
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
+from .result_views import (
+    build_result_summaries,
+    build_result_summary,
+    result_id_for_root_job,
+    version_id_for_job,
+)
 from .settings import settings
 from .sse import broadcast_job_event, subscribe, unsubscribe
 from .upscaler import UPSCALE_BACKENDS
@@ -274,8 +280,11 @@ def healthcheck() -> dict:
     # In the split topology the API container is intentionally CPU-only and does
     # not mount worker-only engine/model trees, so API readiness cannot depend on
     # local asset visibility without keeping /health stuck on "starting" forever.
-    status = "ready" if settings.service_title and os.getenv("SERVICE_ROLE", "api") == "api" else ("ready" if model_ready else "starting")
-
+    status = (
+        "ready"
+        if settings.service_title and os.getenv("SERVICE_ROLE", "api") == "api"
+        else ("ready" if model_ready else "starting")
+    )
     return {
         "status": status,
         "service_started": True,
@@ -310,6 +319,59 @@ def generate(payload: dict) -> dict:
         "output_path": output_path,
         "download_url": record["download_url"],
     }
+
+
+def _create_result_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    job_payload = dict(payload)
+    quality = str(job_payload.pop("quality", "custom"))
+    params_payload = job_payload.pop("params", {}) or {}
+    job_payload.update(params_payload)
+    if "negative_prompt" not in job_payload:
+        job_payload["negative_prompt"] = ""
+    if quality == "draft":
+        job_payload.setdefault("num_inference_steps", 20)
+        job_payload.setdefault("width", 448)
+        job_payload.setdefault("height", 224)
+    elif quality == "standard":
+        job_payload.setdefault("num_inference_steps", 50)
+        job_payload.setdefault("width", 896)
+        job_payload.setdefault("height", 448)
+    generated = generate(job_payload)
+    result_id = result_id_for_root_job(generated["job_id"])
+    result = build_result_summary(result_id, get_job_backend().list_jobs())
+    if result is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Created result could not be loaded",
+        )
+    expected_selected_version_id = version_id_for_job(generated["job_id"])
+    # A freshly created result should project the queued root job as the selected
+    # version so the workbench never receives a result shell without its only
+    # version wired up.
+    if result.get("selected_version_id") != expected_selected_version_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Created result did not include its root version",
+        )
+    return result
+
+
+@app.get("/api/results")
+def list_results_api() -> dict[str, Any]:
+    return {"results": build_result_summaries(get_job_backend().list_jobs())}
+
+
+@app.get("/api/results/{result_id}")
+def get_result_api(result_id: str) -> dict[str, Any]:
+    result = build_result_summary(result_id, get_job_backend().list_jobs())
+    if result is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return {"result": result}
+
+
+@app.post("/api/results", status_code=202)
+def create_result_api(payload: dict) -> dict[str, Any]:
+    return {"result": _create_result_from_payload(payload)}
 
 
 @app.post("/upscale", status_code=202)
@@ -515,7 +577,10 @@ def cancel_job(job_id: str) -> dict[str, Any]:
     if status == "failed" and job.get("error_code") == "cancel_timeout":
         worker_id = job.get("worker_id")
         if not worker_id:
-            raise HTTPException(status_code=409, detail="Cannot retry cancellation without worker ownership")
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot retry cancellation without worker ownership",
+            )
         result = get_job_backend().retry_timed_out_cancellation(
             job_id, worker_id=worker_id
         )
@@ -569,19 +634,51 @@ def _worker_summary() -> dict[str, Any]:
         for worker in online_workers
         if int(worker.get("running_jobs") or 0) > 0
     }
-    total_capacity = sum(int(worker.get("max_concurrent_jobs") or 0) for worker in online_workers)
-    occupied_capacity = sum(int(worker.get("running_jobs") or 0) for worker in online_workers)
+    total_capacity = sum(
+        int(worker.get("max_concurrent_jobs") or 0)
+        for worker in online_workers
+    )
+    occupied_capacity = sum(
+        int(worker.get("running_jobs") or 0) for worker in online_workers
+    )
     return {
         "known_workers": len(known_workers),
         "online_workers": len(online_workers),
         "busy_workers": len(busy_ids),
         "stuck_cancelling_workers": len(cancelling_by_worker & online_ids),
-        "queued_jobs": sum(1 for job in jobs if job.get("status") in {"queued", "claimed"}),
+        "queued_jobs": sum(
+            1 for job in jobs if job.get("status") in {"queued", "claimed"}
+        ),
         "running_jobs": sum(1 for job in jobs if job.get("status") == "running"),
-        "cancelling_jobs": sum(1 for job in jobs if job.get("status") == "cancelling"),
+        "cancelling_jobs": sum(
+            1 for job in jobs if job.get("status") == "cancelling"
+        ),
         "total_capacity": total_capacity,
         "occupied_capacity": occupied_capacity,
         "effective_available_capacity": max(total_capacity - occupied_capacity, 0),
+    }
+
+
+@app.get("/api/runtime/summary")
+def runtime_summary_api() -> dict[str, Any]:
+    summary = _worker_summary()
+    online_workers = int(summary.get("online_workers") or 0)
+    busy_workers = int(summary.get("busy_workers") or 0)
+    queued_jobs = int(summary.get("queued_jobs") or 0)
+    running_jobs = int(summary.get("running_jobs") or 0)
+    cancelling_jobs = int(summary.get("cancelling_jobs") or 0)
+    total_capacity = int(summary.get("total_capacity") or 0)
+    available_capacity = int(summary.get("effective_available_capacity") or 0)
+    return {
+        "capacity": total_capacity,
+        "available_capacity": available_capacity,
+        "online_workers": online_workers,
+        "loading_workers": max(queued_jobs - available_capacity, 0),
+        "busy_workers": busy_workers,
+        "queued_jobs": queued_jobs,
+        "running_jobs": running_jobs,
+        "cancelling_jobs": cancelling_jobs,
+        "runtime_warm": online_workers > 0,
     }
 
 
