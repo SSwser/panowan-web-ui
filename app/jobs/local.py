@@ -72,6 +72,7 @@ class LocalJobBackend:
             "upscale_params",
             "source_job_id",
             "type",
+            "created_at",
             "error_code",
         }
     )

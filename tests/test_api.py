@@ -844,6 +844,71 @@ class ApiTests(unittest.TestCase):
             },
         )
 
+    def test_result_view_groups_generate_and_upscale_jobs(self) -> None:
+        from app.result_views import build_result_summaries
+
+        generate = api._create_job_record(
+            "job-generate-1",
+            "A cinematic alpine valley at sunset",
+            os.path.join(self.temp_dir.name, "outputs", "job-generate-1.mp4"),
+            {"num_inference_steps": 50, "width": 896, "height": 448, "seed": 0},
+        )
+        api.get_job_backend().update_job(
+            generate["job_id"],
+            status="succeeded",
+            finished_at="2026-05-02T12:13:00Z",
+        )
+        upscale = api._create_job_record(
+            "job-upscale-1",
+            generate["prompt"],
+            os.path.join(self.temp_dir.name, "outputs", "job-upscale-1.mp4"),
+            generate["params"],
+            job_type="upscale",
+            source_job_id=generate["job_id"],
+            upscale_params={"model": "seedvr2", "scale": 4, "width": 3584, "height": 1792},
+            payload={"source_job_id": generate["job_id"]},
+        )
+        api.get_job_backend().update_job(
+            upscale["job_id"],
+            status="queued",
+            created_at="2026-05-02T12:14:00Z",
+        )
+
+        summaries = build_result_summaries(api.get_job_backend().list_jobs())
+
+        self.assertEqual(len(summaries), 1)
+        result = summaries[0]
+        self.assertEqual(result["result_id"], "res_job-generate-1")
+        self.assertEqual(result["root_job_id"], "job-generate-1")
+        self.assertEqual(result["prompt"], "A cinematic alpine valley at sunset")
+        self.assertEqual(result["status"], "mixed")
+        self.assertEqual([version["version_id"] for version in result["versions"]], ["ver_job-generate-1", "ver_job-upscale-1"])
+        self.assertEqual(result["versions"][0]["type"], "original")
+        self.assertEqual(result["versions"][1]["type"], "upscale")
+        self.assertEqual(result["versions"][1]["parent_version_id"], "ver_job-generate-1")
+        self.assertEqual(result["versions"][1]["label"], "4x SeedVR2")
+
+    def test_result_view_exposes_failed_result_status(self) -> None:
+        from app.result_views import build_result_summaries
+
+        record = api._create_job_record(
+            "job-generate-failed",
+            "A failed prompt",
+            os.path.join(self.temp_dir.name, "outputs", "job-generate-failed.mp4"),
+            {"num_inference_steps": 20, "width": 448, "height": 224},
+        )
+        api.get_job_backend().update_job(
+            record["job_id"],
+            status="failed",
+            error="runtime failed",
+            finished_at="2026-05-02T12:15:00Z",
+        )
+
+        summaries = build_result_summaries(api.get_job_backend().list_jobs())
+
+        self.assertEqual(summaries[0]["status"], "failed")
+        self.assertEqual(summaries[0]["versions"][0]["error"], "runtime failed")
+
 
 @unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
 class WorkerSummaryContractTests(unittest.TestCase):
