@@ -58,10 +58,13 @@ class _SpecBoundProvider:
             params = inspect.signature(self._execute).parameters
         except (TypeError, ValueError):
             params = {}
-        self._execute_supports_cancellation = "cancellation" in params
-        if not self._execute_supports_cancellation:
+        if "cancellation" not in params:
             raise TypeError(
                 f"Resident provider {provider_key} execute() must accept a cancellation keyword"
+            )
+        if "context" not in params:
+            raise TypeError(
+                f"Resident provider {provider_key} execute() must accept a context keyword"
             )
         try:
             load_params = inspect.signature(self._load).parameters
@@ -70,6 +73,10 @@ class _SpecBoundProvider:
         if "cancellation" not in load_params:
             raise TypeError(
                 f"Resident provider {provider_key} load() must accept a cancellation keyword"
+            )
+        if "context" not in load_params:
+            raise TypeError(
+                f"Resident provider {provider_key} load() must accept a context keyword"
             )
         # default_identity is an optional Protocol member — only expose it when
         # the entrypoint module actually defines it.

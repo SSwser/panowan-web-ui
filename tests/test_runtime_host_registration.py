@@ -166,6 +166,31 @@ class BuildProviderFromSpecTests(unittest.TestCase):
             self.assertEqual(sys.path, before)
 
 
+    def test_load_must_accept_context_keyword(self) -> None:
+        body = _PROVIDER_MODULE_TEMPLATE.replace(
+            "def load(identity, *, cancellation=None, context=None):",
+            "def load(identity, *, cancellation=None):",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            module_name = self._unique_module()
+            _write_synthetic_backend(Path(tmp), module_name, body=body)
+            spec = _make_spec(module_name)
+            with self.assertRaisesRegex(TypeError, "load\(\) must accept a context keyword"):
+                build_provider_from_spec(spec, backend_root=Path(tmp))
+
+    def test_execute_must_accept_context_keyword(self) -> None:
+        body = _PROVIDER_MODULE_TEMPLATE.replace(
+            "def execute(loaded, job, *, cancellation=None, context=None):",
+            "def execute(loaded, job, *, cancellation=None):",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            module_name = self._unique_module()
+            _write_synthetic_backend(Path(tmp), module_name, body=body)
+            spec = _make_spec(module_name)
+            with self.assertRaisesRegex(TypeError, "execute\(\) must accept a context keyword"):
+                build_provider_from_spec(spec, backend_root=Path(tmp))
+
+
 class EndToEndPanoWanWiringTests(unittest.TestCase):
     def test_real_panowan_backend_toml_wires_provider(self) -> None:
         spec_path = Path("third_party/PanoWan/backend.toml")

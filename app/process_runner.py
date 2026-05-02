@@ -40,7 +40,7 @@ def run_cancellable_process(
     # subprocess engines. Internally we reduce it to a callable to keep the
     # poll loop unchanged.
     should_cancel: Callable[[], bool] | None = (
-        cancellation.should_stop if cancellation is not None else None
+        cancellation.should_stop_now if cancellation is not None else None
     )
     process = subprocess.Popen(
         command,
