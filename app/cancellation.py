@@ -29,13 +29,20 @@ class CancellationContext:
 class RuntimeCancellationProbe(Protocol):
     """Worker-supplied cancellation handle visible to runtime providers.
 
-    Providers should poll ``should_stop()`` at safe checkpoint boundaries
+    Providers should poll ``should_stop_now()`` at safe checkpoint boundaries
     and may consult ``context`` to read cancel mode/deadline metadata.
     """
 
     @property
     def context(self) -> CancellationContext: ...
-    def should_stop(self) -> bool: ...
+    @property
+    def mode(self) -> str: ...
+    @property
+    def attempt(self) -> int: ...
+    @property
+    def deadline_at(self) -> str | None: ...
+    def should_stop_now(self) -> bool: ...
+    def should_escalate(self) -> bool: ...
     def checkpoint(self, label: str) -> str: ...
 
 
@@ -46,8 +53,23 @@ class CallbackCancellationProbe:
     context: CancellationContext
     stop_check: Callable[[], bool]
 
-    def should_stop(self) -> bool:
+    @property
+    def mode(self) -> str:
+        return self.context.mode
+
+    @property
+    def attempt(self) -> int:
+        return self.context.attempt
+
+    @property
+    def deadline_at(self) -> str | None:
+        return self.context.deadline_at or None
+
+    def should_stop_now(self) -> bool:
         return bool(self.stop_check())
+
+    def should_escalate(self) -> bool:
+        return self.mode == "escalated"
 
     def checkpoint(self, label: str) -> str:
         # Default no-op checkpoint reporter; richer reporting can layer on later.

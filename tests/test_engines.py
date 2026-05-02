@@ -194,7 +194,7 @@ class UpscaleEngineTests(unittest.TestCase):
             },
         )
         self.assertIsNotNone(forwarded)
-        self.assertFalse(forwarded.should_stop())
+        self.assertFalse(forwarded.should_stop_now())
 
 
 class PanoWanEngineCapabilitiesTests(unittest.TestCase):

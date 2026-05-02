@@ -142,13 +142,14 @@ def _build_probe_for_job(
     backend: LocalJobBackend, job: dict[str, Any], worker_id: str
 ) -> CallbackCancellationProbe:
     job_id = str(job["job_id"])
+    current = backend.get_job(job_id) or job
     ctx = CancellationContext(
         job_id=job_id,
         worker_id=worker_id,
-        mode=str(job.get("cancel_mode") or "soft"),
-        requested_at=str(job.get("cancel_requested_at") or ""),
-        deadline_at=str(job.get("cancel_deadline_at") or ""),
-        attempt=int(job.get("cancel_attempt") or 0),
+        mode=str(current.get("cancel_mode") or "soft"),
+        requested_at=str(current.get("cancel_requested_at") or ""),
+        deadline_at=str(current.get("cancel_deadline_at") or ""),
+        attempt=int(current.get("cancel_attempt") or 0),
     )
     return CallbackCancellationProbe(
         context=ctx,

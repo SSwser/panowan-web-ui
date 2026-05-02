@@ -14,6 +14,7 @@ from app.worker_service import (
     _startup_preload,
     build_host,
     build_registry,
+    _build_probe_for_job,
     finalize_runtime_cancellation,
     log_worker_summary,
     publish_worker_state,
@@ -154,6 +155,40 @@ class WorkerServiceTests(unittest.TestCase):
             record["worker_id"] = worker_id
         return record
 
+    def test_probe_exposes_mode_attempt_and_deadline(self) -> None:
+        backend = LocalJobBackend(self.jobs_path)
+        backend.create_job(
+            {
+                "job_id": "job-1",
+                "status": "queued",
+                "created_at": "1",
+                "cancel_mode": "escalated",
+                "cancel_attempt": 2,
+                "cancel_deadline_at": "2026-05-02T12:00:00+00:00",
+            }
+        )
+        backend.claim_next_job(worker_id="worker-a")
+        backend.mark_running("job-1", "worker-a")
+        backend.request_cancellation("job-1", worker_id="worker-a")
+        backend.force_job_fields(
+            "job-1",
+            cancel_mode="escalated",
+            cancel_attempt=2,
+            cancel_deadline_at="2026-05-02T12:00:00+00:00",
+        )
+
+        probe = _build_probe_for_job(
+            backend=backend,
+            job={"job_id": "job-1"},
+            worker_id="worker-a",
+        )
+
+        self.assertTrue(probe.should_stop_now())
+        self.assertTrue(probe.should_escalate())
+        self.assertEqual(probe.mode, "escalated")
+        self.assertEqual(probe.attempt, 2)
+        self.assertEqual(probe.deadline_at, "2026-05-02T12:00:00+00:00")
+
     def test_run_one_job_logs_terminal_transition(self) -> None:
         backend = LocalJobBackend(self.jobs_path)
         backend.create_job(self._job_record(job_id="job-log", status="queued"))
@@ -243,9 +278,7 @@ class WorkerServiceTests(unittest.TestCase):
             )
             # Pre-empt the worker by claiming and cancelling the job before
             # run_one_job() observes the queue.
-            backend.claim_next_job(worker_id="other-worker")
-            backend.request_cancellation("job-1")
-            backend.request_cancellation("job-1", finished=True)
+            backend.cancel_queued_job("job-1")
 
             class ShouldNotRunEngine:
                 name = "panowan"
