@@ -55,8 +55,14 @@ class FakeProvider:
         self.calls.append(("identity_from_job", ident))
         return ident
 
-    def load(self, identity: Hashable) -> Any:
+    def load(
+        self,
+        identity: Hashable,
+        *,
+        cancellation: Any = None,
+    ) -> Any:
         self.calls.append(("load", identity))
+        self.last_load_cancellation = cancellation
         if self.load_error is not None:
             raise self.load_error
         return _FakeRuntime(identity)
@@ -126,6 +132,27 @@ class ResidentRuntimeHostTests(unittest.TestCase):
         self.assertEqual(snap.state, RuntimeState.WARM)
         self.assertEqual(snap.identity, "A")
         self.assertEqual(snap.last_used_at, 1005.0)
+
+    def test_prepare_runtime_loads_but_does_not_enter_running(self) -> None:
+        host, provider, _clock = self._build()
+
+        loaded = host.prepare_runtime("fake", {"identity": "A", "seq": 1})
+        snapshot = host.status("fake")
+
+        self.assertIsNotNone(loaded)
+        assert snapshot is not None
+        self.assertEqual(snapshot.state, RuntimeState.WARM)
+        self.assertEqual(provider.calls.count(("load", "A")), 1)
+        self.assertEqual([call for call in provider.calls if call[0] == "execute"], [])
+
+    def test_execute_job_transitions_runtime_through_running(self) -> None:
+        host, provider, _clock = self._build()
+        loaded = host.prepare_runtime("fake", {"identity": "A", "seq": 1})
+
+        result = host.execute_job("fake", loaded, {"identity": "A", "seq": 1})
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len([call for call in provider.calls if call[0] == "execute"]), 1)
 
     # ---- identity mismatch ------------------------------------------
 

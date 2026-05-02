@@ -45,7 +45,12 @@ class RuntimeProvider(Protocol):
     provider_key: str
 
     def runtime_identity_from_job(self, job: Mapping[str, Any]) -> Hashable: ...
-    def load(self, identity: Hashable) -> Any: ...
+    def load(
+        self,
+        identity: Hashable,
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
+    ) -> Any: ...
     def execute(
         self,
         loaded_runtime: Any,
@@ -164,11 +169,16 @@ class ResidentRuntimeHost:
                 instance.state = RuntimeState.COLD
 
     def _load(
-        self, provider: RuntimeProvider, instance: RuntimeInstance, identity: Hashable
+        self,
+        provider: RuntimeProvider,
+        instance: RuntimeInstance,
+        identity: Hashable,
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
     ) -> None:
         self._set_state(instance, RuntimeState.LOADING)
         try:
-            loaded = provider.load(identity)
+            loaded = provider.load(identity, cancellation=cancellation)
         except BaseException as exc:
             with self._state_lock:
                 instance.state = RuntimeState.FAILED
@@ -184,17 +194,17 @@ class ResidentRuntimeHost:
 
     # ---- public lifecycle --------------------------------------------
 
-    def run_job(
+    def prepare_runtime(
         self,
         provider_key: str,
         job: Mapping[str, Any],
         *,
         cancellation: RuntimeCancellationProbe | None = None,
-    ) -> Mapping[str, Any]:
+    ) -> Any:
         provider, instance, lock = self._require(provider_key)
         with lock:
-            # Auto-reset from FAILED before deciding identity, so a corrupted
-            # runtime from a previous job doesn't poison this one.
+            # Preparation repairs a failed resident runtime before loading so a
+            # previous corrupting execute failure cannot poison the next job.
             if instance.state == RuntimeState.FAILED:
                 self._set_state(instance, RuntimeState.EVICTING)
                 self._safe_teardown(provider, instance)
@@ -206,13 +216,25 @@ class ResidentRuntimeHost:
                 self._safe_teardown(provider, instance)
 
             if instance.state == RuntimeState.COLD:
-                self._load(provider, instance, identity)
+                self._load(provider, instance, identity, cancellation=cancellation)
 
-            # invariant: WARM with matching identity here
-            loaded = instance.loaded
+            return instance.loaded
+
+    def execute_job(
+        self,
+        provider_key: str,
+        loaded_runtime: Any,
+        job: Mapping[str, Any],
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
+    ) -> Mapping[str, Any]:
+        provider, instance, lock = self._require(provider_key)
+        with lock:
             self._set_state(instance, RuntimeState.RUNNING)
             try:
-                result = provider.execute(loaded, job, cancellation=cancellation)
+                result = provider.execute(
+                    loaded_runtime, job, cancellation=cancellation
+                )
             except BaseException as exc:
                 corrupting = bool(provider.classify_failure(exc))
                 if corrupting:
@@ -228,6 +250,23 @@ class ResidentRuntimeHost:
                 instance.last_used_at = self._clock()
                 instance.state = RuntimeState.WARM
             return result
+
+    def run_job(
+        self,
+        provider_key: str,
+        job: Mapping[str, Any],
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
+    ) -> Mapping[str, Any]:
+        loaded_runtime = self.prepare_runtime(
+            provider_key, job, cancellation=cancellation
+        )
+        return self.execute_job(
+            provider_key,
+            loaded_runtime,
+            job,
+            cancellation=cancellation,
+        )
 
     def preload(self, provider_key: str, identity: Hashable | None = None) -> None:
         provider, instance, lock = self._require(provider_key)
@@ -256,7 +295,7 @@ class ResidentRuntimeHost:
                 self._safe_teardown(provider, instance)
 
             if instance.state == RuntimeState.COLD:
-                self._load(provider, instance, identity)
+                self._load(provider, instance, identity, cancellation=None)
                 return
 
             raise RuntimeError(
