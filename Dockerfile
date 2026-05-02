@@ -71,11 +71,20 @@ RUN /opt/venv/bin/python -m venv /opt/venvs/upscale-realesrgan \
     && /opt/venvs/upscale-realesrgan/bin/python -m pip install --upgrade pip \
     && /opt/venvs/upscale-realesrgan/bin/python -m pip install -r /tmp/upscale-realesrgan-requirements.txt
 
+FROM node:20-bookworm-slim AS frontend-builder
+
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json /app/frontend/
+RUN npm ci
+COPY frontend /app/frontend
+RUN npm run build
+
 FROM api-deps AS api
 
 WORKDIR /app
 COPY app /app/app
 COPY scripts /app/scripts
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 RUN mkdir -p /app/runtime
 EXPOSE 8000
 CMD ["bash", "/app/scripts/start-api.sh"]
