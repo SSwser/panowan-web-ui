@@ -230,6 +230,38 @@ class VendorSysPathTests(unittest.TestCase):
                     runtime_provider.load_resident_runtime(identity)
 
 
+class _AlwaysCancelledProbe:
+    def should_stop_now(self) -> bool:
+        return True
+
+    def should_escalate(self) -> bool:
+        return False
+
+
+class PanoWanRuntimeProviderContractTests(unittest.TestCase):
+    def test_interrupt_capabilities_are_truthful_for_current_provider(self) -> None:
+        capabilities = runtime_provider.interrupt_capabilities()
+        self.assertEqual(
+            capabilities,
+            {
+                "load_cancel_awareness": True,
+                "execute_soft_interrupt": True,
+                "execute_step_interrupt": False,
+                "execute_escalated_interrupt": False,
+                "requires_reset_after_failed_interrupt": False,
+            },
+        )
+
+    def test_load_resident_runtime_accepts_cancellation_argument(self) -> None:
+        identity = _identity("/models/wan", "/models/lora.ckpt")
+        with self.assertRaisesRegex(RuntimeError, "cancelled_before_load"):
+            runtime_provider.load_resident_runtime(
+                identity,
+                cancellation=_AlwaysCancelledProbe(),
+                context=None,
+            )
+
+
 class LoadResidentRuntimeTests(unittest.TestCase):
     def test_load_constructs_pipeline_with_expected_files_and_lora(self) -> None:
         with _DiffsynthHarness() as harness, tempfile.TemporaryDirectory() as tmp:
