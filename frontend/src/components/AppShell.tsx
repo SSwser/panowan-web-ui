@@ -1,4 +1,5 @@
 import RuntimeStatusBar from './RuntimeStatusBar'
+import CreateTaskPanel from '../features/create/CreateTaskPanel'
 import type { RuntimeSummary } from '../types/runtime'
 
 interface AppShellProps {
@@ -19,6 +20,7 @@ export default function AppShell({ runtime }: AppShellProps) {
         {/* Task 9 only establishes the desktop shell so later tasks can mount real panels without changing layout semantics. */}
         <section className="workbench-card workbench-card--composer" aria-label="新建任务">
           <h2>新建任务</h2>
+          <CreateTaskPanel onSubmit={() => undefined} />
         </section>
         <section className="workbench-card workbench-card--preview" aria-label="结果预览">
           <h2>结果预览</h2>
