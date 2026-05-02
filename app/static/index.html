@@ -85,64 +85,96 @@
         box-shadow: var(--shadow);
       }
 
+      .history-panel {
+        display: flex;
+        flex-direction: column;
+        min-height: 420px;
+        height: calc(100vh - 48px);
+        overflow: hidden;
+      }
+
       .hero {
-        padding: 28px 32px 18px;
+        padding: 20px 32px 12px;
         background: linear-gradient(135deg, rgba(190, 91, 45, 0.12), rgba(31, 122, 77, 0.08));
       }
 
       .hero h1 {
-        margin: 0 0 8px;
-        font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+        margin: 0 0 6px;
+        font-size: clamp(1.6rem, 3vw, 2.3rem);
         line-height: 1;
         letter-spacing: -0.04em;
       }
 
-      .hero p { margin: 0; color: var(--muted); font-size: 0.95rem; line-height: 1.6; }
+      .hero p { margin: 0; color: var(--muted); font-size: 0.88rem; line-height: 1.35; }
 
       .submit-area {
-        padding: 22px 32px 28px;
+        padding: 16px 32px 22px;
         display: grid;
-        gap: 14px;
+        gap: 10px;
       }
 
-      label { display: block; font-size: 0.88rem; font-weight: 700; margin-bottom: 6px; }
+      label { display: block; font-size: 0.86rem; font-weight: 700; margin-bottom: 5px; }
 
       textarea, input[type=text], input[type=number], select {
         width: 100%;
         border: 1px solid rgba(31, 41, 55, 0.18);
-        border-radius: 14px;
+        border-radius: 12px;
         background: rgba(255, 255, 255, 0.85);
         color: var(--ink);
-        padding: 10px 14px;
+        padding: 9px 12px;
         font: inherit;
       }
 
-      textarea { min-height: 100px; resize: vertical; }
+      textarea { min-height: 86px; resize: vertical; }
 
-      /* ── quality row ── */
-      .quality-row {
-        display: flex; gap: 8px; flex-wrap: wrap;
+      /* ── prompt toolbar ── */
+      .prompt-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 5px;
       }
-      .quality-btn {
-        flex: 1; min-width: 90px; text-align: center;
-        border: 1.5px solid var(--border);
-        border-radius: 12px;
-        background: rgba(255,255,255,0.7);
-        padding: 8px 4px;
-        cursor: pointer;
-        font: inherit;
+
+      .prompt-header label { margin: 0; }
+
+      .prompt-tools {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .prompt-tools .submit-row {
+        margin-left: 2px;
+      }
+
+      .prompt-tools #submit-btn {
+        padding: 7px 16px;
+        box-shadow: 0 8px 16px rgba(190, 91, 45, 0.18);
+      }
+
+      .quality-select-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
         font-size: 0.82rem;
         font-weight: 700;
+      }
+
+      .quality-select-wrap select {
+        width: auto;
+        min-width: 128px;
+        padding: 6px 28px 6px 10px;
+        border-radius: 999px;
+        font-size: 0.82rem;
+      }
+
+      .quality-summary {
         color: var(--muted);
-        transition: border-color 140ms, color 140ms, background 140ms;
+        font-size: 0.8rem;
+        white-space: nowrap;
       }
-      .quality-btn:hover { border-color: var(--accent); color: var(--accent); }
-      .quality-btn.active {
-        border-color: var(--accent);
-        background: var(--accent-soft);
-        color: var(--accent);
-      }
-      .quality-btn small { display: block; font-weight: 400; font-size: 0.72rem; margin-top: 2px; }
 
       /* ── params grid ── */
       .params-grid {
@@ -233,29 +265,48 @@
       /* --- worker summary --- */
       .worker-summary {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 12px;
-        padding: 16px 20px;
+        padding: 14px 20px;
       }
       .worker-card {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        justify-content: space-between;
+        gap: 14px;
+        min-height: 112px;
         padding: 14px 16px;
-        background: var(--surface, rgba(31, 41, 55, 0.025));
+        background: rgba(255, 255, 255, 0.45);
         border: 1px solid var(--border);
         border-radius: 12px;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
       }
-      .worker-card span {
+      .worker-card-label {
         font-size: 0.72rem;
         text-transform: uppercase;
         letter-spacing: 0.06em;
         color: var(--muted);
       }
-      .worker-card strong {
-        font-size: 1.4rem;
+      .worker-card-metrics {
+        display: flex;
+        align-items: flex-end;
+        gap: 20px;
+      }
+      .metric-item {
+        display: inline-flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 50px;
+      }
+      .metric-item span {
+        font-size: 0.68rem;
         font-weight: 700;
+        color: var(--muted);
+      }
+      .metric-item strong {
+        font-size: 1.25rem;
+        line-height: 1;
+        font-weight: 800;
         font-variant-numeric: tabular-nums;
         color: var(--fg, inherit);
       }
@@ -355,6 +406,30 @@
         white-space: nowrap;
       }
 
+      .cancel-spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(190, 91, 45, 0.24);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      .cancel-detail {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        color: var(--error);
+        background: var(--error-soft);
+        font-weight: 800;
+        cursor: help;
+      }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+
       .download-btn {
         color: var(--accent);
         background: var(--accent-soft);
@@ -364,6 +439,39 @@
         color: var(--success);
         background: var(--success-soft);
         margin-right: 6px;
+      }
+
+      .preview-btn.force-cancel-btn {
+        color: #fff;
+        background: var(--error);
+      }
+
+      .preview-btn.retry-cancel-btn {
+        color: var(--error);
+        background: var(--error-soft);
+      }
+
+      .quality-row {
+        display: flex; gap: 8px; flex-wrap: wrap;
+      }
+      .quality-btn {
+        flex: 1; min-width: 90px; text-align: center;
+        border: 1.5px solid var(--border);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.7);
+        padding: 8px 4px;
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: var(--muted);
+        transition: border-color 140ms, color 140ms, background 140ms;
+      }
+      .quality-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .quality-btn.active {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent);
       }
 
       .download-btn:hover, .preview-btn:hover { transform: translateY(-1px); }
@@ -419,7 +527,12 @@
         background: rgba(255,255,255,0.08); border: none; color: #8a8070; cursor: pointer;
       }
 
-      .table-wrap { overflow-x: auto; }
+      .table-wrap {
+        flex: 1 1 auto;
+        min-height: 260px;
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
 
       @media (max-width: 720px) {
         .hero, .submit-area, .history-header { padding-left: 18px; padding-right: 18px; }
@@ -451,53 +564,98 @@
     <dialog id="upscale-dialog">
       <div class="dialog-inner" style="background:var(--panel-strong);color:var(--ink);">
         <div class="dialog-header" style="border-bottom:1px solid var(--border);">
-          <h3 id="upscale-title" style="color:var(--ink);">提升画质</h3>
+          <h3 style="color:var(--ink);">提升画质</h3>
           <button class="dialog-close" id="upscale-close-btn" style="background:var(--accent-soft);color:var(--accent);">✕</button>
         </div>
-        <div style="padding:18px 22px;">
-          <p id="upscale-source-info" style="font-size:0.85rem;color:var(--muted);margin:0 0 14px;"></p>
-
-          <label style="font-size:0.85rem;">超分模型</label>
-          <select id="upscale-model" style="margin-bottom:14px;">
-            <option value="realesrgan-animevideov3">Real-ESRGAN (快速)</option>
-            <option value="realbasicvsr">RealBasicVSR (高质量)</option>
-            <option value="seedvr2-3b">SeedVR2-3B (SOTA)</option>
-          </select>
-
-          <label style="font-size:0.85rem;">缩放方式</label>
+        <div style="padding:18px;display:grid;gap:14px;">
+          <p id="upscale-source-label" style="margin:0;color:var(--muted);font-size:0.9rem;"></p>
+          <p id="upscale-model-hint" style="margin:0;color:var(--muted);font-size:0.82rem;"></p>
+          <div>
+            <label for="upscale-model">模型</label>
+            <select id="upscale-model">
+              <option value="realesrgan-animevideov3">Real-ESRGAN AnimeVideo v3</option>
+              <option value="realesr-general-x4v3">Real-ESRGAN General x4 v3</option>
+            </select>
+          </div>
           <div class="quality-row" style="margin-bottom:14px;">
             <button type="button" class="quality-btn active" data-scale-mode="factor">按倍率</button>
             <button type="button" class="quality-btn" data-scale-mode="resolution">指定分辨率</button>
           </div>
-
-          <div id="upscale-factor-section">
-            <label style="font-size:0.85rem;">缩放倍率</label>
-            <select id="upscale-scale">
-              <option value="2">2x</option>
-              <option value="4">4x</option>
+          <div id="scale-factor-fields">
+            <label for="upscale-factor">倍率</label>
+            <select id="upscale-factor">
+              <option value="2">2×</option>
+              <option value="4">4×</option>
             </select>
           </div>
-
-          <div id="upscale-resolution-section" style="display:none;">
+          <div id="scale-resolution-fields" style="display:none;">
             <div class="params-grid">
               <div>
-                <label style="font-size:0.85rem;">目标宽度</label>
-                <input type="number" id="upscale-target-w" min="32" step="32">
+                <label for="target-width">目标宽度</label>
+                <input type="number" id="target-width" min="64" step="2" value="1792">
               </div>
               <div>
-                <label style="font-size:0.85rem;">目标高度</label>
-                <input type="number" id="upscale-target-h" min="32" step="32">
+                <label for="target-height">目标高度</label>
+                <input type="number" id="target-height" min="64" step="2" value="896">
               </div>
             </div>
           </div>
-
-          <p id="upscale-hint" style="font-size:0.78rem;color:var(--muted);margin-top:10px;"></p>
-
-          <div class="row" style="margin-top:18px;">
+          <label style="display:flex;align-items:center;gap:8px;font-weight:600;">
+            <input type="checkbox" id="replace-source-video" style="width:auto;"> 完成后替换原视频链接
+          </label>
+          <div class="row">
+            <button id="upscale-submit-btn" type="button">提交提升任务</button>
             <button id="upscale-cancel-btn" class="secondary" type="button">取消</button>
-            <button id="upscale-submit-btn" type="button">开始提升</button>
           </div>
           <span id="upscale-status" class="submit-status"></span>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Manual quality dialog -->
+    <dialog id="custom-quality-dialog">
+      <div class="dialog-inner" style="background:var(--panel-strong);color:var(--ink);">
+        <div class="dialog-header" style="border-bottom:1px solid var(--border);">
+          <h3 style="color:var(--ink);">手动设置</h3>
+          <button class="dialog-close" id="custom-quality-close-btn" style="background:var(--accent-soft);color:var(--accent);">✕</button>
+        </div>
+        <div style="padding:18px;display:grid;gap:12px;">
+          <div class="params-grid">
+            <div>
+              <label for="num-steps">推理步数</label>
+              <input type="number" id="num-steps" min="1" max="150" value="50">
+            </div>
+            <div>
+              <label for="resolution">分辨率</label>
+              <select id="resolution">
+                <option value="448x224">448×224　草稿</option>
+                <option value="640x320">640×320　小</option>
+                <option value="896x448" selected>896×448　标准</option>
+                <option value="1280x640">1280×640　高清 ⚠</option>
+                <option value="custom">自定义…</option>
+              </select>
+            </div>
+            <div>
+              <label for="seed">随机种子</label>
+              <input type="number" id="seed" min="0" value="0">
+            </div>
+          </div>
+          <div id="custom-res" style="display:none;">
+            <div class="params-grid">
+              <div>
+                <label for="custom-width">宽度（px，16 的倍数）</label>
+                <input type="number" id="custom-width" min="64" step="16" value="896">
+              </div>
+              <div>
+                <label for="custom-height">高度（px，建议 = 宽 ÷ 2）</label>
+                <input type="number" id="custom-height" min="32" step="16" value="448">
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <button id="custom-quality-save-btn" type="button">保存设置</button>
+            <button id="custom-quality-cancel-btn" class="secondary" type="button">取消</button>
+          </div>
         </div>
       </div>
     </dialog>
@@ -511,83 +669,75 @@
         </section>
         <div class="submit-area">
           <div>
-            <label for="prompt">Prompt</label>
+            <div class="prompt-header">
+              <label for="prompt">Proposals（<span id="quality-summary" class="quality-summary">20步 · 448×224</span>）</label>
+              <div class="prompt-tools">
+                <div class="quality-select-wrap">
+                  <span>质量预设</span>
+                  <select id="quality-select" aria-label="质量预设">
+                    <option value="draft" selected>草稿</option>
+                    <option value="standard">标准</option>
+                    <option value="custom">手动</option>
+                  </select>
+                </div>
+                <div class="row submit-row">
+                  <button id="submit-btn" type="button">提交任务</button>
+                </div>
+              </div>
+            </div>
             <textarea id="prompt">A cinematic alpine valley at sunset with drifting clouds and wide panoramic motion.</textarea>
-          </div>
-
-          <div>
-            <label>质量预设</label>
-            <div class="quality-row">
-              <button type="button" class="quality-btn" data-quality="draft">
-                草稿
-                <small>20步 · 448×224</small>
-              </button>
-              <button type="button" class="quality-btn active" data-quality="standard">
-                标准
-                <small>50步 · 896×448</small>
-              </button>
-              <button type="button" class="quality-btn" data-quality="custom">
-                自定义
-                <small>手动设置</small>
-              </button>
-            </div>
-          </div>
-
-          <div id="custom-params" style="display:none">
-            <div class="params-grid">
-              <div>
-                <label for="num-steps">推理步数</label>
-                <input type="number" id="num-steps" min="1" max="150" value="50">
-              </div>
-              <div>
-                <label for="resolution">分辨率</label>
-                <select id="resolution">
-                  <option value="448x224">448×224　草稿</option>
-                  <option value="640x320">640×320　小</option>
-                  <option value="896x448" selected>896×448　标准</option>
-                  <option value="1280x640">1280×640　高清 ⚠</option>
-                  <option value="custom">自定义…</option>
-                </select>
-              </div>
-              <div>
-                <label for="seed">随机种子</label>
-                <input type="number" id="seed" min="0" value="0">
-              </div>
-            </div>
-            <div id="custom-res" style="display:none; margin-top:10px">
-              <div class="params-grid">
-                <div>
-                  <label for="custom-width">宽度（px，16 的倍数）</label>
-                  <input type="number" id="custom-width" min="64" step="16" value="896">
-                </div>
-                <div>
-                  <label for="custom-height">高度（px，建议 = 宽 ÷ 2）</label>
-                  <input type="number" id="custom-height" min="32" step="16" value="448">
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div>
             <button type="button" class="adv-toggle" id="adv-toggle">▸ 负向提示词</button>
             <div class="adv-section" id="adv-section">
               <textarea id="negative-prompt" style="min-height:72px; margin-top:8px" placeholder="overly colorful, overexposed, static..."></textarea>
             </div>
           </div>
 
-          <div class="row">
-            <button id="submit-btn" type="button">提交任务</button>
-            <span id="submit-status" class="submit-status"></span>
-          </div>
+          <span id="submit-status" class="submit-status"></span>
         </div>
       </div>
 
       <!-- History panel -->
-      <div class="panel">
+      <div class="panel history-panel">
         <div id="worker-summary" class="worker-summary" aria-live="polite">
-          <div class="worker-card"><span>可用容量</span><strong id="workers-available-capacity">-</strong></div>
-          <div class="worker-card"><span>在线 / 生成中 Worker</span><strong id="workers-online-busy">- / -</strong></div>
-          <div class="worker-card"><span>排队 / 生成中任务</span><strong id="jobs-queued-running">- / -</strong></div>
+          <div class="worker-card">
+            <span class="worker-card-label">可用容量</span>
+            <div class="worker-card-metrics">
+              <div class="metric-item">
+                <span>剩余槽位</span>
+                <strong id="workers-available-capacity">-</strong>
+              </div>
+            </div>
+          </div>
+          <div class="worker-card">
+            <span class="worker-card-label">Worker</span>
+            <div class="worker-card-metrics">
+              <div class="metric-item">
+                <span>在线</span>
+                <strong id="worker-online-count">-</strong>
+              </div>
+              <div class="metric-item">
+                <span>加载中</span>
+                <strong id="worker-loading-count">-</strong>
+              </div>
+              <div class="metric-item">
+                <span>工作中</span>
+                <strong id="worker-busy-count">-</strong>
+              </div>
+            </div>
+          </div>
+          <div class="worker-card">
+            <span class="worker-card-label">任务</span>
+            <div class="worker-card-metrics">
+              <div class="metric-item">
+                <span>排队中</span>
+                <strong id="jobs-queued-count">-</strong>
+              </div>
+              <div class="metric-item">
+                <span>生成中</span>
+                <strong id="jobs-generating-count">-</strong>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="history-header">
           <h2>历史任务</h2>
@@ -629,11 +779,17 @@
       const dialogVideo = document.getElementById("dialog-video");
       const dialogTitle = document.getElementById("dialog-title");
       const dialogMeta = document.getElementById("dialog-meta");
-      const customParams = document.getElementById("custom-params");
+      const customQualityDialog = document.getElementById("custom-quality-dialog");
       const customResolution = document.getElementById("custom-res");
       const resolutionSelect = document.getElementById("resolution");
+      const qualitySelect = document.getElementById("quality-select");
+      const qualitySummary = document.getElementById("quality-summary");
 
-      let selectedQuality = "standard";
+      const QUALITY_SUMMARIES = {
+        draft: "20步 · 448×224",
+        standard: "50步 · 896×448",
+      };
+      let selectedQuality = "draft";
 
       class JobEventSource {
         constructor() {
@@ -678,7 +834,7 @@
           const jobs = Object.values(_jobCache);
           jobs.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
           renderTable(jobs);
-          const busy = jobs.some(j => j.status === "queued" || j.status === "running");
+          const busy = hasActiveJobs(jobs);
           setPollingIndicator(busy);
           refreshWorkerSummary();
         }
@@ -699,20 +855,67 @@
 
       const sseClient = new JobEventSource();
 
-      document.querySelectorAll(".quality-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          document.querySelectorAll(".quality-btn").forEach(b => b.classList.remove("active"));
-          btn.classList.add("active");
-          selectedQuality = btn.dataset.quality;
-          customParams.style.display = selectedQuality === "custom" ? "" : "none";
-        });
+      function selectedCustomResolution() {
+        if (resolutionSelect.value !== "custom") return resolutionSelect.value.replace("x", "×");
+        const width = parseInt(document.getElementById("custom-width").value);
+        const height = parseInt(document.getElementById("custom-height").value);
+        return width > 0 && height > 0 ? `${width}×${height}` : "自定义分辨率";
+      }
+
+      function updateQualitySummary() {
+        if (selectedQuality === "custom") {
+          const steps = parseInt(document.getElementById("num-steps").value);
+          const seed = parseInt(document.getElementById("seed").value);
+          const parts = [];
+          if (steps > 0) parts.push(`${steps}步`);
+          parts.push(selectedCustomResolution());
+          if (!Number.isNaN(seed)) parts.push(`seed ${seed}`);
+          qualitySummary.textContent = parts.join(" · ");
+          return;
+        }
+        qualitySummary.textContent = QUALITY_SUMMARIES[selectedQuality] || "";
+      }
+
+      function closeCustomQualityDialog() {
+        customQualityDialog.close();
+        if (selectedQuality !== "custom") {
+          qualitySelect.value = selectedQuality;
+        }
+      }
+
+      qualitySelect.addEventListener("change", () => {
+        if (qualitySelect.value === "custom") {
+          selectedQuality = "custom";
+          updateQualitySummary();
+          customQualityDialog.showModal();
+          return;
+        }
+        selectedQuality = qualitySelect.value;
+        updateQualitySummary();
+      });
+
+      document.getElementById("custom-quality-save-btn").addEventListener("click", () => {
+        selectedQuality = "custom";
+        qualitySelect.value = "custom";
+        updateQualitySummary();
+        customQualityDialog.close();
+      });
+      document.getElementById("custom-quality-cancel-btn").addEventListener("click", closeCustomQualityDialog);
+      document.getElementById("custom-quality-close-btn").addEventListener("click", closeCustomQualityDialog);
+      customQualityDialog.addEventListener("click", e => {
+        if (e.target === customQualityDialog) closeCustomQualityDialog();
+      });
+      ["num-steps", "seed", "custom-width", "custom-height"].forEach(id => {
+        document.getElementById(id).addEventListener("input", updateQualitySummary);
       });
 
       // ── resolution selector ──
       resolutionSelect.addEventListener("change", () => {
         customResolution.style.display =
           resolutionSelect.value === "custom" ? "" : "none";
+        updateQualitySummary();
       });
+      updateQualitySummary();
 
       // ── advanced toggle ──
       document.getElementById("adv-toggle").addEventListener("click", function() {
@@ -737,6 +940,8 @@
           resetPreview();
         }
       });
+
+      const DEFAULT_CANCEL_ESCALATION_DELAY_SECONDS = 10;
 
       function formatDuration(seconds, suffix = "") {
         const minutes = Math.floor(seconds / 60);
@@ -967,8 +1172,8 @@
           document.querySelectorAll("[data-scale-mode]").forEach(b => b.classList.remove("active"));
           btn.classList.add("active");
           const mode = btn.dataset.scaleMode;
-          document.getElementById("upscale-factor-section").style.display = mode === "factor" ? "" : "none";
-          document.getElementById("upscale-resolution-section").style.display = mode === "resolution" ? "" : "none";
+          document.getElementById("scale-factor-fields").style.display = mode === "factor" ? "" : "none";
+          document.getElementById("scale-resolution-fields").style.display = mode === "resolution" ? "" : "none";
         });
       });
 
@@ -979,24 +1184,24 @@
         "seedvr2-3b": "SeedVR2-3B: 单步扩散，最佳画质。目标分辨率需为 32 的倍数。",
       };
       document.getElementById("upscale-model").addEventListener("change", function() {
-        document.getElementById("upscale-hint").textContent = MODEL_HINTS[this.value] || "";
+        document.getElementById("upscale-model-hint").textContent = MODEL_HINTS[this.value] || "";
       });
 
       function openUpscaleDialog(job) {
         upscaleSourceJobId = job.job_id;
         const p = job.params || {};
-        document.getElementById("upscale-source-info").textContent =
+        document.getElementById("upscale-source-label").textContent =
           `源任务: #${job.job_id.slice(0,8)}…  |  原始分辨率: ${p.width || "?"}×${p.height || "?"}`;
         document.getElementById("upscale-model").value = "realesrgan-animevideov3";
-        document.getElementById("upscale-hint").textContent = MODEL_HINTS["realesrgan-animevideov3"];
-        document.getElementById("upscale-scale").value = "2";
+        document.getElementById("upscale-model-hint").textContent = MODEL_HINTS["realesrgan-animevideov3"];
+        document.getElementById("upscale-factor").value = "2";
         document.getElementById("upscale-status").textContent = "";
         document.querySelectorAll("[data-scale-mode]").forEach(b => b.classList.remove("active"));
         document.querySelector("[data-scale-mode='factor']").classList.add("active");
-        document.getElementById("upscale-factor-section").style.display = "";
-        document.getElementById("upscale-resolution-section").style.display = "none";
-        if (p.width) document.getElementById("upscale-target-w").value = p.width * 2;
-        if (p.height) document.getElementById("upscale-target-h").value = p.height * 2;
+        document.getElementById("scale-factor-fields").style.display = "";
+        document.getElementById("scale-resolution-fields").style.display = "none";
+        if (p.width) document.getElementById("target-width").value = p.width * 2;
+        if (p.height) document.getElementById("target-height").value = p.height * 2;
         upscaleDialog.showModal();
       }
 
@@ -1006,10 +1211,10 @@
         body.model = document.getElementById("upscale-model").value;
         const mode = document.querySelector("[data-scale-mode].active").dataset.scaleMode;
         if (mode === "factor") {
-          body.scale = parseInt(document.getElementById("upscale-scale").value);
+          body.scale = parseInt(document.getElementById("upscale-factor").value);
         } else {
-          body.target_width = parseInt(document.getElementById("upscale-target-w").value) || undefined;
-          body.target_height = parseInt(document.getElementById("upscale-target-h").value) || undefined;
+          body.target_width = parseInt(document.getElementById("target-width").value) || undefined;
+          body.target_height = parseInt(document.getElementById("target-height").value) || undefined;
         }
         const statusEl = document.getElementById("upscale-status");
         try {
@@ -1077,9 +1282,9 @@
       // ── clear failed jobs ──
       const clearFailedBtn = document.getElementById("clear-failed-btn");
       clearFailedBtn.addEventListener("click", async () => {
-        const failedCount = Object.values(_jobCache).filter(j => j.status === "failed").length;
-        if (failedCount === 0) { alert("没有失败任务需要清理"); return; }
-        if (!confirm(`确认清理全部 ${failedCount} 个失败任务？`)) return;
+        const failedCount = Object.values(_jobCache).filter(j => j.status === "failed" || j.status === "cancelled").length;
+        if (failedCount === 0) { alert("没有失败或已取消任务需要清理"); return; }
+        if (!confirm(`确认清理全部 ${failedCount} 个失败或已取消任务？`)) return;
         clearFailedBtn.disabled = true;
         try {
           const res = await fetch("/jobs/failed", { method: "DELETE" });
@@ -1114,6 +1319,59 @@
         return job.started_at ? new Date(job.started_at) : null;
       }
 
+      function cancellationDeadline(job) {
+        const explicitDeadline = job.cancel_deadline_at ? new Date(job.cancel_deadline_at) : null;
+        if (explicitDeadline && !Number.isNaN(explicitDeadline.getTime())) return explicitDeadline;
+        const requestedAt = job.cancel_requested_at ? new Date(job.cancel_requested_at) : null;
+        if (!requestedAt || Number.isNaN(requestedAt.getTime())) return null;
+        return new Date(requestedAt.getTime() + DEFAULT_CANCEL_ESCALATION_DELAY_SECONDS * 1000);
+      }
+
+      function formatCancellationCountdown(job) {
+        const deadline = cancellationDeadline(job);
+        if (!deadline) return null;
+        const remainingMs = deadline.getTime() - Date.now();
+        if (remainingMs <= 0) return null;
+        return `${Math.ceil(remainingMs / 1000)}s`;
+      }
+
+      function cancellationEscalationReady(job) {
+        const deadline = cancellationDeadline(job);
+        return !deadline || deadline.getTime() <= Date.now();
+      }
+
+      function cancellationDetail(job) {
+        return cancellationEscalationReady(job)
+          ? "取消超时。可重试取消；当前版本会请求 worker 再次进入取消流程。"
+          : "已请求取消，等待 worker 响应。";
+      }
+
+      function isCancelTimeout(job) {
+        return job.status === "failed" && (job.error_code === "cancel_timeout" || job.error === "cancel_timeout");
+      }
+
+      function cancellationActionMarkup(job) {
+        if (cancellationEscalationReady(job)) {
+          return [
+            `<button class="preview-btn force-cancel-btn" data-action="escalate-cancel" data-job-id="${escapeHtml(job.job_id)}">强制取消</button>`,
+            `<span class="cancel-detail" title="${escapeHtml(cancellationDetail(job))}" aria-label="取消详情">!</span>`,
+          ];
+        }
+        const countdown = formatCancellationCountdown(job);
+        return [
+          `<span class="badge badge-running"><span class="cancel-spinner" aria-hidden="true"></span>正在取消</span>`,
+          countdown ? `<span class="col-time">${escapeHtml(countdown)}</span>` : "",
+          `<span class="cancel-detail" title="${escapeHtml(cancellationDetail(job))}" aria-label="取消详情">!</span>`,
+        ].filter(Boolean);
+      }
+
+      function cancelTimeoutActionMarkup(job) {
+        return [
+          `<button class="preview-btn retry-cancel-btn" data-action="retry-cancel" data-job-id="${escapeHtml(job.job_id)}">取消失败，重试</button>`,
+          `<span class="cancel-detail" title="${escapeHtml(cancellationDetail(job))}" aria-label="取消详情">!</span>`,
+        ];
+      }
+
       function durationCell(job) {
         const startTime = durationStartTime(job);
         if (!startTime) return "-";
@@ -1121,10 +1379,12 @@
         const endTime = job.finished_at ? new Date(job.finished_at) : new Date();
         const secs = Math.round((endTime - startTime) / 1000);
 
-        if (job.status === "completed" || job.status === "failed") {
+        if (job.status === "completed" || job.status === "failed" || job.status === "succeeded" || job.status === "cancelled") {
           return formatDuration(secs);
         } else if (job.status === "running") {
           return formatDuration(secs, "运行中");
+        } else if (job.status === "cancelling") {
+          return formatDuration(secs, "取消中");
         }
         return "-";
       }
@@ -1167,9 +1427,10 @@
         } else if (job.status === "queued" || job.status === "claimed" || job.status === "running") {
           parts.push(`<button class="preview-btn" data-action="cancel" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--error-soft);color:var(--error);">取消</button>`);
         } else if (job.status === "cancelling") {
-          parts.push(`<span class="badge badge-running">正在取消…</span>`);
-          parts.push(`<button class="preview-btn" data-action="retry-cancel" data-job-id="${escapeHtml(job.job_id)}">重试取消</button>`);
-          parts.push(`<button class="preview-btn" data-action="escalate-cancel" data-job-id="${escapeHtml(job.job_id)}" style="background:var(--error-soft);color:var(--error);">确认强制取消</button>`);
+          // Delay escalation until the deadline so PanoWan does not look hard-kill capable before cooperative checks run.
+          parts.push(...cancellationActionMarkup(job));
+        } else if (isCancelTimeout(job)) {
+          parts.push(...cancelTimeoutActionMarkup(job));
         } else if (job.status === "failed" && job.error) {
           parts.push(`<span class="error-text" title="${escapeHtml(job.error)}">${escapeHtml(job.error)}</span>`);
         }
@@ -1239,7 +1500,7 @@
 
       // ── polling ──
       function hasActiveJobs(jobs) {
-        return jobs.some(j => j.status === "queued" || j.status === "running");
+        return jobs.some(j => j.status === "queued" || j.status === "claimed" || j.status === "running" || j.status === "cancelling");
       }
 
       function setPollingIndicator(active) {
@@ -1263,13 +1524,26 @@
           const res = await fetch("/workers/summary");
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const summary = await res.json();
-          document.getElementById("workers-online-busy").textContent = `${summary.online_workers ?? "-"} / ${summary.busy_workers ?? "-"}`;
-          document.getElementById("workers-available-capacity").textContent = String(summary.effective_available_capacity ?? "-");
-          document.getElementById("jobs-queued-running").textContent = `${summary.queued_jobs ?? "-"} / ${summary.running_jobs ?? "-"}`;
+          const onlineWorkers = Number(summary.online_workers ?? 0);
+          const loadingWorkers = Number(summary.loading_workers ?? summary.queued_jobs ?? 0);
+          const busyWorkers = Number(summary.busy_workers ?? 0);
+          const queuedJobs = Number(summary.queued_jobs ?? 0);
+          const generatingJobs = Number(summary.running_jobs ?? 0) + Number(summary.cancelling_jobs ?? 0);
+          const availableCapacity = String(summary.effective_available_capacity ?? "-");
+
+          document.getElementById("workers-available-capacity").textContent = availableCapacity;
+          document.getElementById("worker-online-count").textContent = String(onlineWorkers);
+          document.getElementById("worker-loading-count").textContent = String(loadingWorkers);
+          document.getElementById("worker-busy-count").textContent = String(busyWorkers);
+          document.getElementById("jobs-queued-count").textContent = String(queuedJobs);
+          document.getElementById("jobs-generating-count").textContent = String(generatingJobs);
         } catch {
-          document.getElementById("workers-online-busy").textContent = "- / -";
           document.getElementById("workers-available-capacity").textContent = "-";
-          document.getElementById("jobs-queued-running").textContent = "- / -";
+          document.getElementById("worker-online-count").textContent = "-";
+          document.getElementById("worker-loading-count").textContent = "-";
+          document.getElementById("worker-busy-count").textContent = "-";
+          document.getElementById("jobs-queued-count").textContent = "-";
+          document.getElementById("jobs-generating-count").textContent = "-";
         }
       }
 
@@ -1338,9 +1612,9 @@
         }
       });
 
-      // ── tick: update duration for running/queued jobs every second ──
+      // ── tick: update duration for active jobs every second ──
       setInterval(() => {
-        const activeJobs = Object.values(_jobCache).filter(j => j.status === "running" || j.status === "queued");
+        const activeJobs = Object.values(_jobCache).filter(j => j.status === "running" || j.status === "queued" || j.status === "claimed" || j.status === "cancelling");
         if (activeJobs.length === 0) return;
         const rows = tbody.querySelectorAll("tr");
         rows.forEach(row => {
@@ -1348,11 +1622,13 @@
           if (!idCell) return;
           const jobId = idCell.getAttribute("title");
           const job = _jobCache[jobId];
-          if (!job || (job.status !== "running" && job.status !== "queued")) return;
-          // Update duration cell (5th column, 0-indexed = col 5)
+          if (!job || (job.status !== "running" && job.status !== "queued" && job.status !== "claimed" && job.status !== "cancelling")) return;
+          // Cancelling jobs keep ticking so countdown and escalation visibility
+          // converge in the browser even before the next SSE or polling update.
           const cells = row.querySelectorAll("td");
-          if (cells.length >= 6) {
+          if (cells.length >= 7) {
             cells[5].textContent = durationCell(job);
+            cells[6].innerHTML = actionCell(job);
           }
         });
       }, 1000);
