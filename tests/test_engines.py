@@ -142,14 +142,25 @@ class UpscaleEngineTests(unittest.TestCase):
         }
         engine = UpscaleEngine()
 
-        def cancel_probe() -> bool:
-            return False
+        from app.cancellation import CallbackCancellationProbe, CancellationContext
+
+        probe = CallbackCancellationProbe(
+            context=CancellationContext(
+                job_id="job-upscale",
+                worker_id="worker-1",
+                mode="soft",
+                requested_at="2026-05-01T14:00:00+00:00",
+                deadline_at="2026-05-01T14:00:45+00:00",
+                attempt=1,
+            ),
+            stop_check=lambda: False,
+        )
 
         result = engine.run(
             {
                 "source_output_path": "/app/runtime/outputs/output_src.mp4",
                 "output_path": "/app/runtime/outputs/output_up.mp4",
-                "_should_cancel": cancel_probe,
+                "_cancellation_probe": probe,
                 "upscale_params": {
                     "model": "realesrgan-animevideov3",
                     "scale": 2,

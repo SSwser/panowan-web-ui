@@ -358,6 +358,44 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(done_job["status"], "succeeded")
 
+    def test_lifespan_reconciles_restored_cancelling_job_to_cancel_timeout(self) -> None:
+        os.makedirs(os.path.dirname(api.settings.job_store_path), exist_ok=True)
+        with open(api.settings.job_store_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "jobs": {
+                        "cancelling-job": {
+                            "job_id": "cancelling-job",
+                            "status": "cancelling",
+                            "prompt": "stop me",
+                            "output_path": os.path.join(
+                                self.temp_dir.name, "outputs", "cancelling.mp4"
+                            ),
+                            "created_at": "now",
+                            "started_at": "now",
+                            "finished_at": None,
+                            "error": None,
+                            "worker_id": "worker-a",
+                            "cancel_deadline_at": "2099-01-01T00:00:00+00:00",
+                            "cancel_requested_at": "2026-05-01T12:00:00+00:00",
+                            "cancel_mode": "soft",
+                            "cancel_attempt": 1,
+                        }
+                    }
+                },
+                handle,
+            )
+
+        with TestClient(api.app):
+            pass
+
+        job = api._get_job("cancelling-job")
+
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error_code"], "cancel_timeout")
+        self.assertEqual(job["error"], "cancel_timeout")
+        self.assertIsNotNone(job["finished_at"])
+
     def test_root_returns_index_html(self) -> None:
         response = api.root()
 

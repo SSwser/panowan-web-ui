@@ -179,8 +179,8 @@ class WorkerServiceTests(unittest.TestCase):
                 backend, registry, host=host, engine_registry=engine_registry
             )
         joined = "\n".join(cm.output)
-        self.assertIn("queued=1", joined)
-        self.assertIn("running=1", joined)
+        self.assertIn("queued_jobs=1", joined)
+        self.assertIn("running_jobs=1", joined)
         self.assertIn("online_workers=0", joined)
 
     def test_run_one_job_claims_and_completes_job(self):
@@ -587,11 +587,8 @@ class BuildHostTests(unittest.TestCase):
         self.assertTrue(host.has_provider("panowan"))
 
 
-class PanowanCancellationTests(unittest.TestCase):
-    def test_panowan_engine_wraps_legacy_callable_into_probe(self) -> None:
-        # Legacy job dicts that only carry ``_should_cancel`` must still reach
-        # the host as a probe so providers see the structured contract even
-        # before the worker injects ``_cancellation_probe`` directly.
+class RuntimeCancellationContractTests(unittest.TestCase):
+    def test_panowan_engine_requires_structured_cancellation_probe(self) -> None:
         class RecordingHost:
             def __init__(self) -> None:
                 self.provider_key = "panowan"
@@ -603,19 +600,16 @@ class PanowanCancellationTests(unittest.TestCase):
                 return {"output_path": "out.mp4"}
 
         engine = PanoWanEngine(host=RecordingHost())
-        result = engine.run({
-            "job_id": "job-1",
-            "payload": {"task": "t2v", "prompt": "demo"},
-            "_should_cancel": lambda: False,
-        })
+        result = engine.run(
+            {
+                "job_id": "job-1",
+                "payload": {"task": "t2v", "prompt": "demo"},
+            }
+        )
 
         self.assertEqual(result.output_path, "out.mp4")
-        forwarded = engine._host.seen_cancellation
-        self.assertIsNotNone(forwarded)
-        self.assertFalse(forwarded.should_stop())
+        self.assertIsNone(engine._host.seen_cancellation)
 
-
-class RuntimeCancellationContractTests(unittest.TestCase):
     def test_panowan_engine_passes_cancellation_probe_to_host(self) -> None:
         from app.cancellation import (
             CallbackCancellationProbe,
@@ -690,7 +684,7 @@ class RuntimeCancellationContractTests(unittest.TestCase):
                 "version": "v1",
                 "task": "t2v",
                 "prompt": "demo",
-                "output_path": "/tmp/out.mp4",
+                "output_path": "C:/tmp/out.mp4",
                 "resolution": {"width": 2048, "height": 1024},
                 "num_frames": 81,
             },
@@ -698,7 +692,7 @@ class RuntimeCancellationContractTests(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "cancelled")
-        self.assertEqual(result["output_path"], "/tmp/out.mp4")
+        self.assertEqual(result["output_path"], "C:/tmp/out.mp4")
 
 
 class WorkerCancellationGovernanceTests(unittest.TestCase):
@@ -802,6 +796,265 @@ class WorkerCancellationGovernanceTests(unittest.TestCase):
             summary["available_upscale_models"], ["realesr-animevideov3"]
         )
         self.assertEqual(summary["panowan_runtime_status"], "ready")
+
+    def test_finalize_runtime_cancellation_rejects_non_owner(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        owner_id = "worker-1"
+        self.make_running_job(backend, worker_id=owner_id)
+        backend.request_cancellation("job-1", worker_id=owner_id)
+        worker_store.upsert_worker(owner_id, {"running_jobs": 1, "max_concurrent_jobs": 1})
+
+        result = finalize_runtime_cancellation(
+            backend,
+            worker_store,
+            job_id="job-1",
+            worker_id="worker-2",
+        )
+
+        self.assertIsNone(result)
+        job = backend.get_job("job-1")
+        self.assertEqual(job["status"], "cancelling")
+        summary = self._get_worker(worker_store, owner_id)
+        self.assertEqual(summary["running_jobs"], 1)
+
+    def test_run_one_job_updates_worker_occupancy_on_success(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        worker_store.upsert_worker(
+            worker_id,
+            {
+                "running_jobs": 0,
+                "capabilities": ["generate"],
+                "max_concurrent_jobs": 2,
+                "panowan_runtime_status": "warm",
+            },
+        )
+        backend.create_job(
+            {
+                "job_id": "job-1",
+                "status": "queued",
+                "type": "generate",
+                "output_path": f"{self._tmp.name}/outputs/output_job-1.mp4",
+            }
+        )
+
+        worked = run_one_job(
+            backend,
+            _registry_with(FakeEngine()),
+            worker_id=worker_id,
+            worker_registry=worker_store,
+        )
+
+        self.assertTrue(worked)
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+        self.assertEqual(summary["capabilities"], ["generate"])
+        self.assertEqual(summary["max_concurrent_jobs"], 2)
+        self.assertEqual(summary["panowan_runtime_status"], "warm")
+
+    def test_log_worker_summary_reuses_fleet_summary_shape(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_store.upsert_worker(
+            "worker-1",
+            {"running_jobs": 1, "max_concurrent_jobs": 2},
+        )
+        backend.create_job(
+            {"job_id": "job-1", "status": "running", "type": "generate", "worker_id": "worker-1"}
+        )
+        backend.create_job(
+            {
+                "job_id": "job-2",
+                "status": "cancelling",
+                "type": "generate",
+                "worker_id": "worker-1",
+            }
+        )
+        host = FakeHost(provider_present=True)
+        engine_registry = _registry_with(FakeEngine(output_path="done.mp4"))
+
+        with self.assertLogs("app.worker_service", level="INFO") as cm:
+            log_worker_summary(
+                backend,
+                worker_store,
+                host=host,
+                engine_registry=engine_registry,
+            )
+
+        joined = "\n".join(cm.output)
+        self.assertIn("known_workers=1", joined)
+        self.assertIn("online_workers=1", joined)
+        self.assertIn("stuck_cancelling_workers=1", joined)
+        self.assertIn("occupied_capacity=1", joined)
+        self.assertIn("effective_available_capacity=1", joined)
+        self.assertNotIn("claimed=", joined)
+        self.assertNotIn("active_jobs=", joined)
+
+    def test_worker_main_reconciles_overdue_cancellations_before_sleep(self) -> None:
+        from dataclasses import replace
+        from unittest.mock import patch
+
+        from app.settings import settings as base_settings
+
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+        backend.force_job_fields(
+            "job-1",
+            cancel_deadline_at="2026-05-01T13:59:00+00:00",
+        )
+        worker_store.upsert_worker(worker_id, {"running_jobs": 1, "max_concurrent_jobs": 1})
+        registry = _registry_with(FakeEngine())
+        host = FakeHost(provider_present=False)
+        toggled = replace(
+            base_settings,
+            job_store_path=backend.job_store_path,
+            worker_store_path=worker_store.worker_store_path,
+            worker_poll_interval_seconds=0,
+        )
+
+        sleep_calls = []
+
+        def stop_after_first_sleep(_seconds: float) -> None:
+            sleep_calls.append(_seconds)
+            raise SystemExit()
+
+        with patch("app.worker_service.settings", toggled), patch(
+            "app.worker_service.build_host", return_value=host
+        ), patch("app.worker_service.build_registry", return_value=registry), patch(
+            "app.worker_service.time.sleep", side_effect=stop_after_first_sleep
+        ):
+            from app import worker_service as module
+
+            with self.assertRaises(SystemExit):
+                module.main()
+
+        self.assertEqual(sleep_calls, [0])
+        job = backend.get_job("job-1")
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error_code"], "cancel_timeout")
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+        self.assertEqual(summary["max_concurrent_jobs"], 1)
+        self.assertEqual(summary["status"], "online")
+
+    def test_reconcile_overdue_cancellations_releases_worker_occupancy(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        self.make_running_job(backend, worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+        backend.force_job_fields(
+            "job-1",
+            cancel_deadline_at="2026-05-01T13:59:00+00:00",
+        )
+        worker_store.upsert_worker(worker_id, {"running_jobs": 1, "max_concurrent_jobs": 2})
+
+        reconciled = reconcile_overdue_cancellations(
+            backend,
+            worker_registry=worker_store,
+            worker_id=worker_id,
+        )
+
+        self.assertEqual(len(reconciled), 1)
+        self.assertEqual(reconciled[0]["status"], "failed")
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+        self.assertEqual(summary["max_concurrent_jobs"], 2)
+
+    def test_run_one_job_does_not_change_occupancy_when_cancelled_before_start(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        worker_store.upsert_worker(worker_id, {"running_jobs": 0, "max_concurrent_jobs": 1})
+        backend.create_job(
+            {
+                "job_id": "job-1",
+                "status": "queued",
+                "type": "generate",
+                "output_path": f"{self._tmp.name}/outputs/output_job-1.mp4",
+            }
+        )
+        backend.claim_next_job(worker_id=worker_id)
+        backend.request_cancellation("job-1", worker_id=worker_id)
+
+        class ShouldNotRunEngine:
+            name = "panowan"
+            capabilities = ("generate",)
+
+            def run(self, job):
+                raise AssertionError("engine.run should not be called")
+
+        worked = run_one_job(
+            backend,
+            _registry_with(ShouldNotRunEngine()),
+            worker_id=worker_id,
+            worker_registry=worker_store,
+        )
+
+        self.assertFalse(worked)
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+
+    def test_run_one_job_releases_occupancy_when_engine_fails(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        worker_store.upsert_worker(worker_id, {"running_jobs": 0, "max_concurrent_jobs": 1})
+        backend.create_job(
+            {
+                "job_id": "job-1",
+                "status": "queued",
+                "type": "generate",
+                "output_path": f"{self._tmp.name}/outputs/output_job-1.mp4",
+            }
+        )
+
+        worked = run_one_job(
+            backend,
+            _registry_with(FailingEngine()),
+            worker_id=worker_id,
+            worker_registry=worker_store,
+        )
+
+        self.assertTrue(worked)
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+        job = backend.get_job("job-1")
+        self.assertEqual(job["status"], "failed")
+
+    def test_run_one_job_releases_occupancy_when_cancel_wins_after_run(self) -> None:
+        backend = self.make_backend()
+        worker_store = self.make_worker_store()
+        worker_id = "worker-1"
+        worker_store.upsert_worker(worker_id, {"running_jobs": 0, "max_concurrent_jobs": 1})
+        backend.create_job(
+            {
+                "job_id": "job-1",
+                "status": "queued",
+                "type": "generate",
+                "output_path": f"{self._tmp.name}/outputs/output_job-1.mp4",
+            }
+        )
+
+        worked = run_one_job(
+            backend,
+            _registry_with(ForceCancelledAfterSuccessfulRunEngine(backend)),
+            worker_id=worker_id,
+            worker_registry=worker_store,
+        )
+
+        self.assertTrue(worked)
+        summary = self._get_worker(worker_store, worker_id)
+        self.assertEqual(summary["running_jobs"], 0)
+        job = backend.get_job("job-1")
+        self.assertEqual(job["status"], "cancelled")
+        self.assertEqual(job["worker_id"], worker_id)
+        self.assertIsNotNone(job["finished_at"])
 
 
 class LocalWorkerRegistryAdjustRunningJobsTests(unittest.TestCase):

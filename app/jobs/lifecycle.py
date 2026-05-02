@@ -124,8 +124,13 @@ def normalize_restored_inflight_record(
     first so a legacy ``completed`` record is preserved as ``succeeded``.
     """
     normalized = normalize_legacy_record(record)
-    if normalized.get("status") in INFLIGHT_STATES:
+    restored_status = normalized.get("status")
+    if restored_status in INFLIGHT_STATES:
         normalized["status"] = JOB_STATE_FAILED
         normalized["finished_at"] = normalized.get("finished_at") or finished_at
-        normalized["error"] = "Service restarted before the job completed"
+        if restored_status == JOB_STATE_CANCELLING:
+            normalized["error"] = "cancel_timeout"
+            normalized["error_code"] = "cancel_timeout"
+        else:
+            normalized["error"] = "Service restarted before the job completed"
     return normalized

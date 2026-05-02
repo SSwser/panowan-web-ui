@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -14,15 +15,28 @@ from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
 from .settings import settings
 from .sse import broadcast_job_event, subscribe, unsubscribe
 from .upscaler import UPSCALE_BACKENDS
+from .worker_service import reconcile_overdue_cancellations
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        get_job_backend().restore()
+        backend = get_job_backend()
+        backend.restore()
+        # A restarted API has lost the in-flight runtime context, so restored
+        # cancelling jobs cannot keep waiting for a worker-side convergence that
+        # may never happen.
+        reconcile_overdue_cancellations(
+            backend,
+            now=_far_future_utc(),
+        )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"WARNING: could not restore jobs from disk: {exc}", flush=True)
     yield
+
+
+def _far_future_utc() -> datetime:
+    return datetime.max.replace(tzinfo=UTC)
 
 
 app = FastAPI(

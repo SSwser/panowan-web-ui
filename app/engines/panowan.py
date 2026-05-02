@@ -1,6 +1,6 @@
 from typing import Mapping
 
-from app.cancellation import RuntimeCancellationProbe, legacy_probe_from_job
+from app.cancellation import RuntimeCancellationProbe
 from app.generator import build_runner_payload
 from app.runtime_host import ResidentRuntimeHost
 
@@ -46,12 +46,9 @@ class PanoWanEngine:
         if task == "i2v":
             raise NotImplementedError(self.i2v_not_implemented_message)
         runner_payload = build_runner_payload(api_payload)
-        # The worker injects ``_cancellation_probe`` directly. Fall back to
-        # wrapping a legacy ``_should_cancel`` callable for tests or external
-        # embeddings that don't go through the worker loop.
         cancellation = raw.get("_cancellation_probe")
         if not isinstance(cancellation, RuntimeCancellationProbe):
-            cancellation = legacy_probe_from_job(raw)
+            cancellation = None
         result = self._host.run_job(
             self.provider_key,
             runner_payload,

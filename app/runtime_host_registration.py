@@ -56,7 +56,10 @@ class _SpecBoundProvider:
         except (TypeError, ValueError):
             params = {}
         self._execute_supports_cancellation = "cancellation" in params
-        self._execute_supports_should_cancel = "should_cancel" in params
+        if not self._execute_supports_cancellation:
+            raise TypeError(
+                f"Resident provider {provider_key} execute() must accept a cancellation keyword"
+            )
         # default_identity is an optional Protocol member — only expose it when
         # the entrypoint module actually defines it.
         default_identity = getattr(module, "default_identity", None)
@@ -76,15 +79,7 @@ class _SpecBoundProvider:
         *,
         cancellation: RuntimeCancellationProbe | None = None,
     ) -> Mapping[str, Any]:
-        # Dispatch is signature-driven (see __init__): older provider modules
-        # predate the cancellation kwarg and accept the legacy ``should_cancel``
-        # callable form so backends migrate at their own pace.
-        if self._execute_supports_cancellation:
-            return self._execute(loaded_runtime, job, cancellation=cancellation)
-        if self._execute_supports_should_cancel:
-            legacy = cancellation.should_stop if cancellation is not None else None
-            return self._execute(loaded_runtime, job, should_cancel=legacy)
-        return self._execute(loaded_runtime, job)
+        return self._execute(loaded_runtime, job, cancellation=cancellation)
 
     def teardown(self, loaded_runtime: Any) -> None:
         self._teardown(loaded_runtime)

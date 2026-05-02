@@ -54,33 +54,6 @@ class CallbackCancellationProbe:
         return label
 
 
-def legacy_probe_from_job(
-    job: Mapping[str, Any],
-) -> RuntimeCancellationProbe | None:
-    """Wrap a legacy ``_should_cancel`` callable into the structured probe.
-
-    Engines reach for this when the worker has not yet supplied a
-    ``_cancellation_probe`` directly (older test scaffolding, downstream
-    embeddings of the engine outside the worker loop).
-    """
-    legacy = job.get("_should_cancel")
-    if not callable(legacy):
-        return None
-    job_id = str(job.get("job_id") or job.get("id") or "")
-    worker_id = str(job.get("worker_id") or "")
-    return CallbackCancellationProbe(
-        context=CancellationContext(
-            job_id=job_id,
-            worker_id=worker_id,
-            mode="soft",
-            requested_at="",
-            deadline_at="",
-            attempt=0,
-        ),
-        stop_check=legacy,
-    )
-
-
 def _iso(now: datetime) -> str:
     return now.astimezone(UTC).isoformat()
 

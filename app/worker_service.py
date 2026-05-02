@@ -2,9 +2,9 @@ import logging
 import os
 import socket
 import time
-from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from app.backends.registry import discover
 from app.cancellation import CallbackCancellationProbe, CancellationContext
@@ -34,6 +34,48 @@ _RUNTIME_STATE_TO_STATUS = {
     RuntimeState.EVICTING: "evicting",
     RuntimeState.FAILED: "failed",
 }
+
+
+def build_worker_summary(
+    backend: LocalJobBackend,
+    registry: LocalWorkerRegistry,
+) -> dict[str, Any]:
+    jobs = backend.list_jobs()
+    known_workers = registry.list_workers(stale_seconds=None)
+    online_workers = registry.list_workers(stale_seconds=settings.worker_stale_seconds)
+    online_ids = {str(worker.get("worker_id")) for worker in online_workers}
+    cancelling_by_worker = {
+        str(job.get("worker_id"))
+        for job in jobs
+        if job.get("status") == "cancelling" and job.get("worker_id")
+    }
+    busy_ids = {
+        str(worker.get("worker_id"))
+        for worker in online_workers
+        if int(worker.get("running_jobs") or 0) > 0
+    }
+    total_capacity = sum(
+        int(worker.get("max_concurrent_jobs") or 0) for worker in online_workers
+    )
+    occupied_capacity = sum(
+        int(worker.get("running_jobs") or 0) for worker in online_workers
+    )
+    return {
+        "known_workers": len(known_workers),
+        "online_workers": len(online_workers),
+        "busy_workers": len(busy_ids),
+        "stuck_cancelling_workers": len(cancelling_by_worker & online_ids),
+        "queued_jobs": sum(
+            1 for job in jobs if job.get("status") in {"queued", "claimed"}
+        ),
+        "running_jobs": sum(1 for job in jobs if job.get("status") == "running"),
+        "cancelling_jobs": sum(
+            1 for job in jobs if job.get("status") == "cancelling"
+        ),
+        "total_capacity": total_capacity,
+        "occupied_capacity": occupied_capacity,
+        "effective_available_capacity": max(total_capacity - occupied_capacity, 0),
+    }
 
 
 def _backend_discovery_root() -> Path:
@@ -97,15 +139,8 @@ def _should_cancel_job(
 
 
 def _build_probe_for_job(
-    backend: LocalJobBackend, job: dict, worker_id: str
+    backend: LocalJobBackend, job: dict[str, Any], worker_id: str
 ) -> CallbackCancellationProbe:
-    """Wrap the worker's stop-check with the job's cancel-governance metadata.
-
-    The probe carries the same callable used historically by ``_should_cancel``
-    plus the structured ``CancellationContext`` so providers can read mode and
-    deadline at safe checkpoints without us threading extra kwargs through
-    every layer.
-    """
     job_id = str(job["job_id"])
     ctx = CancellationContext(
         job_id=job_id,
@@ -121,12 +156,35 @@ def _build_probe_for_job(
     )
 
 
+def _current_worker_running_jobs(
+    registry: LocalWorkerRegistry,
+    worker_id: str,
+) -> int:
+    for worker in registry.list_workers(stale_seconds=None):
+        if str(worker.get("worker_id")) == worker_id:
+            return int(worker.get("running_jobs") or 0)
+    return 0
+
+
+def _owned_inflight_jobs(backend: LocalJobBackend, worker_id: str) -> int:
+    return sum(
+        1
+        for job in backend.list_jobs()
+        if job.get("worker_id") == worker_id
+        and job.get("status") in {"running", "cancelling"}
+    )
+
+
+def _worker_has_capacity(backend: LocalJobBackend, worker_id: str) -> bool:
+    return _owned_inflight_jobs(backend, worker_id) < settings.max_concurrent_jobs
+
+
 def publish_worker_state(
     registry: LocalWorkerRegistry,
     worker_id: str,
     engine_registry: EngineRegistry,
     host: ResidentRuntimeHost,
-    running_jobs: int = 0,
+    running_jobs: int | None = None,
 ) -> dict:
     caps = []
     for engine in engine_registry.all():
@@ -137,6 +195,8 @@ def publish_worker_state(
             settings.upscale_weights_dir,
         ).keys()
     )
+    if running_jobs is None:
+        running_jobs = _current_worker_running_jobs(registry, worker_id)
     return registry.upsert_worker(
         worker_id,
         {
@@ -170,7 +230,6 @@ def _startup_preload(host: ResidentRuntimeHost) -> None:
     try:
         host.preload("panowan")
         print("PanoWan runtime preloaded.", flush=True)
-    # Preload is best-effort; worker must keep running even if model load fails.
     except Exception as exc:
         print(f"PanoWan startup preload failed (non-fatal): {exc}", flush=True)
 
@@ -216,42 +275,131 @@ def log_worker_summary(
     host: ResidentRuntimeHost,
     engine_registry: EngineRegistry,
 ) -> None:
-    jobs = backend.list_jobs()
-    workers = registry.list_workers(stale_seconds=settings.worker_stale_seconds)
-    counts = Counter(str(job.get("status") or "unknown") for job in jobs)
-    active_ids = [
-        str(job.get("job_id"))
-        for job in jobs
-        if job.get("status") in {"claimed", "running", "cancelling"}
-    ]
+    summary = build_worker_summary(backend, registry)
     logger.info(
-        "worker_summary queued=%s claimed=%s running=%s cancelling=%s succeeded=%s failed=%s cancelled=%s online_workers=%s busy_workers=%s active_jobs=%s",
-        counts.get("queued", 0),
-        counts.get("claimed", 0),
-        counts.get("running", 0),
-        counts.get("cancelling", 0),
-        counts.get("succeeded", 0),
-        counts.get("failed", 0),
-        counts.get("cancelled", 0),
-        len(workers),
-        sum(1 for w in workers if int(w.get("running_jobs") or 0) > 0),
-        ",".join(active_ids) or "-",
+        "worker_summary known_workers=%s online_workers=%s busy_workers=%s stuck_cancelling_workers=%s queued_jobs=%s running_jobs=%s cancelling_jobs=%s total_capacity=%s occupied_capacity=%s effective_available_capacity=%s panowan_runtime_status=%s worker_capabilities=%s",
+        summary["known_workers"],
+        summary["online_workers"],
+        summary["busy_workers"],
+        summary["stuck_cancelling_workers"],
+        summary["queued_jobs"],
+        summary["running_jobs"],
+        summary["cancelling_jobs"],
+        summary["total_capacity"],
+        summary["occupied_capacity"],
+        summary["effective_available_capacity"],
+        _resident_runtime_status(host),
+        ",".join(
+            sorted({cap for engine in engine_registry.all() for cap in engine.capabilities})
+        )
+        or "-",
     )
 
 
+def _release_worker_slot_if_terminal(
+    backend: LocalJobBackend,
+    worker_registry: LocalWorkerRegistry | None,
+    *,
+    worker_id: str,
+    job_id: str,
+) -> None:
+    if worker_registry is None:
+        return
+    job = backend.get_job(job_id)
+    if job is not None and job.get("worker_id") == worker_id and job.get("status") in {
+        "claimed",
+        "running",
+        "cancelling",
+    }:
+        return
+    worker_registry.adjust_running_jobs(worker_id, -1)
+
+
+def _finalize_job_success(
+    backend: LocalJobBackend,
+    worker_registry: LocalWorkerRegistry | None,
+    *,
+    job_id: str,
+    worker_id: str,
+    output_path: str,
+) -> tuple[str, dict[str, Any] | None]:
+    result = backend.mark_succeeded(job_id, worker_id, output_path)
+    if result is not None:
+        _release_worker_slot_if_terminal(
+            backend,
+            worker_registry,
+            worker_id=worker_id,
+            job_id=job_id,
+        )
+        return "succeeded", result
+    result = backend.request_cancellation(job_id, worker_id=worker_id, finished=True)
+    if result is not None:
+        _release_worker_slot_if_terminal(
+            backend,
+            worker_registry,
+            worker_id=worker_id,
+            job_id=job_id,
+        )
+        return "cancelled", result
+    _release_worker_slot_if_terminal(
+        backend,
+        worker_registry,
+        worker_id=worker_id,
+        job_id=job_id,
+    )
+    return "terminal_conflict", None
+
+
+def _finalize_job_failure(
+    backend: LocalJobBackend,
+    worker_registry: LocalWorkerRegistry | None,
+    *,
+    job_id: str,
+    worker_id: str,
+    error: str,
+) -> tuple[str, dict[str, Any] | None]:
+    result = backend.mark_failed(job_id, worker_id, error)
+    if result is not None:
+        _release_worker_slot_if_terminal(
+            backend,
+            worker_registry,
+            worker_id=worker_id,
+            job_id=job_id,
+        )
+        return "failed", result
+    result = backend.request_cancellation(job_id, worker_id=worker_id, finished=True)
+    if result is not None:
+        _release_worker_slot_if_terminal(
+            backend,
+            worker_registry,
+            worker_id=worker_id,
+            job_id=job_id,
+        )
+        return "cancelled", result
+    _release_worker_slot_if_terminal(
+        backend,
+        worker_registry,
+        worker_id=worker_id,
+        job_id=job_id,
+    )
+    return "terminal_conflict", None
+
+
 def run_one_job(
-    backend: LocalJobBackend, registry: EngineRegistry, worker_id: str
+    backend: LocalJobBackend,
+    registry: EngineRegistry,
+    worker_id: str,
+    *,
+    worker_registry: LocalWorkerRegistry | None = None,
 ) -> bool:
     job = backend.claim_next_job(worker_id=worker_id)
     if job is None:
         return False
 
-    job_id = job["job_id"]
-    job_type = job.get("type", "generate")
+    job_id = str(job["job_id"])
+    job_type = str(job.get("type", "generate"))
     started = backend.mark_running(job_id, worker_id)
     if started is None:
-        # Cancellation or another writer raced ahead between claim and start;
-        # release the polling tick without invoking the engine.
         log_transition(
             job_id,
             "claimed",
@@ -261,24 +409,27 @@ def run_one_job(
             reason="cancelled_before_start",
         )
         return True
+
     job = started
+    if worker_registry is not None:
+        worker_registry.adjust_running_jobs(worker_id, 1)
 
     engine = _resolve_engine(registry, job)
-
-    probe = _build_probe_for_job(backend, job, worker_id)
-    job = {
+    run_job = {
         **job,
-        "_should_cancel": probe.should_stop,
-        "_cancellation_probe": probe,
+        "_cancellation_probe": _build_probe_for_job(backend, job, worker_id),
     }
 
     try:
-        result = engine.run(job)
-        # mark_succeeded refuses to overwrite a terminal state, so a cancel
-        # observed while the engine was running stays cancelled instead of
-        # being silently rewritten to succeeded by a late completion report.
-        if backend.mark_succeeded(job_id, worker_id, result.output_path) is None:
-            backend.request_cancellation(job_id, finished=True)
+        result = engine.run(run_job)
+        outcome, _ = _finalize_job_success(
+            backend,
+            worker_registry,
+            job_id=job_id,
+            worker_id=worker_id,
+            output_path=result.output_path,
+        )
+        if outcome == "cancelled":
             log_transition(
                 job_id,
                 "running",
@@ -287,7 +438,7 @@ def run_one_job(
                 worker_id=worker_id,
                 reason="cancellation_observed_after_run",
             )
-        else:
+        elif outcome == "succeeded":
             log_transition(
                 job_id,
                 "running",
@@ -298,11 +449,14 @@ def run_one_job(
             )
         return True
     except Exception as exc:
-        # Engine failures are job-scoped; re-raising would terminate the
-        # worker loop and leave the fleet idle until a manual restart.
-        if backend.mark_failed(job_id, worker_id, str(exc)) is None:
-            # Job was already moved to a terminal state (e.g., cancelled)
-            # while the engine ran; leave the existing terminal record alone.
+        outcome, _ = _finalize_job_failure(
+            backend,
+            worker_registry,
+            job_id=job_id,
+            worker_id=worker_id,
+            error=str(exc),
+        )
+        if outcome == "cancelled":
             log_transition(
                 job_id,
                 "running",
@@ -311,7 +465,7 @@ def run_one_job(
                 worker_id=worker_id,
                 reason="cancellation_observed_during_failure",
             )
-        else:
+        elif outcome == "failed":
             log_transition(
                 job_id,
                 "running",
@@ -326,6 +480,7 @@ def run_one_job(
 def reconcile_overdue_cancellations(
     backend: LocalJobBackend,
     *,
+    worker_registry: LocalWorkerRegistry | None = None,
     worker_id: str | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, object]]:
@@ -350,13 +505,19 @@ def reconcile_overdue_cancellations(
             continue
         if deadline_at > now:
             continue
+        owner_id = str(job.get("worker_id") or "")
+        if not owner_id:
+            continue
         result = backend.finalize_cancellation_timeout(
             str(job["job_id"]),
-            worker_id=str(job["worker_id"]),
+            worker_id=owner_id,
             reason="cancel_timeout",
         )
-        if result is not None:
-            reconciled.append(result)
+        if result is None:
+            continue
+        if worker_registry is not None:
+            worker_registry.adjust_running_jobs(owner_id, -1)
+        reconciled.append(result)
     return reconciled
 
 
@@ -369,9 +530,9 @@ def finalize_runtime_cancellation(
 ) -> dict[str, object] | None:
     """Confirm cooperative cancellation and release the worker's occupancy.
 
-    Routing the running-jobs decrement through the worker registry here
-    keeps occupancy accounting co-located with the cancellation outcome,
-    so the next telemetry tick cannot observe a phantom in-flight slot.
+    Routing the running-jobs decrement through the worker registry here keeps
+    occupancy accounting co-located with the cancellation outcome, so the next
+    telemetry tick cannot observe a phantom in-flight slot.
     """
     result = backend.request_cancellation(job_id, worker_id=worker_id, finished=True)
     if result is not None:
@@ -389,7 +550,13 @@ def main() -> None:
     for engine in registry.all():
         engine.validate_runtime()
 
-    worker_state = publish_worker_state(worker_registry, worker_id, registry, host)
+    worker_state = publish_worker_state(
+        worker_registry,
+        worker_id,
+        registry,
+        host,
+        running_jobs=_owned_inflight_jobs(backend, worker_id),
+    )
     caps = worker_state["capabilities"]
     upscale_models = worker_state["available_upscale_models"]
 
@@ -399,13 +566,37 @@ def main() -> None:
         flush=True,
     )
     _startup_preload(host)
+
     while True:
-        publish_worker_state(worker_registry, worker_id, registry, host)
+        publish_worker_state(
+            worker_registry,
+            worker_id,
+            registry,
+            host,
+            running_jobs=_owned_inflight_jobs(backend, worker_id),
+        )
         log_worker_summary(
-            backend, worker_registry, host=host, engine_registry=registry
+            backend,
+            worker_registry,
+            host=host,
+            engine_registry=registry,
         )
         _maybe_evict_idle(host)
-        worked = run_one_job(backend, registry, worker_id)
+        reconciled = reconcile_overdue_cancellations(
+            backend,
+            worker_registry=worker_registry,
+        )
+        if reconciled:
+            continue
+        if not _worker_has_capacity(backend, worker_id):
+            time.sleep(settings.worker_poll_interval_seconds)
+            continue
+        worked = run_one_job(
+            backend,
+            registry,
+            worker_id,
+            worker_registry=worker_registry,
+        )
         if not worked:
             time.sleep(settings.worker_poll_interval_seconds)
 
