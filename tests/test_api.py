@@ -174,6 +174,28 @@ class ApiTests(unittest.TestCase):
         self.assertIn("cancel_deadline_at", payload)
         self.assertEqual(snapshots["job-1"]["cancel_mode"], "soft")
 
+
+    def test_collect_result_events_converts_job_updates_to_version_updates(self) -> None:
+        record = api._create_job_record(
+            "job-generate-1",
+            "A cinematic alpine valley at sunset",
+            os.path.join(self.temp_dir.name, "outputs", "job-generate-1.mp4"),
+            {"num_inference_steps": 20, "width": 448, "height": 224},
+        )
+        known_versions = {"ver_job-generate-1": "queued"}
+        api.get_job_backend().update_job(record["job_id"], status="running")
+
+        known_versions, events = api._collect_result_store_events(known_versions)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "version_updated")
+        payload = json.loads(events[0]["data"])
+        self.assertEqual(payload["result_id"], "res_job-generate-1")
+        self.assertEqual(payload["version_id"], "ver_job-generate-1")
+        self.assertEqual(payload["job_id"], "job-generate-1")
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(known_versions["ver_job-generate-1"], "running")
+
     def test_update_job_broadcasts_full_snapshot(self) -> None:
         record = api._create_job_record(
             "job-1",

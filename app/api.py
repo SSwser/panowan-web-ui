@@ -269,6 +269,33 @@ def _collect_job_store_events(
     return current_snapshots, events
 
 
+def _collect_result_store_events(known_versions: dict[str, str]) -> tuple[dict[str, str], list[dict[str, str]]]:
+    # Result workbench consumers reason about result/version state directly, so the SSE projection
+    # must emit version events instead of leaking job-only updates into the new /api/events stream.
+    results = build_result_summaries(get_job_backend().list_jobs())
+    next_versions: dict[str, str] = {}
+    events: list[dict[str, str]] = []
+    for result in results:
+        for version in result["versions"]:
+            version_id = str(version["version_id"])
+            status = str(version["status"])
+            next_versions[version_id] = status
+            if known_versions.get(version_id) != status:
+                events.append(
+                    _sse_event(
+                        "version_updated" if version_id in known_versions else "version_created",
+                        {
+                            "result_id": result["result_id"],
+                            "version_id": version_id,
+                            "job_id": version["job_id"],
+                            "status": status,
+                            "download_url": version.get("download_url"),
+                        },
+                    )
+                )
+    return next_versions, events
+
+
 @app.get("/")
 def root() -> FileResponse:
     index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
@@ -528,6 +555,35 @@ async def job_events(request: Request) -> Any:
                         }
         finally:
             unsubscribe(queue)
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/events")
+async def result_events(request: Request) -> Any:
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        known_versions = {
+            version["version_id"]: str(version["status"])
+            for result in build_result_summaries(get_job_backend().list_jobs())
+            for version in result["versions"]
+        }
+        loop = asyncio.get_running_loop()
+        last_heartbeat = loop.time()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                await asyncio.sleep(1)
+                known_versions, events = _collect_result_store_events(known_versions)
+                for event in events:
+                    yield event
+                if not events and loop.time() - last_heartbeat >= 30:
+                    last_heartbeat = loop.time()
+                    yield _sse_event("heartbeat", {"ts": now_iso()})
+        finally:
+            return
 
     return EventSourceResponse(event_generator())
 
