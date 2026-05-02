@@ -261,7 +261,7 @@ body {
   cursor: pointer;
 }
 
-.segmented .active {
+.segmented button.active {
   background: var(--color-gray-900);
   color: var(--color-surface);
 }
