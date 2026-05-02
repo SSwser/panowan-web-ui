@@ -9,12 +9,14 @@ runtime ``RuntimeProvider`` Protocol consumed by ``ResidentRuntimeHost``.
 from __future__ import annotations
 
 import importlib
+import inspect
 import sys
 from collections.abc import Hashable, Mapping
 from pathlib import Path
 from typing import Any
 
 from app.backends.spec import ResidentProviderSpec
+from app.cancellation import RuntimeCancellationProbe
 from app.runtime_host import RuntimeProvider
 
 _REQUIRED_ATTRS = (
@@ -46,6 +48,36 @@ class _SpecBoundProvider:
         self._teardown = getattr(module, spec.teardown_attr)
         self._identity = getattr(module, spec.identity_attr)
         self._classify = getattr(module, spec.failure_classifier_attr)
+        self._interrupt_capabilities = getattr(
+            module, "interrupt_capabilities", lambda: {}
+        )
+        # Inspect ``execute`` once so dispatch is signature-driven instead of
+        # relying on a TypeError catch — that catch could swallow legitimate
+        # TypeErrors from inside the provider and silently re-invoke it.
+        try:
+            params = inspect.signature(self._execute).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "cancellation" not in params:
+            raise TypeError(
+                f"Resident provider {provider_key} execute() must accept a cancellation keyword"
+            )
+        if "context" not in params:
+            raise TypeError(
+                f"Resident provider {provider_key} execute() must accept a context keyword"
+            )
+        try:
+            load_params = inspect.signature(self._load).parameters
+        except (TypeError, ValueError):
+            load_params = {}
+        if "cancellation" not in load_params:
+            raise TypeError(
+                f"Resident provider {provider_key} load() must accept a cancellation keyword"
+            )
+        if "context" not in load_params:
+            raise TypeError(
+                f"Resident provider {provider_key} load() must accept a context keyword"
+            )
         # default_identity is an optional Protocol member — only expose it when
         # the entrypoint module actually defines it.
         default_identity = getattr(module, "default_identity", None)
@@ -55,11 +87,32 @@ class _SpecBoundProvider:
     def runtime_identity_from_job(self, job: Mapping[str, Any]) -> Hashable:
         return self._identity(job)
 
-    def load(self, identity: Hashable) -> Any:
-        return self._load(identity)
+    def load(
+        self,
+        identity: Hashable,
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> Any:
+        return self._load(identity, cancellation=cancellation, context=context)
 
-    def execute(self, loaded_runtime: Any, job: Mapping[str, Any]) -> Mapping[str, Any]:
-        return self._execute(loaded_runtime, job)
+    def execute(
+        self,
+        loaded_runtime: Any,
+        job: Mapping[str, Any],
+        *,
+        cancellation: RuntimeCancellationProbe | None = None,
+        context: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self._execute(
+            loaded_runtime,
+            job,
+            cancellation=cancellation,
+            context=context,
+        )
+
+    def interrupt_capabilities(self) -> Mapping[str, bool]:
+        return self._interrupt_capabilities()
 
     def teardown(self, loaded_runtime: Any) -> None:
         self._teardown(loaded_runtime)

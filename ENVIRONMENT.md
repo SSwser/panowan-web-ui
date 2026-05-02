@@ -2,10 +2,12 @@
 
 ## 快速诊断
 
-运行 `make doctor` 检查环境配置：
+- 运行 `make verify` 执行标准本地验证流程。
+- 只做环境 / Docker / GPU 诊断时，直接运行 `bash scripts/doctor.sh`。
 
 ```bash
-make doctor
+make verify
+bash scripts/doctor.sh
 ```
 
 ### Windows + WSL2 推荐方式
@@ -32,22 +34,23 @@ Makefile 使用最直接模式：默认 `DOCKER=bash scripts/docker-proxy.sh`。
 ```bash
 docker context ls
 
-# 查看 Makefile 当前判定
-make docker-env
+# 查看 Docker wrapper 当前可用性
+bash scripts/docker-proxy.sh version
 
 # 默认（prod）
 make up
 
 # 开发模式（dev）
-make setup-backends
-make up DEV=1
+make dev
 
 # Docker Desktop context（prod/dev）
 make up DOCKER='docker --context desktop-linux'
 make up DEV=1 DOCKER='docker --context desktop-linux'
 
-# 诊断
-make doctor
+# 标准验证
+make verify
+# 仅环境诊断
+bash scripts/doctor.sh
 ```
 
 说明：
@@ -64,7 +67,7 @@ make doctor
 
 该 volume 使用固定名称 `panowan-uv-cache`（可通过 `UV_CACHE_VOLUME_NAME` 覆盖），因此不同 worktree 跑 `make up DEV=1` 时，会复用同一份 uv 下载缓存，避免重复下载大体积 wheel（例如 `flash-attn`）。
 
-开发模式不再通过 compose 编排一次性 `model-setup` 容器；后端源码树、模型权重与运行时预检查统一由宿主机侧 `make setup-backends` 负责。
+开发模式不再通过 compose 编排一次性 `model-setup` 容器；主仓库侧 `make setup` 负责模型下载与校验，worktree 侧 `make setup-worktree` 负责共享数据复用、backend vendor tree 校验，以及当前 checkout 的本地 runtime 前置条件预检查。
 
 `make up DEV=1` 会在启动前自动执行 `docker volume create $(UV_CACHE_VOLUME_NAME)`，确保 external volume 存在。
 
@@ -82,7 +85,7 @@ DEV_SKIP_DOWNLOAD_MODELS=1
 
 说明：
 
-- `MODEL_ROOT` 控制 compose 挂载到 `/models` 的宿主机路径，`make setup-backends` 也会复用它。
+- `MODEL_ROOT` 控制 compose 挂载到 `/models` 的宿主机路径，`make setup` 和 `make setup-worktree` 也会复用它。
 - `DEV_SKIP_DOWNLOAD_MODELS=1` 时，启动只做服务与依赖环境准备，不自动下载 Wan/LoRA 权重。
 
 输出将显示：
@@ -152,7 +155,10 @@ DEV_SKIP_DOWNLOAD_MODELS=1
 
 ### 模型文件
 
-运行 `make setup-backends` 下载必要模型并验证后端（需要网络连接和足够磁盘空间）：
+运行当前 checkout 对应的初始化命令准备模型与后端（需要网络连接和足够磁盘空间）：
+
+- 主仓库：`make setup`（下载并校验模型）
+- 额外 worktree：`make setup-worktree`（复用共享模型，并校验 backend vendor tree 与当前 checkout 的本地 runtime 前置条件）
 
 - `data/models/Wan-AI/Wan2.1-T2V-1.3B/diffusion_pytorch_model.safetensors` (~4 GB)
 - `data/models/Wan-AI/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth` (~6 GB)
@@ -185,11 +191,7 @@ OUTPUT_DIR=/app/runtime/outputs
 JOB_STORE_PATH=/app/runtime/jobs.json
 ```
 
-运行 `make env` 从模板创建 `.env`：
-
-```bash
-make env
-```
+初始化时会按当前 checkout 生成或复用 `.env`；主仓库使用 `make setup`，额外 worktree 使用 `make setup-worktree`。
 
 ## 常见问题
 
@@ -203,7 +205,7 @@ make env
 
 1. 更新 NVIDIA 驱动（`nvidia-smi` 应显示驱动版本）
 2. 重新启动 WSL2 或 Docker daemon
-3. 运行 `make doctor`，按提示交互式修复
+3. 运行 `bash scripts/doctor.sh`，按提示交互式修复
 
 ### Q: 模型下载很慢
 
@@ -220,21 +222,23 @@ make env
 ## 工作流
 
 ```bash
-# 1. 克隆并配置环境
+# 1. 克隆并初始化当前 checkout
 git clone <repo>
 cd panowan-worker
-make env
+make setup
 
-# 2. 检查环境
-make doctor
+# 如在额外 worktree 中开发，将上面的命令替换为：
+# make setup-worktree
 
-# 3. 下载模型并验证后端
-make setup-backends
-
-# 4. 启动服务
+# 2. 启动服务
 make up
+# 或开发模式
+make dev
 
-# 6. 访问 UI
+# 3. 运行标准验证
+make verify
+
+# 4. 访问 UI
 # http://localhost:8000
 ```
 
@@ -246,7 +250,7 @@ make up
 2. 配置持久化卷以保存 `data/runtime/` 和 `data/models/`
 3. 启用容器重启策略（`docker-compose.yml` 已配置 `restart: unless-stopped`）
 4. 监控服务日志：`make logs`
-5. 定期运行 `make doctor` 检查状态
+5. 定期运行 `make verify` 检查状态
 
 ## 获取帮助
 
@@ -254,12 +258,10 @@ make up
 # 查看服务日志
 make logs
 
-# 检查健康状态
-make health
+# 运行标准验证
+make verify
 
-# 运行完整诊断
-make doctor
-
-# 或手动运行
+# 或手动运行诊断 / data-sync
 bash scripts/doctor.sh
+bash scripts/data-sync.sh status
 ```

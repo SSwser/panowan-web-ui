@@ -28,7 +28,7 @@ def _format_missing_files(missing_files: list[str]) -> str:
 
 def _authoritative_rebuild_hint(vendor_dir: Path) -> str:
     return (
-        f"rerun `uv run python -m app.backends install` or `make setup-backends` to rebuild "
+        f"rerun `.venv/Scripts/python.exe -m app.backends install`, `make setup`, or `make setup-worktree` to rebuild "
         f"{vendor_dir.as_posix()}; if verification is blocked by directory stat limitations, "
         f"delete {vendor_dir.as_posix()} and rerun install"
     )
@@ -57,19 +57,51 @@ def _format_backend_verification_failure(
     return " — ".join(details)
 
 
+def _format_backend_runtime_requirement_failure(
+    spec, requirement_type: str, requirement: str
+) -> str:
+    return (
+        f"backend:{spec.backend.name} {requirement_type}: {requirement}"
+    )
+
+
+def _format_verify_failures(
+    backend_failures: list[str], runtime_failures: list[str], model_failures: list[str]
+) -> str:
+    sections: list[str] = []
+    if backend_failures:
+        sections.append(
+            "Backend bundles:\n  - " + "\n  - ".join(backend_failures)
+        )
+    if runtime_failures:
+        sections.append(
+            "Checkout-local runtime prerequisites:\n  - "
+            + "\n  - ".join(runtime_failures)
+        )
+    if model_failures:
+        sections.append(
+            "Shared model assets:\n  - " + "\n  - ".join(model_failures)
+        )
+    return "Verify failed:\n" + "\n\n".join(sections)
+
+
 def _verify_backend_runtime_requirements(spec) -> list[str]:
     missing: list[str] = []
     for command in spec.runtime.required_commands or []:
         if shutil.which(command) is None:
-            missing.append(f"backend:{spec.backend.name} missing command: {command}")
+            missing.append(
+                _format_backend_runtime_requirement_failure(
+                    spec, "missing command", command
+                )
+            )
 
     required_modules = spec.runtime.required_python_modules or []
     if not required_modules:
         return missing
 
     runtime_python = spec.runtime.python
+    imports = "; ".join(f"import {module_name}" for module_name in required_modules)
     if runtime_python:
-        imports = "; ".join(f"import {module_name}" for module_name in required_modules)
         try:
             result = subprocess.run(
                 [runtime_python, "-c", imports],
@@ -79,17 +111,18 @@ def _verify_backend_runtime_requirements(spec) -> list[str]:
             )
         except (OSError, subprocess.TimeoutExpired):
             result = None
-        if result is None or result.returncode != 0:
-            for module_name in required_modules:
-                missing.append(
-                    f"backend:{spec.backend.name} missing python module: {module_name}"
-                )
-        return missing
+        # Backend metadata may name a container-only interpreter path. Host-side
+        # verify still has to prove this checkout can import its runtime stack, so
+        # fall back to the current Python when that declared interpreter is absent.
+        if result is not None and result.returncode == 0:
+            return missing
 
     for module_name in required_modules:
         if importlib.util.find_spec(module_name) is None:
             missing.append(
-                f"backend:{spec.backend.name} missing python module: {module_name}"
+                _format_backend_runtime_requirement_failure(
+                    spec, "missing python module", module_name
+                )
             )
     return missing
 
@@ -115,7 +148,8 @@ def main(argv: list[str] | None = None) -> None:
         manager.ensure(model_specs)
         print("Backends and models are ready.")
     elif args.action == "verify":
-        missing = []
+        backend_failures: list[str] = []
+        runtime_failures: list[str] = []
         for spec in backend_specs:
             verification = verify_backend(
                 spec.source.revision,
@@ -123,12 +157,21 @@ def main(argv: list[str] | None = None) -> None:
                 expected_backend_files(spec),
             )
             if verification.status != "ok":
-                missing.append(_format_backend_verification_failure(spec, verification))
+                backend_failures.append(
+                    _format_backend_verification_failure(spec, verification)
+                )
                 continue
-            missing.extend(_verify_backend_runtime_requirements(spec))
-        missing.extend(manager.verify(model_specs))
-        if missing:
-            print(f"Missing: {', '.join(missing)}")
+            # Worktrees reuse shared model data, but each checkout still owns its
+            # local runtime readiness, so verify must fail until this checkout can
+            # actually import and execute the backend stack it depends on.
+            runtime_failures.extend(_verify_backend_runtime_requirements(spec))
+        model_failures = manager.verify(model_specs)
+        if backend_failures or runtime_failures or model_failures:
+            print(
+                _format_verify_failures(
+                    backend_failures, runtime_failures, model_failures
+                )
+            )
             sys.exit(1)
         print("Backends and models verified.")
     elif args.action == "list":

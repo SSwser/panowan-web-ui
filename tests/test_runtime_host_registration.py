@@ -14,11 +14,11 @@ _PROVIDER_MODULE_TEMPLATE = textwrap.dedent("""
     class _Identity:
         wan: str
 
-    def load(identity):
-        return {"identity": identity, "loaded": True}
+    def load(identity, *, cancellation=None, context=None):
+        return {"identity": identity, "loaded": True, "cancellation": cancellation}
 
-    def execute(loaded, job):
-        return {"status": "ok", "job": dict(job), "loaded": loaded}
+    def execute(loaded, job, *, cancellation=None, context=None):
+        return {"status": "ok", "job": dict(job), "loaded": loaded, "cancellation": cancellation}
 
     def teardown(loaded):
         loaded.clear()
@@ -28,6 +28,9 @@ _PROVIDER_MODULE_TEMPLATE = textwrap.dedent("""
 
     def classify(exc):
         return isinstance(exc, MemoryError)
+
+    def interrupt_capabilities():
+        return {"load_cancel_awareness": True}
     """)
 
 
@@ -105,13 +108,17 @@ class BuildProviderFromSpecTests(unittest.TestCase):
             identity = provider.runtime_identity_from_job({"wan": "/m"})
             self.assertEqual(identity.wan, "/m")
 
-            loaded = provider.load(identity)
+            probe = object()
+            loaded = provider.load(identity, cancellation=probe)
             self.assertEqual(loaded["identity"], identity)
             self.assertTrue(loaded["loaded"])
+            self.assertIs(loaded["cancellation"], probe)
 
-            result = provider.execute(loaded, {"wan": "/m", "k": 1})
+            result = provider.execute(loaded, {"wan": "/m", "k": 1}, cancellation=probe)
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["job"], {"wan": "/m", "k": 1})
+            self.assertIs(result["cancellation"], probe)
+            self.assertEqual(provider.interrupt_capabilities(), {"load_cancel_awareness": True})
 
             self.assertTrue(provider.classify_failure(MemoryError("oom")))
             self.assertFalse(provider.classify_failure(ValueError("x")))
@@ -157,6 +164,31 @@ class BuildProviderFromSpecTests(unittest.TestCase):
             with self.assertRaises(ModuleNotFoundError):
                 build_provider_from_spec(spec, backend_root=Path(tmp))
             self.assertEqual(sys.path, before)
+
+
+    def test_load_must_accept_context_keyword(self) -> None:
+        body = _PROVIDER_MODULE_TEMPLATE.replace(
+            "def load(identity, *, cancellation=None, context=None):",
+            "def load(identity, *, cancellation=None):",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            module_name = self._unique_module()
+            _write_synthetic_backend(Path(tmp), module_name, body=body)
+            spec = _make_spec(module_name)
+            with self.assertRaisesRegex(TypeError, "load\(\) must accept a context keyword"):
+                build_provider_from_spec(spec, backend_root=Path(tmp))
+
+    def test_execute_must_accept_context_keyword(self) -> None:
+        body = _PROVIDER_MODULE_TEMPLATE.replace(
+            "def execute(loaded, job, *, cancellation=None, context=None):",
+            "def execute(loaded, job, *, cancellation=None):",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            module_name = self._unique_module()
+            _write_synthetic_backend(Path(tmp), module_name, body=body)
+            spec = _make_spec(module_name)
+            with self.assertRaisesRegex(TypeError, "execute\(\) must accept a context keyword"):
+                build_provider_from_spec(spec, backend_root=Path(tmp))
 
 
 class EndToEndPanoWanWiringTests(unittest.TestCase):

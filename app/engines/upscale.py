@@ -1,5 +1,6 @@
 import os
 
+from app.cancellation import RuntimeCancellationProbe
 from app.settings import settings
 from app.upscaler import get_available_upscale_backends, upscale_video
 
@@ -18,7 +19,7 @@ class UpscaleEngine:
         if missing:
             joined = "\n".join(f"- {path}" for path in missing)
             raise FileNotFoundError(
-                "Upscale runtime assets are missing. Run `make setup-backends` first:\n"
+                "Upscale runtime assets are missing. Run `make setup` first:\n"
                 f"{joined}"
             )
 
@@ -28,14 +29,16 @@ class UpscaleEngine:
         )
         if not available:
             raise FileNotFoundError(
-                "No available upscale backends. Run `make setup-backends` and verify "
+                "No available upscale backends. Run `make setup` and verify "
                 f"backend assets under {settings.upscale_engine_dir} and "
                 f"{settings.upscale_weights_dir}."
             )
 
     def run(self, job: dict) -> EngineResult:
         params = job.get("upscale_params") or {}
-        should_cancel = job.get("_should_cancel")
+        cancellation = job.get("_cancellation_probe")
+        if not isinstance(cancellation, RuntimeCancellationProbe):
+            cancellation = None
         result = upscale_video(
             input_path=job["source_output_path"],
             output_path=job["output_path"],
@@ -46,6 +49,6 @@ class UpscaleEngine:
             engine_dir=settings.upscale_engine_dir,
             weights_dir=settings.upscale_weights_dir,
             timeout_seconds=settings.upscale_timeout_seconds,
-            should_cancel=should_cancel if callable(should_cancel) else None,
+            cancellation=cancellation,
         )
         return EngineResult(output_path=result["output_path"], metadata={})

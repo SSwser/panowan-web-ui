@@ -1,5 +1,6 @@
 from typing import Mapping
 
+from app.cancellation import RuntimeCancellationProbe
 from app.generator import build_runner_payload
 from app.runtime_host import ResidentRuntimeHost
 
@@ -24,7 +25,7 @@ class PanoWanEngine:
         # the first time the host is asked to load the provider.
         return None
 
-    def run(self, job: Mapping[str, object]) -> EngineResult:
+    def _build_runner_payload(self, job: Mapping[str, object]) -> dict:
         # Worker passes the full job record (status, params, payload, …);
         # build_runner_payload expects the API-originated payload dict.
         raw = dict(job)
@@ -44,6 +45,35 @@ class PanoWanEngine:
         # stable error instead of letting the request reach deeper runtime code.
         if task == "i2v":
             raise NotImplementedError(self.i2v_not_implemented_message)
-        runner_payload = build_runner_payload(api_payload)
-        result = self._host.run_job(self.provider_key, runner_payload)
+        return build_runner_payload(api_payload)
+
+    def prepare(self, job: Mapping[str, object]) -> object:
+        raw = dict(job)
+        runner_payload = self._build_runner_payload(raw)
+        cancellation = raw.get("_cancellation_probe")
+        if not isinstance(cancellation, RuntimeCancellationProbe):
+            cancellation = None
+        return self._host.prepare_runtime(
+            self.provider_key,
+            runner_payload,
+            cancellation=cancellation,
+        )
+
+    def execute(self, job: Mapping[str, object]) -> EngineResult:
+        raw = dict(job)
+        runner_payload = self._build_runner_payload(raw)
+        prepared = raw["_prepared_runtime"]
+        cancellation = raw.get("_cancellation_probe")
+        if not isinstance(cancellation, RuntimeCancellationProbe):
+            cancellation = None
+        result = self._host.execute_job(
+            self.provider_key,
+            prepared,
+            runner_payload,
+            cancellation=cancellation,
+        )
         return EngineResult(output_path=result["output_path"], metadata={})
+
+    def run(self, job: Mapping[str, object]) -> EngineResult:
+        prepared = self.prepare(job)
+        return self.execute({**dict(job), "_prepared_runtime": prepared})

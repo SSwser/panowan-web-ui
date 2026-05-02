@@ -37,6 +37,10 @@ class ApiTests(unittest.TestCase):
         # Backend state lives on the per-test tmpdir stores; no module globals to clear.
         self.client = TestClient(api.app)
 
+        from app.jobs import LocalJobBackend
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self.worker_registry = LocalWorkerRegistry(api.settings.worker_store_path)
+
     def _seed_upscale_worker(self, models: list[str] | None = None) -> None:
         LocalWorkerRegistry(api.settings.worker_store_path).upsert_worker(
             "test-worker",
@@ -128,8 +132,10 @@ class ApiTests(unittest.TestCase):
         snapshots = {record["job_id"]: api._job_event_snapshot(record)}
 
         api.get_job_backend().claim_next_job(worker_id="worker-1")
-        api.get_job_backend().complete_job(
+        api.get_job_backend().mark_running("job-1", "worker-1")
+        api.get_job_backend().mark_succeeded(
             "job-1",
+            "worker-1",
             os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
         )
 
@@ -139,8 +145,33 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(events[0]["event"], "job_updated")
         payload = json.loads(events[0]["data"])
         self.assertEqual(payload["job_id"], "job-1")
-        self.assertEqual(payload["status"], "completed")
-        self.assertEqual(snapshots["job-1"]["status"], "completed")
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(snapshots["job-1"]["status"], "succeeded")
+
+    def test_collect_job_store_events_detects_cancel_metadata_changes(self) -> None:
+        record = api._create_job_record(
+            "job-1",
+            "prompt",
+            os.path.join(self.temp_dir.name, "outputs", "job-1.mp4"),
+            {"num_inference_steps": 10, "width": 448, "height": 224},
+        )
+        snapshots = {record["job_id"]: api._job_event_snapshot(record)}
+
+        api.get_job_backend().claim_next_job(worker_id="worker-1")
+        api.get_job_backend().mark_running("job-1", "worker-1")
+        api.get_job_backend().request_cancellation("job-1", worker_id="worker-1")
+
+        snapshots, events = api._collect_job_store_events(snapshots)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "job_updated")
+        payload = json.loads(events[0]["data"])
+        self.assertEqual(payload["job_id"], "job-1")
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "soft")
+        self.assertIn("cancel_requested_at", payload)
+        self.assertIn("cancel_deadline_at", payload)
+        self.assertEqual(snapshots["job-1"]["cancel_mode"], "soft")
 
     def test_update_job_broadcasts_full_snapshot(self) -> None:
         record = api._create_job_record(
@@ -327,7 +358,7 @@ class ApiTests(unittest.TestCase):
                         },
                         "done-job": {
                             "job_id": "done-job",
-                            "status": "completed",
+                            "status": "succeeded",
                             "prompt": "finished",
                             "output_path": completed_output,
                             "created_at": "now",
@@ -350,7 +381,87 @@ class ApiTests(unittest.TestCase):
             queued_job["error"],
             "Service restarted before the job completed",
         )
-        self.assertEqual(done_job["status"], "completed")
+        self.assertEqual(done_job["status"], "succeeded")
+
+    def test_lifespan_reconciles_restored_cancelling_job_to_cancel_timeout(self) -> None:
+        os.makedirs(os.path.dirname(api.settings.job_store_path), exist_ok=True)
+        with open(api.settings.job_store_path, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "jobs": {
+                        "cancelling-job": {
+                            "job_id": "cancelling-job",
+                            "status": "cancelling",
+                            "prompt": "stop me",
+                            "output_path": os.path.join(
+                                self.temp_dir.name, "outputs", "cancelling.mp4"
+                            ),
+                            "created_at": "now",
+                            "started_at": "now",
+                            "finished_at": None,
+                            "error": None,
+                            "worker_id": "worker-a",
+                            "cancel_deadline_at": "2099-01-01T00:00:00+00:00",
+                            "cancel_requested_at": "2026-05-01T12:00:00+00:00",
+                            "cancel_mode": "soft",
+                            "cancel_attempt": 1,
+                        }
+                    }
+                },
+                handle,
+            )
+
+        with TestClient(api.app):
+            pass
+
+        job = api._get_job("cancelling-job")
+
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["error_code"], "cancel_timeout")
+        self.assertEqual(job["error"], "cancel_timeout")
+        self.assertIsNotNone(job["finished_at"])
+
+    def test_list_jobs_recovers_overdue_cancelling_job_on_refresh(self) -> None:
+        backend = api.get_job_backend()
+        backend.force_job_record(
+            {
+                "job_id": "cancelling-job",
+                "status": "cancelling",
+                "prompt": "stop me",
+                "output_path": os.path.join(self.temp_dir.name, "outputs", "missing.mp4"),
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "finished_at": None,
+                "error": None,
+                "cancel_deadline_at": "2026-01-01T00:00:10+00:00",
+                "cancel_requested_at": "2026-01-01T00:00:00+00:00",
+                "cancel_mode": "soft",
+                "cancel_attempt": 1,
+            }
+        )
+
+        jobs = api.list_jobs()
+
+        self.assertEqual(jobs[0]["status"], "failed")
+        self.assertEqual(jobs[0]["error_code"], "cancel_timeout")
+
+    def test_cancel_retries_cancel_timeout_failure(self) -> None:
+        backend = api.get_job_backend()
+        backend.create_job({"job_id": "job-1", "status": "queued", "type": "generate"})
+        backend.claim_next_job(worker_id="worker-1")
+        backend.mark_running("job-1", "worker-1")
+        backend.request_cancellation("job-1", worker_id="worker-1")
+        backend.finalize_cancellation_timeout(
+            "job-1", worker_id="worker-1", reason="cancel_timeout"
+        )
+
+        response = self.client.post("/jobs/job-1/cancel")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "escalated")
+        self.assertEqual(payload["cancel_attempt"], 2)
 
     def test_root_returns_index_html(self) -> None:
         response = api.root()
@@ -364,7 +475,7 @@ class ApiTests(unittest.TestCase):
         backend.create_job(
             {
                 "job_id": "job-a",
-                "status": "completed",
+                "status": "succeeded",
                 "prompt": "first",
                 "output_path": "",
                 "created_at": "2026-01-01T00:00:00+00:00",
@@ -405,7 +516,7 @@ class ApiTests(unittest.TestCase):
         api._create_job_record(job_id, "test", temp_path, {})
         api._update_job(
             job_id,
-            status="completed",
+            status="succeeded",
             started_at="now",
             finished_at="now",
             output_path=temp_path,
@@ -434,7 +545,7 @@ class ApiTests(unittest.TestCase):
         )
         api._update_job(
             source_id,
-            status="completed",
+            status="succeeded",
             started_at="now",
             finished_at="now",
             output_path=output_path,
@@ -569,47 +680,46 @@ class ApiTests(unittest.TestCase):
         api._create_job_record("q1", "", "", {})
 
         with unittest.mock.patch.object(api, "broadcast_job_event") as broadcast:
-            result = api.cancel_job("q1", force=False)
+            result = api.cancel_job("q1")
 
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "Cancelled by user")
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["error"])
         broadcast.assert_called_once_with("job_updated", result)
 
-    def test_cancel_running_without_force_returns_warning(self) -> None:
-        # Subprocess termination now lives in the worker (Task 6); the API
-        # cannot return a real PID and just emits the warning shape.
+    def test_cancel_claimed_job_returns_terminal_cancelled(self) -> None:
+        api._create_job_record("c1", "", "", {})
+        api._update_job("c1", status="claimed", worker_id="worker-x")
+
+        result = api.cancel_job("c1")
+
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["error"])
+        self.assertIsNotNone(result["finished_at"])
+
+    def test_cancel_running_job_transitions_to_cancelling(self) -> None:
         api._create_job_record("r1", "", "", {})
-        api._update_job("r1", status="running", started_at="now")
+        api._update_job(
+            "r1", status="running", started_at="now", worker_id="worker-x"
+        )
 
-        result = api.cancel_job("r1", force=False)
+        result = api.cancel_job("r1")
 
-        self.assertTrue(result.get("warning"))
-        self.assertEqual(result["status"], "running")
-        self.assertIsNone(result["pid"])
+        self.assertEqual(result["status"], "cancelling")
+        self.assertEqual(result["cancel_mode"], "soft")
+        self.assertNotIn("warning", result)
 
     def test_cancel_completed_job_raises(self) -> None:
         api._create_job_record("c1", "", "/out.mp4", {})
-        api._update_job("c1", status="completed", finished_at="now")
+        api._update_job("c1", status="succeeded", finished_at="now")
 
         with self.assertRaises(HTTPException) as ctx:
-            api.cancel_job("c1", force=False)
+            api.cancel_job("c1")
         self.assertEqual(ctx.exception.status_code, 409)
 
     def test_cancel_nonexistent_job_raises(self) -> None:
         with self.assertRaises(HTTPException) as ctx:
-            api.cancel_job("nonexistent", force=False)
+            api.cancel_job("nonexistent")
         self.assertEqual(ctx.exception.status_code, 404)
-
-    def test_cancel_running_with_force_marks_failed(self) -> None:
-        # Subprocess termination now lives in the worker (Task 6). Force-cancel
-        # from the API just flips the status; the worker must observe and abort.
-        api._create_job_record("r2", "", "", {})
-        api._update_job("r2", status="running", started_at="now")
-
-        result = api.cancel_job("r2", force=True)
-
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "Cancelled by user")
 
     def test_upscale_and_cancel_queued_job(self) -> None:
         """End-to-end: create source job, upscale it, cancel the upscale."""
@@ -630,9 +740,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(resp["type"], "upscale")
 
         # Cancel the queued upscale job
-        result = api.cancel_job(upscale_id, force=False)
-        self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["error"], "Cancelled by user")
+        result = api.cancel_job(upscale_id)
+        self.assertEqual(result["status"], "cancelled")
+        self.assertIsNone(result["error"])
 
     def test_upscale_job_record_has_source_info(self) -> None:
         source_id = "src-2"
@@ -658,3 +768,327 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(job["upscale_params"]["target_height"], 896)
         self.assertEqual(job["source_output_path"], "/fake/out2.mp4")
         self.assertEqual(job["payload"]["source_output_path"], "/fake/out2.mp4")
+
+    def test_worker_summary_reports_worker_and_queue_counts(self) -> None:
+        self.backend.create_job({
+            "job_id": "queued-job",
+            "status": "queued",
+            "type": "generate",
+            "prompt": "queued",
+            "params": {},
+            "output_path": "queued.mp4",
+            "created_at": "2026-05-01T12:00:00Z",
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "source_job_id": None,
+            "upscale_params": None,
+            "payload": {},
+            "source_output_path": None,
+        })
+        self.backend.create_job({
+            "job_id": "running-job",
+            "status": "running",
+            "type": "generate",
+            "prompt": "running",
+            "params": {},
+            "output_path": "running.mp4",
+            "created_at": "2026-05-01T12:00:01Z",
+            "started_at": "2026-05-01T12:00:02Z",
+            "finished_at": None,
+            "error": None,
+            "source_job_id": None,
+            "upscale_params": None,
+            "payload": {},
+            "source_output_path": None,
+            "worker_id": "worker-a",
+        })
+        self.worker_registry.upsert_worker(
+            "worker-a",
+            {
+                "status": "online",
+                "running_jobs": 1,
+                "max_concurrent_jobs": 2,
+                "panowan_runtime_status": "ready",
+                "capabilities": ["generate"],
+                "available_upscale_models": [],
+            },
+        )
+        self.worker_registry.upsert_worker(
+            "worker-b",
+            {
+                "status": "online",
+                "running_jobs": 0,
+                "max_concurrent_jobs": 1,
+                "panowan_runtime_status": "warming",
+                "capabilities": ["generate"],
+                "available_upscale_models": [],
+            },
+        )
+
+        response = self.client.get("/workers/summary")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "known_workers": 2,
+                "online_workers": 2,
+                "busy_workers": 1,
+                "stuck_cancelling_workers": 0,
+                "queued_jobs": 1,
+                "running_jobs": 1,
+                "cancelling_jobs": 0,
+                "total_capacity": 3,
+                "occupied_capacity": 1,
+                "effective_available_capacity": 2,
+            },
+        )
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class WorkerSummaryContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        patched_settings = replace(
+            api.settings,
+            output_dir=os.path.join(self.temp_dir.name, "outputs"),
+            job_store_path=os.path.join(self.temp_dir.name, "jobs.json"),
+            worker_store_path=os.path.join(self.temp_dir.name, "workers.json"),
+            worker_stale_seconds=60.0,
+        )
+        self.settings_patch = patch("app.api.settings", patched_settings)
+        self.settings_patch.start()
+        self.addCleanup(self.settings_patch.stop)
+
+        from app.jobs import LocalJobBackend
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self.worker_registry = LocalWorkerRegistry(api.settings.worker_store_path)
+
+    def test_summary_keeps_known_workers_when_all_are_stale(self) -> None:
+        self.worker_registry.upsert_worker(
+            "worker-1",
+            {"status": "online", "running_jobs": 0, "max_concurrent_jobs": 1},
+        )
+        self.worker_registry.upsert_worker(
+            "worker-2",
+            {"status": "online", "running_jobs": 1, "max_concurrent_jobs": 1},
+        )
+        # Backdate last_seen far enough that the staleness filter excludes both.
+        self.worker_registry.force_worker_fields(
+            "worker-1", last_seen="2000-01-01T00:00:00+00:00"
+        )
+        self.worker_registry.force_worker_fields(
+            "worker-2", last_seen="2000-01-01T00:00:00+00:00"
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["known_workers"], 2)
+        self.assertEqual(summary["online_workers"], 0)
+
+    def test_summary_reports_stuck_cancelling_workers_separately(self) -> None:
+        self.backend.force_job_record({
+            "job_id": "job-1",
+            "status": "cancelling",
+            "worker_id": "worker-2",
+            "cancel_deadline_at": "2026-05-01T14:30:00+00:00",
+        })
+        self.worker_registry.upsert_worker(
+            "worker-2",
+            {"status": "online", "running_jobs": 1, "max_concurrent_jobs": 1},
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["cancelling_jobs"], 1)
+        self.assertEqual(summary["stuck_cancelling_workers"], 1)
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class WorkerSummaryRegressionTests(unittest.TestCase):
+    """End-to-end regressions for the /workers/summary capacity model."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        patched_settings = replace(
+            api.settings,
+            output_dir=os.path.join(self.temp_dir.name, "outputs"),
+            job_store_path=os.path.join(self.temp_dir.name, "jobs.json"),
+            worker_store_path=os.path.join(self.temp_dir.name, "workers.json"),
+            worker_stale_seconds=60.0,
+        )
+        self.settings_patch = patch("app.api.settings", patched_settings)
+        self.settings_patch.start()
+        self.addCleanup(self.settings_patch.stop)
+
+        from app.jobs import LocalJobBackend
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self.worker_registry = LocalWorkerRegistry(api.settings.worker_store_path)
+
+    def test_zero_online_workers_does_not_mean_zero_known_workers(self) -> None:
+        # known_workers is the operator-visible inventory and must remain
+        # non-zero even when every worker has aged past the staleness
+        # threshold; otherwise the dashboard hides workers that need attention.
+        self.worker_registry.upsert_worker(
+            "worker-1",
+            {"status": "online", "running_jobs": 0, "max_concurrent_jobs": 1},
+        )
+        self.worker_registry.upsert_worker(
+            "worker-2",
+            {"status": "online", "running_jobs": 0, "max_concurrent_jobs": 1},
+        )
+        self.worker_registry.force_worker_fields(
+            "worker-1", last_seen="2000-01-01T00:00:00+00:00"
+        )
+        self.worker_registry.force_worker_fields(
+            "worker-2", last_seen="2000-01-01T00:00:00+00:00"
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["known_workers"], 2)
+        self.assertEqual(summary["online_workers"], 0)
+
+    def test_cancellation_drag_reduces_effective_available_capacity(self) -> None:
+        self.worker_registry.upsert_worker(
+            "worker-1",
+            {"status": "online", "running_jobs": 1, "max_concurrent_jobs": 2},
+        )
+        self.backend.force_job_record(
+            {
+                "job_id": "job-1",
+                "status": "cancelling",
+                "worker_id": "worker-1",
+            }
+        )
+
+        summary = api._worker_summary()
+
+        self.assertEqual(summary["busy_workers"], 1)
+        self.assertEqual(summary["stuck_cancelling_workers"], 1)
+        self.assertEqual(summary["effective_available_capacity"], 1)
+
+
+@unittest.skipUnless(FASTAPI_AVAILABLE, "fastapi is not installed")
+class CancelApiContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        patched_settings = replace(
+            api.settings,
+            output_dir=os.path.join(self.temp_dir.name, "outputs"),
+            job_store_path=os.path.join(self.temp_dir.name, "jobs.json"),
+            worker_store_path=os.path.join(self.temp_dir.name, "workers.json"),
+        )
+        self.settings_patch = patch("app.api.settings", patched_settings)
+        self.settings_patch.start()
+        self.addCleanup(self.settings_patch.stop)
+
+        self.client = TestClient(api.app)
+
+        from app.jobs import LocalJobBackend, now_iso
+        self.backend = LocalJobBackend(api.settings.job_store_path)
+        self._now_iso = now_iso
+
+    def _base_record(self, job_id: str, status: str, worker_id: str | None) -> dict:
+        return {
+            "job_id": job_id,
+            "status": status,
+            "type": "generate",
+            "prompt": "p",
+            "params": {},
+            "output_path": f"/tmp/{job_id}.mp4",
+            "created_at": self._now_iso(),
+            "started_at": self._now_iso() if status != "queued" else None,
+            "finished_at": None,
+            "error": None,
+            "source_job_id": None,
+            "upscale_params": None,
+            "payload": {},
+            "source_output_path": None,
+            "worker_id": worker_id,
+        }
+
+    def make_running_job(self, *, worker_id: str) -> dict:
+        record = self._base_record("running-job", "running", worker_id)
+        return self.backend.force_job_record(record)
+
+    def make_claimed_job(self, *, worker_id: str) -> dict:
+        record = self._base_record("claimed-job", "claimed", worker_id)
+        return self.backend.force_job_record(record)
+
+    def make_cancelling_job(self, *, worker_id: str) -> dict:
+        record = self._base_record("cancelling-job", "cancelling", worker_id)
+        record["cancel_mode"] = "soft"
+        record["cancel_attempt"] = 1
+        record["cancel_requested_at"] = self._now_iso()
+        record["cancel_deadline_at"] = "2099-01-01T00:00:00+00:00"
+        return self.backend.force_job_record(record)
+
+    def make_queued_job(self) -> dict:
+        return self.backend.force_job_record(self._base_record("queued-job", "queued", None))
+
+    def test_cancel_claimed_job_returns_terminal_cancelled(self) -> None:
+        job = self.make_claimed_job(worker_id="worker-1")
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelled")
+        self.assertIsNone(payload["error"])
+        self.assertIsNotNone(payload["finished_at"])
+
+    def test_cancel_running_job_returns_cancelling_without_force_flag(self) -> None:
+        job = self.make_running_job(worker_id="worker-1")
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "soft")
+        self.assertNotIn("warning", payload)
+
+    def test_escalate_endpoint_updates_cancel_mode(self) -> None:
+        job = self.make_cancelling_job(worker_id="worker-1")
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel/escalate", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertEqual(payload["cancel_mode"], "escalated")
+        self.assertEqual(payload["cancel_attempt"], 2)
+
+    def test_cancel_queued_job_returns_terminal_cancelled(self) -> None:
+        job = self.make_queued_job()
+
+        response = self.client.post(f"/jobs/{job['job_id']}/cancel", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "cancelled")
+
+    def test_cancel_nonexistent_job_returns_404(self) -> None:
+        response = self.client.post("/jobs/missing/cancel", json={})
+        self.assertEqual(response.status_code, 404)
+
+    def test_cancel_terminal_job_returns_409(self) -> None:
+        record = self._base_record("done-job", "succeeded", "worker-1")
+        record["finished_at"] = self._now_iso()
+        self.backend.force_job_record(record)
+
+        response = self.client.post("/jobs/done-job/cancel", json={})
+        self.assertEqual(response.status_code, 409)
+
+    def test_escalate_non_cancelling_job_returns_409(self) -> None:
+        self.make_running_job(worker_id="worker-1")
+
+        response = self.client.post("/jobs/running-job/cancel/escalate", json={})
+        self.assertEqual(response.status_code, 409)

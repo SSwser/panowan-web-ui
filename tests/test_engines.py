@@ -14,13 +14,27 @@ class _FakeHost:
 
     def __init__(self, run_result=None):
         self.run_calls = []
+        self.prepare_calls = []
+        self.execute_calls = []
+        self.prepared_runtime = {"runtime": "prepared"}
         self._run_result = run_result or {
             "status": "ok",
             "output_path": "/tmp/o.mp4",
         }
 
-    def run_job(self, provider_key, job):
+    def prepare_runtime(self, provider_key, job, *, cancellation=None):
+        self.prepare_calls.append((provider_key, dict(job)))
+        self.last_prepare_cancellation = cancellation
+        return self.prepared_runtime
+
+    def execute_job(self, provider_key, loaded_runtime, job, *, cancellation=None):
+        self.execute_calls.append((provider_key, loaded_runtime, dict(job)))
+        self.last_cancellation = cancellation
+        return self._run_result
+
+    def run_job(self, provider_key, job, *, cancellation=None):
         self.run_calls.append((provider_key, dict(job)))
+        self.last_cancellation = cancellation
         return self._run_result
 
 
@@ -93,9 +107,40 @@ class PanoWanEngineTests(unittest.TestCase):
             mock_payload.return_value = payload
             result = engine.run({"prompt": "sky", "negative_prompt": "blur"})
 
-        self.assertEqual(host.run_calls, [("panowan", payload)])
+        self.assertEqual(host.prepare_calls, [("panowan", payload)])
+        self.assertEqual(host.execute_calls, [("panowan", host.prepared_runtime, payload)])
         self.assertEqual(result.output_path, "/tmp/o.mp4")
         self.assertEqual(result.metadata, {})
+
+    def test_prepare_delegates_to_runtime_prepare(self) -> None:
+        host = _FakeHost()
+        engine = PanoWanEngine(host)
+
+        with mock.patch("app.engines.panowan.build_runner_payload") as mock_payload:
+            payload = {"id": "job-1", "task": "t2v", "output_path": "/tmp/o.mp4"}
+            mock_payload.return_value = payload
+            prepared = engine.prepare({"payload": {"id": "job-1", "task": "t2v"}})
+
+        self.assertIs(prepared, host.prepared_runtime)
+        self.assertEqual(host.prepare_calls, [("panowan", payload)])
+        self.assertEqual(host.execute_calls, [])
+
+    def test_execute_uses_prepared_runtime(self) -> None:
+        host = _FakeHost(run_result={"status": "ok", "output_path": "/tmp/o.mp4"})
+        engine = PanoWanEngine(host)
+
+        with mock.patch("app.engines.panowan.build_runner_payload") as mock_payload:
+            payload = {"id": "job-1", "task": "t2v", "output_path": "/tmp/o.mp4"}
+            mock_payload.return_value = payload
+            result = engine.execute(
+                {
+                    "payload": {"id": "job-1", "task": "t2v"},
+                    "_prepared_runtime": host.prepared_runtime,
+                }
+            )
+
+        self.assertEqual(result.output_path, "/tmp/o.mp4")
+        self.assertEqual(host.execute_calls, [("panowan", host.prepared_runtime, payload)])
 
 
 class UpscaleEngineTests(unittest.TestCase):
@@ -141,14 +186,25 @@ class UpscaleEngineTests(unittest.TestCase):
         }
         engine = UpscaleEngine()
 
-        def cancel_probe() -> bool:
-            return False
+        from app.cancellation import CallbackCancellationProbe, CancellationContext
+
+        probe = CallbackCancellationProbe(
+            context=CancellationContext(
+                job_id="job-upscale",
+                worker_id="worker-1",
+                mode="soft",
+                requested_at="2026-05-01T14:00:00+00:00",
+                deadline_at="2026-05-01T14:00:45+00:00",
+                attempt=1,
+            ),
+            stop_check=lambda: False,
+        )
 
         result = engine.run(
             {
                 "source_output_path": "/app/runtime/outputs/output_src.mp4",
                 "output_path": "/app/runtime/outputs/output_up.mp4",
-                "_should_cancel": cancel_probe,
+                "_cancellation_probe": probe,
                 "upscale_params": {
                     "model": "realesrgan-animevideov3",
                     "scale": 2,
@@ -163,8 +219,12 @@ class UpscaleEngineTests(unittest.TestCase):
             ),
         )
         mock_upscale.assert_called_once()
+        kwargs = mock_upscale.call_args.kwargs
+        # The engine wraps the legacy callback in a probe at the boundary;
+        # assert structural fields independently from the wrapped probe object.
+        forwarded = kwargs.pop("cancellation")
         self.assertEqual(
-            mock_upscale.call_args.kwargs,
+            kwargs,
             {
                 "input_path": "/app/runtime/outputs/output_src.mp4",
                 "output_path": "/app/runtime/outputs/output_up.mp4",
@@ -175,9 +235,10 @@ class UpscaleEngineTests(unittest.TestCase):
                 "engine_dir": settings.upscale_engine_dir,
                 "weights_dir": settings.upscale_weights_dir,
                 "timeout_seconds": 1800,
-                "should_cancel": cancel_probe,
             },
         )
+        self.assertIsNotNone(forwarded)
+        self.assertFalse(forwarded.should_stop_now())
 
 
 class PanoWanEngineCapabilitiesTests(unittest.TestCase):

@@ -38,6 +38,22 @@ class LocalWorkerRegistry:
             self._persist_unlocked()
             return copy.deepcopy(normalized)
 
+    def adjust_running_jobs(self, worker_id: str, delta: int) -> dict[str, Any] | None:
+        """Atomically nudge running_jobs by ``delta``, clamped at zero.
+
+        Used when occupancy changes outside the heartbeat path. Going through a
+        delta keeps the call correct for workers that run multiple jobs
+        concurrently — releasing one slot must not zero the counter.
+        """
+        with self._locked_store():
+            existing = self._workers.get(worker_id)
+            if existing is None:
+                return None
+            existing["running_jobs"] = max(0, int(existing.get("running_jobs", 0)) + int(delta))
+            existing["last_seen"] = now_iso()
+            self._persist_unlocked()
+            return copy.deepcopy(existing)
+
     def list_workers(self, stale_seconds: float | None = None) -> list[dict[str, Any]]:
         with self._locked_store():
             workers = [copy.deepcopy(worker) for worker in self._workers.values()]
@@ -56,6 +72,22 @@ class LocalWorkerRegistry:
             and model_name in worker.get("available_upscale_models", [])
             for worker in self.list_workers(stale_seconds=stale_seconds)
         )
+
+    # --- Test scaffolding (not for production use) ---
+    # Bypasses the normalize/heartbeat path so tests can synthesize states
+    # (e.g., a backdated last_seen) that cannot be produced by replaying real
+    # heartbeat calls in wall-clock time. Must not be invoked from app code.
+    def force_worker_fields(
+        self, worker_id: str, **fields: Any
+    ) -> dict[str, Any] | None:
+        with self._locked_store():
+            worker = self._workers.get(worker_id)
+            if worker is None:
+                return None
+            for key, value in fields.items():
+                worker[key] = value
+            self._persist_unlocked()
+            return copy.deepcopy(worker)
 
     def _normalize_worker(self, worker_id: str, record: dict[str, Any]) -> dict[str, Any]:
         normalized = copy.deepcopy(record)

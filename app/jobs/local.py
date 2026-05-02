@@ -13,13 +13,37 @@ import json
 import os
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+
+from app.cancellation import (
+    CancellationCapability,
+    begin_cancellation,
+    escalate_cancellation as _escalate_cancellation,
+)
+from app.jobs.lifecycle import (
+    INFLIGHT_STATES,
+    JOB_STATE_CANCELLED,
+    JOB_STATE_CANCELLING,
+    JOB_STATE_CLAIMED,
+    JOB_STATE_FAILED,
+    JOB_STATE_QUEUED,
+    JOB_STATE_RUNNING,
+    JOB_STATE_SUCCEEDED,
+    can_transition,
+    normalize_legacy_record,
+    normalize_restored_inflight_record,
+)
 
 if os.name == "nt":
     import msvcrt
 else:
     import fcntl
+
+
+_DEFAULT_CANCEL_TIMEOUT_SEC = 10
+_DEFAULT_CANCEL_POLL_INTERVAL_SEC = 1
 
 
 def now_iso() -> str:
@@ -48,6 +72,7 @@ class LocalJobBackend:
             "upscale_params",
             "source_job_id",
             "type",
+            "error_code",
         }
     )
 
@@ -107,83 +132,340 @@ class LocalJobBackend:
         return jobs
 
     def claim_next_job(self, worker_id: str) -> dict[str, Any] | None:
+        """Move the oldest queued job to ``claimed`` ownership.
+
+        Per ADR 0010 the ``claimed`` state asserts ownership but does not
+        announce execution start; that transition belongs to ``mark_running``.
+        """
         with self._locked_store():
             queued = sorted(
-                (job for job in self._jobs.values() if job.get("status") == "queued"),
+                (
+                    job
+                    for job in self._jobs.values()
+                    if job.get("status") == JOB_STATE_QUEUED
+                ),
                 key=lambda job: job.get("created_at") or "",
             )
             if not queued:
                 return None
             job = queued[0]
-            job["status"] = "running"
-            job["started_at"] = now_iso()
+            job["status"] = JOB_STATE_CLAIMED
             job["worker_id"] = worker_id
             self._persist_unlocked()
             return copy.deepcopy(job)
 
-    def fail_job(self, job_id: str, error: str) -> dict[str, Any]:
-        return self.update_job(
-            job_id, status="failed", finished_at=now_iso(), error=error
+    def mark_running(
+        self, job_id: str, worker_id: str
+    ) -> dict[str, Any] | None:
+        """Move a claimed job owned by ``worker_id`` into ``running``.
+
+        Returns ``None`` if the job is missing, owned by a different worker,
+        or is no longer in a state that can legally start running. Refusing
+        the write here is the first-pass stale-writer guard required by ADR
+        0010 §7.
+        """
+        return self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_RUNNING,
+            allowed_current_states={JOB_STATE_CLAIMED},
+            extra_fields={"started_at": now_iso(), "error": None},
         )
 
-    def cancel_queued_job(self, job_id: str) -> bool:
-        with self._locked_store():
-            job = self._jobs.get(job_id)
-            if job is None or job.get("status") != "queued":
-                return False
-            job["status"] = "failed"
-            job["error"] = "Cancelled by user"
-            job["finished_at"] = now_iso()
-            self._persist_unlocked()
-            return True
-
-    def complete_job_if_running(
+    def mark_succeeded(
         self, job_id: str, worker_id: str, output_path: str
     ) -> dict[str, Any] | None:
+        """Finalize a running job as ``succeeded`` for its current owner.
+
+        Refuses to overwrite a terminal state (including ``cancelled``),
+        which preserves the ADR 0010 rule that observed cancellation is not
+        retroactively rewritten by a late success report.
+        """
+        return self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_SUCCEEDED,
+            allowed_current_states={JOB_STATE_RUNNING},
+            extra_fields={
+                "finished_at": now_iso(),
+                "output_path": output_path,
+                "error": None,
+            },
+        )
+
+    def mark_failed(
+        self, job_id: str, worker_id: str, error: str
+    ) -> dict[str, Any] | None:
+        """Finalize an owned in-flight job as ``failed`` with an error string.
+
+        Allowed from ``claimed``, ``running``, or ``cancelling`` because each
+        of those is a legal precondition for a runtime failure terminating
+        the attempt.
+        """
+        return self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_FAILED,
+            allowed_current_states={
+                JOB_STATE_CLAIMED,
+                JOB_STATE_RUNNING,
+                JOB_STATE_CANCELLING,
+            },
+            extra_fields={"finished_at": now_iso(), "error": error},
+        )
+
+    def request_cancellation(
+        self,
+        job_id: str,
+        *,
+        worker_id: str | None = None,
+        finished: bool = False,
+    ) -> dict[str, Any] | None:
+        """Record cancellation intent or finalize cooperative cancellation.
+
+        - From ``queued`` it transitions directly to terminal ``cancelled``.
+        - From ``claimed`` it also transitions directly to terminal
+          ``cancelled`` because engine work has not started yet, so there is no
+          cooperative runtime shutdown to wait for.
+        - From ``running`` it transitions to the intermediate ``cancelling``
+          state, attaching governance metadata (``cancel_mode``,
+          ``cancel_attempt``, ``cancel_requested_at``, ``cancel_deadline_at``)
+          sourced from the per-job :class:`CancellationCapability`.
+        - With ``finished=True`` from ``cancelling`` it transitions to the
+          terminal ``cancelled`` state once cooperative cancellation has
+          actually been honored.
+
+        When ``worker_id`` is provided and the current state is owned
+        (``claimed``/``running``/``cancelling``), ownership is enforced and
+        a mismatch returns ``None``. When omitted, the API caller path is
+        preserved: any legal transition for the current state is applied.
+        """
+        if finished:
+            result = self._guarded_transition(
+                job_id,
+                worker_id=worker_id,
+                target_state=JOB_STATE_CANCELLED,
+                allowed_current_states={JOB_STATE_CANCELLING},
+                extra_fields={"finished_at": now_iso(), "error": None},
+            )
+            if result is not None:
+                return result
+        # Queued jobs are not owned by any worker, so skip the ownership
+        # check on this branch even when the caller supplied a worker_id.
+        result = self._guarded_transition(
+            job_id,
+            worker_id=None,
+            target_state=JOB_STATE_CANCELLED,
+            allowed_current_states={JOB_STATE_QUEUED},
+            extra_fields={"finished_at": now_iso(), "error": None},
+        )
+        if result is not None:
+            return result
+        # Claimed jobs already have an owner but have not started runtime work,
+        # so cancellation should converge directly to terminal `cancelled`
+        # instead of entering the cooperative `cancelling` handshake.
+        result = self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_CANCELLED,
+            allowed_current_states={JOB_STATE_CLAIMED},
+            extra_fields={"finished_at": now_iso(), "error": None},
+        )
+        if result is not None:
+            return result
+        return self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_CANCELLING,
+            allowed_current_states={JOB_STATE_RUNNING},
+            extra_fields_factory=lambda job: begin_cancellation(
+                job,
+                capability=self._cancellation_capability_for_job(job),
+                now=datetime.now(UTC),
+            ),
+        )
+
+    def escalate_cancellation(
+        self, job_id: str, *, worker_id: str
+    ) -> dict[str, Any] | None:
+        """Bump a cancelling job to escalated mode and refresh its deadline.
+
+        Allowed only from ``cancelling`` state by the owning worker.
+        """
+        return self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_CANCELLING,
+            allowed_current_states={JOB_STATE_CANCELLING},
+            extra_fields_factory=lambda job: _escalate_cancellation(
+                job,
+                capability=self._cancellation_capability_for_job(job),
+                now=datetime.now(UTC),
+            ),
+        )
+
+    def retry_timed_out_cancellation(
+        self, job_id: str, *, worker_id: str
+    ) -> dict[str, Any] | None:
+        """Reopen a cancel-timeout failure as cancelling for another attempt."""
         with self._locked_store():
             job = self._jobs.get(job_id)
             if job is None:
+                return None
+            if job.get("status") != JOB_STATE_FAILED or job.get("error_code") != "cancel_timeout":
                 return None
             if job.get("worker_id") != worker_id:
                 return None
-            status = job.get("status")
-            if status == "running":
-                pass
-            elif not (
-                status == "failed"
-                and job.get("error") == "Cancelled by user"
-                and job.get("finished_at") is not None
-            ):
-                return None
-            job["status"] = "completed"
-            job["finished_at"] = now_iso()
-            job["output_path"] = output_path
-            job["error"] = None
+            fields = _escalate_cancellation(
+                {
+                    **job,
+                    "status": JOB_STATE_CANCELLING,
+                    "finished_at": None,
+                    "error": None,
+                    "error_code": None,
+                },
+                capability=self._cancellation_capability_for_job(job),
+                now=datetime.now(UTC),
+            )
+            job.update(fields)
             self._persist_unlocked()
             return copy.deepcopy(job)
 
-    def fail_job_if_running(
-        self, job_id: str, worker_id: str, error: str
+    def finalize_cancellation_timeout(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        reason: str,
     ) -> dict[str, Any] | None:
+        """Force a stuck cancelling job to terminal ``failed`` with ``error_code``.
+
+        Used by worker reconciliation when the cancel deadline elapses without
+        cooperative convergence. Only the owning worker may finalize.
+        """
+        return self._guarded_transition(
+            job_id,
+            worker_id=worker_id,
+            target_state=JOB_STATE_FAILED,
+            allowed_current_states={JOB_STATE_CANCELLING},
+            extra_fields={
+                "finished_at": now_iso(),
+                "error": reason,
+                "error_code": reason,
+            },
+        )
+
+    def recover_overdue_cancellation(self, job_id: str, *, reason: str) -> dict[str, Any] | None:
+        """Resolve stale cancelling records on read/restart recovery."""
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None or job.get("status") != JOB_STATE_CANCELLING:
+                return None
+            output_path = str(job.get("output_path") or "")
+            if output_path and os.path.isfile(output_path):
+                job["status"] = JOB_STATE_SUCCEEDED
+                job["error"] = None
+                job["error_code"] = None
+            else:
+                job["status"] = JOB_STATE_FAILED
+                job["error"] = reason
+                job["error_code"] = reason
+            job["finished_at"] = job.get("finished_at") or now_iso()
+            self._persist_unlocked()
+            return copy.deepcopy(job)
+
+    def _cancellation_capability_for_job(
+        self, _job: dict[str, Any]
+    ) -> CancellationCapability:
+        # Task 3 will look up per-engine capability from job["type"].
+        return CancellationCapability(
+            supports_soft_cancel=True,
+            supports_escalated_cancel=True,
+            default_cancel_timeout_sec=_DEFAULT_CANCEL_TIMEOUT_SEC,
+            cancel_poll_interval_sec=_DEFAULT_CANCEL_POLL_INTERVAL_SEC,
+            cancel_checkpoint_granularity="checkpoint",
+        )
+
+    def cancel_queued_job(self, job_id: str) -> bool:
+        """Backward-compatible queued-only cancellation entry point.
+
+        Returns True iff the job was in the queued state at observation time
+        and was atomically transitioned to terminal ``cancelled``. Refuses to
+        act on jobs already owned by a worker — those must flow through the
+        cooperative ``request_cancellation`` path so the worker can observe
+        the cancel intent before any terminal write happens.
+        """
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.get("status") != JOB_STATE_QUEUED:
+                return False
+            job["status"] = JOB_STATE_CANCELLED
+            job["finished_at"] = now_iso()
+            job["error"] = None
+            self._persist_unlocked()
+            return True
+
+    def _guarded_transition(
+        self,
+        job_id: str,
+        *,
+        target_state: str,
+        allowed_current_states: set[str],
+        worker_id: str | None = None,
+        extra_fields: dict[str, Any] | None = None,
+        extra_fields_factory: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Apply a worker-owned transition under canonical and ownership rules.
+
+        Four guards must pass before any write happens: the job exists,
+        the caller owns it (when ``worker_id`` is supplied), and the
+        canonical transition graph permits the move from the current state.
+        This is the implementation seam ADR 0010 §7 calls out for
+        stale-writer rejection in a store that does not yet persist explicit
+        version numbers.
+
+        ``extra_fields`` and ``extra_fields_factory`` are mutually exclusive.
+        The factory is invoked with the current job dict and its return value
+        is merged into the record after the status transition is applied.
+        """
+        if extra_fields is not None and extra_fields_factory is not None:
+            raise ValueError(
+                "extra_fields and extra_fields_factory are mutually exclusive"
+            )
         with self._locked_store():
             job = self._jobs.get(job_id)
             if job is None:
                 return None
-            if job.get("status") != "running" or job.get("worker_id") != worker_id:
+            if worker_id is not None and job.get("worker_id") != worker_id:
                 return None
-            job["status"] = "failed"
-            job["finished_at"] = now_iso()
-            job["error"] = error
+            current = job.get("status")
+            if current not in allowed_current_states:
+                return None
+            # A self-transition (current == target) is a metadata refresh,
+            # not a true state change, so the canonical transition graph
+            # only gates moves between distinct states.
+            if current != target_state and not can_transition(current, target_state):
+                return None
+            fields = (
+                extra_fields_factory(job)
+                if extra_fields_factory is not None
+                else (extra_fields or {})
+            )
+            job["status"] = target_state
+            for key, value in fields.items():
+                job[key] = value
             self._persist_unlocked()
             return copy.deepcopy(job)
 
     def delete_failed_jobs(self) -> list[str]:
-        """Remove all failed jobs from the store. Returns the deleted job IDs."""
+        """Remove failed or cancelled jobs from the store. Returns deleted IDs."""
         with self._locked_store():
             failed_ids = [
                 job_id
                 for job_id, job in self._jobs.items()
-                if job.get("status") == "failed"
+                if job.get("status") in {JOB_STATE_FAILED, JOB_STATE_CANCELLED}
             ]
             for job_id in failed_ids:
                 self._delete_job_artifacts_unlocked(self._jobs[job_id])
@@ -201,14 +483,6 @@ class LocalJobBackend:
         except OSError:
             pass
 
-    def complete_job(self, job_id: str, output_path: str) -> dict[str, Any]:
-        return self.update_job(
-            job_id,
-            status="completed",
-            finished_at=now_iso(),
-            output_path=output_path,
-        )
-
     def _normalize_job_record(
         self, job_id: str, record: dict[str, Any], restore: bool = True
     ) -> dict[str, Any]:
@@ -222,15 +496,19 @@ class LocalJobBackend:
         normalized.setdefault("started_at", None)
         normalized.setdefault("finished_at", None)
         normalized.setdefault("error", None)
-        normalized.setdefault("status", "queued")
+        normalized.setdefault("status", JOB_STATE_QUEUED)
         normalized.setdefault("type", "generate")
         normalized.setdefault("source_job_id", None)
         normalized.setdefault("upscale_params", None)
         normalized.setdefault("worker_id", None)
-        if restore and normalized["status"] in {"queued", "running"}:
-            normalized["status"] = "failed"
-            normalized["finished_at"] = normalized["finished_at"] or now_iso()
-            normalized["error"] = "Service restarted before the job completed"
+        # Always map legacy persisted labels (`completed`, failed-as-cancellation)
+        # into canonical states so downstream code never has to know the old
+        # vocabulary.
+        normalized = normalize_legacy_record(normalized)
+        if restore:
+            # Restore biases uncertain in-flight work toward explicit failure.
+            # Fabricating success here would silently mask a missing artifact.
+            normalized = normalize_restored_inflight_record(normalized, now_iso())
         return normalized
 
     def _persist_unlocked(self) -> None:
@@ -255,6 +533,30 @@ class LocalJobBackend:
             for job_id, record in raw_jobs.items()
             if isinstance(record, dict)
         }
+
+    # --- Test scaffolding (not for production use) ---
+    # These helpers bypass the canonical guarded-transition path so tests
+    # can synthesize states (e.g., an already-elapsed cancel deadline) that
+    # cannot be produced by replaying real API/worker calls in wall-clock
+    # time. They must not be invoked from app code.
+    def force_job_fields(
+        self, job_id: str, **fields: Any
+    ) -> dict[str, Any] | None:
+        with self._locked_store():
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            for key, value in fields.items():
+                job[key] = value
+            self._persist_unlocked()
+            return copy.deepcopy(job)
+
+    def force_job_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(record["job_id"])
+        with self._locked_store():
+            self._jobs[job_id] = copy.deepcopy(record)
+            self._persist_unlocked()
+            return copy.deepcopy(self._jobs[job_id])
 
     def _locked_store(self) -> "_StoreLock":
         return _StoreLock(self)

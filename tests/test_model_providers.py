@@ -392,8 +392,9 @@ class CLITests(unittest.TestCase):
     @patch("app.backends.cli.discover", return_value=[])
     @patch("app.backends.cli.ModelManager")
     @patch("app.backends.cli.load_model_specs", return_value=[])
+    @patch("app.backends.cli.Path.exists", return_value=False)
     def test_cli_verify_exits_zero_when_all_present(
-        self, mock_specs, mock_manager_cls, mock_discover
+        self, mock_exists, mock_specs, mock_manager_cls, mock_discover
     ) -> None:
         from app.backends.cli import main
 
@@ -402,6 +403,7 @@ class CLITests(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             main(["verify"])
         self.assertIn("verified", buf.getvalue().lower())
+        mock_exists.assert_called()
 
     @patch("app.backends.cli.discover", return_value=[])
     @patch("app.backends.cli.ModelManager")
@@ -1258,8 +1260,9 @@ class LoadSpecsTests(unittest.TestCase):
         self.assertNotEqual(ctx.exception.code, 0)
         self.assertIn("backend:realesrgan", output)
         self.assertIn("missing runtime files", output)
-        self.assertIn("uv run python -m app.backends install", output)
-        self.assertIn("make setup-backends", output)
+        self.assertIn(".venv/Scripts/python.exe -m app.backends install", output)
+        self.assertIn("make setup", output)
+        self.assertNotIn("make setup-backends", output)
         self.assertIn("delete third_party/Upscale/realesrgan/vendor", output)
 
     def test_cli_verify_reports_backend_revision_mismatch(self) -> None:

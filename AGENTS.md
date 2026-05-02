@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-FastAPI + worker service for AI video generation (T2V/I2V via PanoWan) and upscaling. Three isolated roles: **api**, **worker**, **model-setup**. See [docs/runtime-architecture.md](docs/runtime-architecture.md) and [ADR 0001](docs/adr/0001-engine-oriented-product-runtime.md).
+FastAPI + worker service for AI video generation (T2V/I2V via PanoWan) and upscaling. The runtime is split into **api** and **worker** roles, while model/backend preparation happens through host-side workflow entrypoints. See [docs/runtime-architecture.md](docs/runtime-architecture.md) and [ADR 0001](docs/adr/0001-engine-oriented-product-runtime.md).
 
 ## Commands
 
 ```bash
-# Host Python / dependencies (requires Python 3.13 exactly — not 3.12 or 3.14)
+# Host Python / dependencies (canonical uv-managed env; project requires Python >=3.12,<3.13)
 uv sync --group dev
 
 # Tests
@@ -18,27 +18,25 @@ uv run pytest tests/                          # also works
 DEV_MODE=1 uv run python -m app.api_service   # API with hot-reload
 uv run python -m app.worker_service           # Worker
 
-# Docker
-make build          # checks uv.lock, then compose build
-make up             # production
-make up DEV=1       # dev (mounts source)
-make doctor         # diagnose GPU/Docker/models
-make setup-backends # download model weights and verify backends (required before first run)
+# Docker / workflow entrypoints
+make setup
+make setup-worktree
+make build
+make up
+make up DEV=1
+make dev
+make verify
 ```
 
-> Host-side Python is managed via `uv`. Prefer `uv run ...` over calling the system `python` directly so commands always use the project's pinned Python 3.13 environment.
+> Host-side Python is managed via `uv`. Prefer `uv run ...` over calling the system `python` directly so commands always use the project's declared Python environment.
 >
-> Host-side Docker usage should follow the existing wrappers in `Makefile` and `scripts/docker-proxy.sh` instead of ad-hoc `docker compose ...` commands. Those entry points preserve this repo's host/WSL environment propagation and compose interpolation contract.
+> Host-side Docker usage should go through `make ...` or `bash scripts/docker-proxy.sh ...` instead of ad-hoc `docker compose ...` commands.
 >
-> On Windows hosts, Docker may exist only inside WSL rather than on the native PATH. In this repo, that is expected: use `make ...` targets or `bash scripts/docker-proxy.sh ...`, which will fall back to WSL Docker automatically.
->
-> If you need a direct Docker command, copy the calling pattern from `Makefile` or route it through `scripts/docker-proxy.sh` rather than inventing a new shell wrapper.
->
-> Avoid treating `docker` missing from the host PATH as proof that Docker is unavailable in this project. Check `make docker-env` or run `bash scripts/docker-proxy.sh version` first.
+> On Windows hosts, Docker may exist only inside WSL rather than on the native PATH. In this repo, that is expected.
 >
 > After changing `pyproject.toml`, run `uv lock` before `make build` — the build will fail otherwise.
 >
-> `make` targets that execute host-side Python (`make test`, `make setup-backends`, `make init`) are expected to run through `uv` when available.
+> `make setup`, `make setup-worktree`, `make test`, and `make verify` use the host Python environment and should run through `uv` when available.
 
 ### Host Python Rule
 
@@ -47,11 +45,11 @@ make setup-backends # download model weights and verify backends (required befor
 - Do **not** assume the shell's `python` version is correct.
 - Container-internal commands may still use plain `python`; the `uv` rule is for host execution.
 
-Why: this repo pins Python `>=3.13,<3.14`, but many developer machines still have 3.12 on `PATH`. Using `uv` avoids subtle runtime differences like missing stdlib APIs or mismatched dependency resolution.
+Why: this repo pins Python `>=3.12,<3.13`, but many developer machines still have a different interpreter on `PATH`. Using `uv` avoids subtle runtime differences and mismatched dependency resolution.
 
 ### Makefile Host Runner Convention
 
-The Makefile uses a `PYTHON_RUN` wrapper that resolves to `uv run` when `uv` is installed, and falls back to `python` otherwise. New host-side Python targets should use `$(PYTHON_RUN) -m ...` instead of calling `python` directly.
+The Makefile bootstraps a checkout-local `.venv` and routes host-side Python through `$(PYTHON_RUN)`, which resolves to that checkout-local interpreter. New host-side Python targets should use `$(PYTHON_RUN) -m ...` instead of calling `python` directly.
 
 Examples:
 
@@ -60,11 +58,11 @@ Examples:
 - Avoid for host targets: `python -m ...`
 - Fine in containers: `python -m ...`
 
-Short version: **host = `uv run`; container = plain `python`**.
+Short version: **host = checkout-local `.venv`; container = plain `python`**.
 
 ### Backend Vendor Maintenance
 
-Backend `vendor/` trees are generated runtime output, not hand-maintained source. If a backend declares `sources/` as authoritative runtime input, make persistent changes under `sources/` and sync `vendor/` through the built-in install flow (`uv run -m app.backends install` or `make setup-backends`) rather than editing generated files in place.
+Backend `vendor/` trees are generated runtime output, not hand-maintained source. If a backend declares `sources/` as authoritative runtime input, make persistent changes under `sources/` and sync `vendor/` through the built-in install flow (`uv run -m app.backends install`, `make setup`, or `make setup-worktree`) rather than editing generated files in place.
 
 When the current verification path is blocked by directory `stat` limitations, the fastest safe recovery is to delete that backend's `vendor/` directory and rerun the install flow so it is rebuilt from declared inputs. Treat this as a rebuild workaround, not as permission to maintain `vendor/` manually.
 

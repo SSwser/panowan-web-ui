@@ -622,13 +622,30 @@ class UpscaleVideoTests(unittest.TestCase):
 
         cancel_checks = iter([False, True])
 
+        from app.cancellation import (
+            CallbackCancellationProbe,
+            CancellationContext,
+        )
+
+        probe = CallbackCancellationProbe(
+            context=CancellationContext(
+                job_id="job-1",
+                worker_id="worker-1",
+                mode="soft",
+                requested_at="",
+                deadline_at="",
+                attempt=0,
+            ),
+            stop_check=lambda: next(cancel_checks),
+        )
+
         with self.assertRaises(UpscaleCancelledError):
             upscale_video(
                 input_path="/input/video.mp4",
                 output_path="/output/video.mp4",
                 model="realesrgan-animevideov3",
                 scale=2,
-                should_cancel=lambda: next(cancel_checks),
+                cancellation=probe,
             )
 
         mock_proc.kill.assert_called_once()

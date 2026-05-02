@@ -4,25 +4,39 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 from .generator import extract_prompt, resolve_inference_params
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
 from .settings import settings
 from .sse import broadcast_job_event, subscribe, unsubscribe
 from .upscaler import UPSCALE_BACKENDS
+from .worker_service import reconcile_overdue_cancellations
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        get_job_backend().restore()
+        backend = get_job_backend()
+        backend.restore()
+        # A restarted API has lost the in-flight runtime context, so restored
+        # cancelling jobs cannot keep waiting for a worker-side convergence that
+        # may never happen.
+        reconcile_overdue_cancellations(
+            backend,
+            now=_far_future_utc(),
+        )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"WARNING: could not restore jobs from disk: {exc}", flush=True)
     yield
+
+
+def _far_future_utc() -> datetime:
+    return datetime.max.replace(tzinfo=UTC)
 
 
 app = FastAPI(
@@ -69,6 +83,10 @@ _JOB_EVENT_FIELDS = (
     "source_output_path",
     "worker_id",
     "download_url",
+    "cancel_mode",
+    "cancel_attempt",
+    "cancel_requested_at",
+    "cancel_deadline_at",
 )
 
 
@@ -216,6 +234,7 @@ def _resolve_upscale_params(
 def _collect_job_store_events(
     previous_snapshots: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
+    _reconcile_overdue_cancellations_for_read()
     current_snapshots: dict[str, dict[str, Any]] = {}
     events: list[dict[str, str]] = []
 
@@ -302,7 +321,7 @@ def upscale(payload: dict) -> dict:
     source_job = _get_job(source_job_id)
     if source_job is None:
         raise HTTPException(status_code=400, detail="Source job not found")
-    if source_job["status"] != "completed":
+    if source_job["status"] != "succeeded":
         raise HTTPException(status_code=400, detail="Can only upscale completed jobs")
     if not os.path.exists(source_job["output_path"]):
         raise HTTPException(status_code=400, detail="Source video file not found")
@@ -340,8 +359,15 @@ def upscale(payload: dict) -> dict:
     }
 
 
+def _reconcile_overdue_cancellations_for_read() -> list[dict[str, Any]]:
+    # Page refresh is a read path, but it is also the only chance to heal stale
+    # cancelling records when no worker loop is alive to own the timeout.
+    return reconcile_overdue_cancellations(get_job_backend(), now=datetime.now(UTC))
+
+
 @app.get("/jobs")
 def list_jobs() -> list[dict[str, Any]]:
+    _reconcile_overdue_cancellations_for_read()
     jobs = get_job_backend().list_jobs()
     jobs.sort(key=lambda j: j.get("created_at") or "", reverse=True)
     return jobs
@@ -412,17 +438,18 @@ def download_job(job_id: str) -> FileResponse:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job["status"] != "completed":
+    if job["status"] != "succeeded":
         raise HTTPException(status_code=409, detail=f"Job is {job['status']}")
 
     output_path = job["output_path"]
     if not os.path.exists(output_path):
-        _update_job(
-            job_id,
-            status="failed",
-            finished_at=now_iso(),
-            error="Output file missing",
-        )
+        # Output disappeared after success: mark a non-canonical "missing
+        # artifact" failure by re-routing through the lifecycle helpers if the
+        # job is still owned by a worker. When the job is already terminal
+        # (the common case here, since we only got past the status check via
+        # "succeeded"), the safest action is to surface the 500 without
+        # rewriting the terminal state — ADR 0010 forbids overwriting a
+        # terminal record from outside the worker that produced it.
         raise HTTPException(status_code=500, detail="Output file not created")
 
     return FileResponse(
@@ -433,7 +460,8 @@ def download_job(job_id: str) -> FileResponse:
     )
 
 
-def cancel_job(job_id: str, force: bool = False) -> dict:
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str) -> dict[str, Any]:
     job = _get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -451,48 +479,112 @@ def cancel_job(job_id: str, force: bool = False) -> dict:
             raise HTTPException(status_code=404, detail="Job not found")
         status = job["status"]
 
-    if status == "running":
-        if not force:
-            return {
-                "warning": True,
-                "job_id": job_id,
-                "status": "running",
-                "message": (
-                    "Job is currently running. Force termination may cause "
-                    "incomplete output. Set force=true to confirm."
-                ),
-                "pid": None,
-            }
-        # Force-cancel is worker-driven: flip the persisted job status and let
-        # the polling worker observe `_should_cancel()` and terminate its own
-        # subprocess tree on the next cancellation check.
-        return _update_job(
-            job_id,
-            status="failed",
-            error="Cancelled by user",
-            finished_at=now_iso(),
+    if status == "claimed":
+        result = get_job_backend().request_cancellation(
+            job_id, worker_id=job.get("worker_id")
         )
+        if result is None:
+            current = _get_job(job_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot cancel job with status {current['status']}",
+            )
+        broadcast_job_event("job_updated", result)
+        return result
 
-    # completed or failed
+    if status == "running":
+        result = get_job_backend().request_cancellation(
+            job_id, worker_id=job.get("worker_id")
+        )
+        if result is None:
+            current = _get_job(job_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot cancel job with status {current['status']}",
+            )
+        broadcast_job_event("job_updated", result)
+        return result
+
+    if status == "cancelling":
+        return job
+
+    if status == "failed" and job.get("error_code") == "cancel_timeout":
+        worker_id = job.get("worker_id")
+        if not worker_id:
+            raise HTTPException(status_code=409, detail="Cannot retry cancellation without worker ownership")
+        result = get_job_backend().retry_timed_out_cancellation(
+            job_id, worker_id=worker_id
+        )
+        if result is None:
+            raise HTTPException(status_code=409, detail="Cannot retry cancellation")
+        broadcast_job_event("job_updated", result)
+        return result
+
     raise HTTPException(
         status_code=409, detail=f"Cannot cancel job with status {status}"
     )
 
 
-@app.post("/jobs/{job_id}/cancel")
-def cancel_job_endpoint(job_id: str, payload: dict = None) -> dict:
-    payload = payload or {}
-    force = payload.get("force", False)
-    result = cancel_job(job_id, force=force)
-    if result.get("warning"):
-        return JSONResponse(content=result, status_code=202)
+@app.post("/jobs/{job_id}/cancel/escalate")
+def escalate_cancel_job_endpoint(job_id: str) -> dict[str, Any]:
+    job = _get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    worker_id = job.get("worker_id")
+    if not worker_id:
+        raise HTTPException(status_code=409, detail="Job is not in cancelling state")
+    result = get_job_backend().escalate_cancellation(job_id, worker_id=worker_id)
+    if result is None:
+        raise HTTPException(status_code=409, detail="Job is not in cancelling state")
+    broadcast_job_event("job_updated", result)
     return result
 
 
 @app.delete("/jobs/failed")
 def delete_failed_jobs_endpoint() -> dict:
-    """Delete all failed jobs from the store and notify SSE subscribers."""
+    """Delete failed and cancelled jobs from the store and notify SSE subscribers."""
     deleted = get_job_backend().delete_failed_jobs()
     for job_id in deleted:
         broadcast_job_event("job_deleted", {"job_id": job_id})
     return {"deleted": deleted, "count": len(deleted)}
+
+
+def _worker_summary() -> dict[str, Any]:
+    jobs = get_job_backend().list_jobs()
+    registry = get_worker_registry()
+    known_workers = registry.list_workers(stale_seconds=None)
+    online_workers = registry.list_workers(stale_seconds=settings.worker_stale_seconds)
+    online_ids = {str(worker.get("worker_id")) for worker in online_workers}
+    cancelling_by_worker = {
+        str(job.get("worker_id"))
+        for job in jobs
+        if job.get("status") == "cancelling" and job.get("worker_id")
+    }
+    busy_ids = {
+        str(worker.get("worker_id"))
+        for worker in online_workers
+        if int(worker.get("running_jobs") or 0) > 0
+    }
+    total_capacity = sum(int(worker.get("max_concurrent_jobs") or 0) for worker in online_workers)
+    occupied_capacity = sum(int(worker.get("running_jobs") or 0) for worker in online_workers)
+    return {
+        "known_workers": len(known_workers),
+        "online_workers": len(online_workers),
+        "busy_workers": len(busy_ids),
+        "stuck_cancelling_workers": len(cancelling_by_worker & online_ids),
+        "queued_jobs": sum(1 for job in jobs if job.get("status") in {"queued", "claimed"}),
+        "running_jobs": sum(1 for job in jobs if job.get("status") == "running"),
+        "cancelling_jobs": sum(1 for job in jobs if job.get("status") == "cancelling"),
+        "total_capacity": total_capacity,
+        "occupied_capacity": occupied_capacity,
+        "effective_available_capacity": max(total_capacity - occupied_capacity, 0),
+    }
+
+
+@app.get("/workers/summary")
+def worker_summary() -> dict[str, Any]:
+    return _worker_summary()
