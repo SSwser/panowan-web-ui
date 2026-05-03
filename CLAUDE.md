@@ -2,6 +2,10 @@
 
 See also: [AGENTS.md](./AGENTS.md) for agent-specific rules.
 
+## Local Maintenance Skill
+
+Use `.claude/skills/maintaining-react-workbench/SKILL.md` when maintaining the Docker-served React workbench, debugging blank or stale Vite pages, validating browser behavior with Playwright, diagnosing preview media 409/404s, or working through setup/worktree/Docker Compose issues.
+
 ## Code Comments: Document the "Why"
 
 When implementing behavior driven by a design doc, spec, or non-obvious constraint, **add a comment explaining why** the code does what it does — not just what it does. This is especially important for:
