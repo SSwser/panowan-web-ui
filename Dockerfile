@@ -71,11 +71,14 @@ RUN /opt/venv/bin/python -m venv /opt/venvs/upscale-realesrgan \
     && /opt/venvs/upscale-realesrgan/bin/python -m pip install --upgrade pip \
     && /opt/venvs/upscale-realesrgan/bin/python -m pip install -r /tmp/upscale-realesrgan-requirements.txt
 
-FROM node:20-bookworm-slim AS frontend-builder
+FROM node:20-bookworm-slim AS frontend-deps
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json /app/frontend/
 RUN npm ci
+
+FROM frontend-deps AS frontend-builder
+
 COPY frontend /app/frontend
 RUN npm run build
 
@@ -120,3 +123,8 @@ COPY scripts /app/scripts
 COPY third_party/PanoWan /engines/panowan
 COPY third_party/Upscale /engines/upscale
 CMD ["bash", "/app/scripts/start-worker.sh"]
+
+FROM frontend-deps AS dev-frontend
+
+EXPOSE 5173
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .generator import extract_prompt, resolve_inference_params
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
@@ -296,6 +296,16 @@ def _collect_result_store_events(known_versions: dict[str, str]) -> tuple[dict[s
     return next_versions, events
 
 
+def _frontend_asset_path(asset_path: str) -> str:
+    assets_dir = os.path.abspath(os.path.join(settings.frontend_dist_dir, "assets"))
+    candidate = os.path.abspath(os.path.join(assets_dir, asset_path))
+    if candidate != assets_dir and not candidate.startswith(assets_dir + os.sep):
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if not os.path.isfile(candidate):
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return candidate
+
+
 @app.get("/")
 def root() -> FileResponse:
     index_path = os.path.join(settings.frontend_dist_dir, "index.html")
@@ -307,6 +317,16 @@ def root() -> FileResponse:
             detail="Frontend build not found. Run npm --prefix frontend run build.",
         )
     return FileResponse(index_path, media_type="text/html")
+
+
+@app.get("/assets/{asset_path:path}")
+def frontend_asset(asset_path: str) -> FileResponse:
+    return FileResponse(_frontend_asset_path(asset_path))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.get("/health")

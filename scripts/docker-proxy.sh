@@ -39,7 +39,7 @@ for wsl_cmd in wsl.exe wsl; do
             # MODEL_ROOT is a filesystem path; /p tells WSLENV to convert it
             # between Windows and Linux path formats during forwarding.
             docker_proxy_export_wslenv_var "MODEL_ROOT" "/p"
-            for name in TAG PORT APT_MIRROR PYPI_INDEX; do
+            for name in TAG PORT FRONTEND_PORT APT_MIRROR PYPI_INDEX; do
                 docker_proxy_export_wslenv_var "${name}"
             done
         fi

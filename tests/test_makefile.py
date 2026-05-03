@@ -34,6 +34,14 @@ class MakefileTests(unittest.TestCase):
         self.assertNotIn("DATA_SYNC ?= bash scripts/data-sync.sh", self.makefile)
         self.assertNotIn("NORMALIZE_BIND_PATH ?= bash scripts/lib/path.sh", self.makefile)
 
+    def test_dev_exports_frontend_port_for_compose(self):
+        self.assertIn("FRONTEND_PORT ?= 5173", self.makefile)
+        self.assertIn("export FRONTEND_PORT", self.makefile)
+
+    def test_up_removes_orphans_by_default(self):
+        self.assertIn("UP_FLAGS ?= --remove-orphans", self.makefile)
+        self.assertIn("$(COMPOSE) up -d $(UP_FLAGS)", self.makefile)
+
     def test_setup_bootstrap_creates_checkout_local_venv(self):
         self.assertRegex(self.makefile, r"\nsetup-bootstrap:\n")
         self.assertIn("VENV_DIR ?= .venv", self.makefile)
