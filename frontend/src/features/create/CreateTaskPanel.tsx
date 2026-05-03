@@ -3,6 +3,7 @@ import type { CreateResultPayload } from '../../types/result'
 
 interface CreateTaskPanelProps {
   onSubmit: (payload: CreateResultPayload) => void
+  isSubmitting?: boolean
 }
 
 const draftPreset = {
@@ -17,7 +18,7 @@ const standardPreset = {
   height: 448,
 }
 
-export default function CreateTaskPanel({ onSubmit }: CreateTaskPanelProps) {
+export default function CreateTaskPanel({ onSubmit, isSubmitting = false }: CreateTaskPanelProps) {
   const [prompt, setPrompt] = useState('A cinematic alpine valley at sunset with drifting clouds and wide panoramic motion.')
   const [negativePrompt, setNegativePrompt] = useState('')
   const [quality, setQuality] = useState<CreateResultPayload['quality']>('standard')
@@ -102,8 +103,8 @@ export default function CreateTaskPanel({ onSubmit }: CreateTaskPanelProps) {
 
       <p className="estimate">当前预设先对齐后端 CreateResultPayload，后续任务再补充自定义参数编辑能力。</p>
 
-      <button type="submit" className="primary-action">
-        提交任务
+      <button type="submit" className="primary-action" disabled={isSubmitting}>
+        {isSubmitting ? '提交中…' : '提交任务'}
       </button>
     </form>
   )

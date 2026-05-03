@@ -28,6 +28,8 @@ export default function ResultPreviewWorkspace({
   const [localMode, setLocalMode] = useState<ComparisonMode>(comparisonMode)
   const activeMode = onChangeComparisonMode ? comparisonMode : localMode
   const selectedVersion = result?.versions.find((version) => version.version_id === selectedVersionId) ?? null
+  const isPlayableVersion = selectedVersion?.status === 'succeeded' || selectedVersion?.status === 'completed'
+  const videoUrl = isPlayableVersion ? selectedVersion?.preview_url || selectedVersion?.download_url || null : null
 
   function handleModeChange(mode: ComparisonMode) {
     if (onChangeComparisonMode) {
@@ -60,10 +62,14 @@ export default function ResultPreviewWorkspace({
         <>
           <ResultMetadataBar result={result} version={selectedVersion} />
           <div className={`preview-stage preview-stage--${activeMode}`}>
-            <div className="preview-placeholder">
-              <span>360° Viewer</span>
-              <small>{selectedVersion?.download_url ? '视频源已就绪' : '等待生成完成'}</small>
-            </div>
+            {videoUrl ? (
+              <video className="preview-video" src={videoUrl} controls muted playsInline />
+            ) : (
+              <div className="preview-placeholder">
+                <span>360° Viewer</span>
+                <small>{isPlayableVersion && selectedVersion?.download_url ? '视频源已就绪' : '等待生成完成'}</small>
+              </div>
+            )}
           </div>
           <VersionStrip result={result} selectedVersionId={selectedVersionId} onSelect={onSelectVersion} />
         </>

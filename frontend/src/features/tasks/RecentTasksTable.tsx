@@ -3,9 +3,23 @@ import TaskActionsMenu from './TaskActionsMenu'
 
 interface RecentTasksTableProps {
   results: ResultSummary[]
+  selectedResultId?: string | null
+  selectedVersionId?: string | null
+  onSelectVersion?: (resultId: string, versionId: string) => void
+  onCancelJob?: (jobId: string) => void
+  onEscalateCancel?: (jobId: string) => void
+  onClearFailed?: () => void
 }
 
-export default function RecentTasksTable({ results }: RecentTasksTableProps) {
+export default function RecentTasksTable({
+  results,
+  selectedResultId,
+  selectedVersionId,
+  onSelectVersion,
+  onCancelJob,
+  onEscalateCancel,
+  onClearFailed,
+}: RecentTasksTableProps) {
   const versions = results.flatMap((result) =>
     result.versions.map((version) => ({
       result,
@@ -29,19 +43,35 @@ export default function RecentTasksTable({ results }: RecentTasksTableProps) {
             </tr>
           </thead>
           <tbody>
-            {versions.map(({ result, version }) => (
-              <tr key={`${result.result_id}-${version.version_id}`}>
-                <td>
-                  <strong>{version.label}</strong>
-                  <small>{result.prompt}</small>
-                </td>
-                <td>{version.status}</td>
-                <td>{version.width && version.height ? `${version.width}×${version.height}` : '待定'}</td>
-                <td>
-                  <TaskActionsMenu status={version.status} downloadUrl={version.download_url} />
-                </td>
-              </tr>
-            ))}
+            {versions.map(({ result, version }) => {
+              const isSelected = result.result_id === selectedResultId && version.version_id === selectedVersionId
+              return (
+                <tr key={`${result.result_id}-${version.version_id}`} className={isSelected ? 'selected-row' : ''}>
+                  <td>
+                    <button
+                      type="button"
+                      className="table-version-button"
+                      onClick={() => onSelectVersion?.(result.result_id, version.version_id)}
+                    >
+                      <strong>{version.label}</strong>
+                      <small>{result.prompt}</small>
+                    </button>
+                  </td>
+                  <td>{version.status}</td>
+                  <td>{version.width && version.height ? `${version.width}×${version.height}` : '待定'}</td>
+                  <td>
+                    <TaskActionsMenu
+                      jobId={version.job_id}
+                      status={version.status}
+                      downloadUrl={version.download_url}
+                      onCancelJob={onCancelJob}
+                      onEscalateCancel={onEscalateCancel}
+                      onClearFailed={onClearFailed}
+                    />
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       ) : (

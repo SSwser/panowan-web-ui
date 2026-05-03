@@ -1,7 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import CreateTaskPanel from './CreateTaskPanel'
+
+afterEach(() => cleanup())
 
 describe('CreateTaskPanel', () => {
   it('submits the draft create payload from the panel controls', async () => {
@@ -22,5 +24,11 @@ describe('CreateTaskPanel', () => {
       quality: 'draft',
       params: { num_inference_steps: 20, width: 448, height: 224, seed: 0 },
     })
+  })
+
+  it('disables submission while a create request is pending', () => {
+    render(<CreateTaskPanel onSubmit={vi.fn()} isSubmitting />)
+
+    expect(screen.getByRole('button', { name: '提交中…' })).toBeDisabled()
   })
 })
