@@ -29,24 +29,28 @@ Do not use for backend-only logic with no UI/deploy/runtime surface.
 | Media endpoint 409 | Inspect item `status` + media URLs | URLs do not prove playability |
 | Worktree resource issue | Run setup/data-link command | Do not hardcode local roots |
 | Frontend not hot-reloading | Use `make dev` and open `:5173` | `make up` serves baked `dist` on `:8000` |
+| `make dev` → `make up` orphan warning | `make up` should include `--remove-orphans` | Dev frontend must not linger in prod topology |
+| Host tests miss FastAPI or import stale code | Run `make test` from checkout root | Wrong cwd can import another checkout first |
 | Docker command fails | Use project compose wrapper | Host Docker may be absent |
 | Playwright storage ENOENT | Fresh/no-storage browser context | Config failure is not page failure |
 
 ## Workflow
 
 1. Use the project’s command wrapper.
-2. Rebuild and restart the deployed stack, not just the frontend bundle.
-3. Verify backend before browser claims:
+2. Run host tests through `make test` from the checkout/worktree root so the checkout-local `.venv` and `PYTHONPATH=$(CURDIR)` are used.
+3. Rebuild and restart the deployed stack, not just the frontend bundle.
+4. Verify backend before browser claims:
    - GET runtime/status summary if available
    - GET list/detail API backing the workbench
    - GET `/`, then GET exact JS/CSS assets from HTML
-4. Playwright proof:
+5. Playwright proof:
    - open a fresh query/tab/context after rebuilds
    - if storage state is missing (`storage.json` ENOENT), retry with a fresh/no-storage context before judging the page
    - read only new console messages (`all:false` if available)
    - use accessibility snapshots for rendered UI state
    - inspect network for unexpected media/download fetches
-5. Claim success only after fresh tests/build/browser evidence.
+6. When switching from dev back to prod-like topology, confirm the dev frontend orphan is removed rather than merely ignored.
+7. Claim success only after fresh tests/build/browser evidence.
 
 ## Project Entrypoints
 
@@ -86,4 +90,6 @@ Never render `<video src>` for queued/running/cancelling/failed/cancelled states
 | Treating Playwright storage ENOENT as page failure | Retry with fresh/no-storage context |
 | Treating `preview_url` as playable | Gate by success status |
 | Stopping after Docker build | Restart stack, API GETs, browser proof |
+| Running tests from another checkout | Use `make test` at the worktree root |
+| Ignoring compose orphan warnings | Fix `make up`/compose flags; do not normalize the warning |
 | Manual worktree resource config | Use setup/data-link flow |

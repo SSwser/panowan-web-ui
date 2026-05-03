@@ -106,7 +106,7 @@ verify:
 
 test:
 	$(call announce,Discover and run unit tests)
-	$(PYTHON_RUN) -m unittest discover -s tests
+	PYTHONPATH=$(CURDIR) $(PYTHON_RUN) -m unittest discover -s tests
 
 build:
 	$(call announce,Validate uv lockfile)

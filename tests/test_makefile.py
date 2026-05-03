@@ -80,6 +80,11 @@ class MakefileTests(unittest.TestCase):
         self.assertIn("$(BASH) scripts/doctor.sh", self.makefile)
         self.assertRegex(self.makefile, r"\nlogs:\n")
 
+    def test_test_target_uses_checkout_local_pythonpath(self):
+        self.assertIn("CURDIR", self.makefile)
+        self.assertIn("PYTHONPATH=$(CURDIR) $(PYTHON_RUN) -m unittest discover -s tests", self.makefile)
+        self.assertNotIn("python -m unittest discover -s tests", self.makefile)
+
     def test_build_runs_prune_by_default_and_can_disable_it(self):
         self.assertIn("AUTO_PRUNE ?= 1", self.makefile)
         self.assertIn("PRUNE_CMD := $(DOCKER) image prune -f", self.makefile)
