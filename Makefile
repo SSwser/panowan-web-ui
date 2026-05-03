@@ -5,12 +5,15 @@ BASH ?= bash
 endif
 DOCKER ?= $(BASH) scripts/docker-proxy.sh
 DEV ?=
+FRONTEND_PORT ?= 5173
+UP_FLAGS ?= --remove-orphans
 COMPOSE_FILES := -f docker-compose.yml $(if $(DEV),-f docker-compose-dev.yml)
 COMPOSE ?= $(DOCKER) compose $(COMPOSE_FILES)
 SERVICE_URL ?= http://localhost:8000
 TAG ?= latest
 AUTO_PRUNE ?= 1
 export TAG
+export FRONTEND_PORT
 
 APT_MIRROR ?=
 PYPI_INDEX ?=
@@ -103,7 +106,7 @@ verify:
 
 test:
 	$(call announce,Discover and run unit tests)
-	$(PYTHON_RUN) -m unittest discover -s tests
+	PYTHONPATH=$(CURDIR) $(PYTHON_RUN) -m unittest discover -s tests
 
 build:
 	$(call announce,Validate uv lockfile)

@@ -8,10 +8,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .generator import extract_prompt, resolve_inference_params
 from .jobs import LocalJobBackend, LocalWorkerRegistry, now_iso
+from .result_views import (
+    build_result_summaries,
+    build_result_summary,
+    result_id_for_root_job,
+    version_id_for_job,
+)
 from .settings import settings
 from .sse import broadcast_job_event, subscribe, unsubscribe
 from .upscaler import UPSCALE_BACKENDS
@@ -163,6 +169,12 @@ def _get_job(job_id: str) -> dict[str, Any] | None:
     return get_job_backend().get_job(job_id)
 
 
+def _job_id_from_version_id(version_id: str) -> str:
+    if not version_id.startswith("ver_"):
+        raise HTTPException(status_code=404, detail="Version not found")
+    return version_id.removeprefix("ver_")
+
+
 def _job_event_snapshot(job: dict[str, Any]) -> dict[str, Any]:
     return {field: job.get(field) for field in _JOB_EVENT_FIELDS}
 
@@ -257,10 +269,64 @@ def _collect_job_store_events(
     return current_snapshots, events
 
 
+def _collect_result_store_events(known_versions: dict[str, str]) -> tuple[dict[str, str], list[dict[str, str]]]:
+    # Result workbench consumers reason about result/version state directly, so the SSE projection
+    # must emit version events instead of leaking job-only updates into the new /api/events stream.
+    results = build_result_summaries(get_job_backend().list_jobs())
+    next_versions: dict[str, str] = {}
+    events: list[dict[str, str]] = []
+    for result in results:
+        for version in result["versions"]:
+            version_id = str(version["version_id"])
+            status = str(version["status"])
+            next_versions[version_id] = status
+            if known_versions.get(version_id) != status:
+                events.append(
+                    _sse_event(
+                        "version_updated" if version_id in known_versions else "version_created",
+                        {
+                            "result_id": result["result_id"],
+                            "version_id": version_id,
+                            "job_id": version["job_id"],
+                            "status": status,
+                            "download_url": version.get("download_url"),
+                        },
+                    )
+                )
+    return next_versions, events
+
+
+def _frontend_asset_path(asset_path: str) -> str:
+    assets_dir = os.path.abspath(os.path.join(settings.frontend_dist_dir, "assets"))
+    candidate = os.path.abspath(os.path.join(assets_dir, asset_path))
+    if candidate != assets_dir and not candidate.startswith(assets_dir + os.sep):
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if not os.path.isfile(candidate):
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return candidate
+
+
 @app.get("/")
 def root() -> FileResponse:
-    index_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
+    index_path = os.path.join(settings.frontend_dist_dir, "index.html")
+    # The API must fail loudly when the React bundle is absent so deploy/test
+    # mistakes do not silently fall back to a stale legacy shell.
+    if not os.path.exists(index_path):
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend build not found. Run npm --prefix frontend run build.",
+        )
     return FileResponse(index_path, media_type="text/html")
+
+
+@app.get("/assets/{asset_path:path}")
+def frontend_asset(asset_path: str) -> FileResponse:
+    return FileResponse(_frontend_asset_path(asset_path))
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
 
 
 @app.get("/health")
@@ -274,8 +340,11 @@ def healthcheck() -> dict:
     # In the split topology the API container is intentionally CPU-only and does
     # not mount worker-only engine/model trees, so API readiness cannot depend on
     # local asset visibility without keeping /health stuck on "starting" forever.
-    status = "ready" if settings.service_title and os.getenv("SERVICE_ROLE", "api") == "api" else ("ready" if model_ready else "starting")
-
+    status = (
+        "ready"
+        if settings.service_title and os.getenv("SERVICE_ROLE", "api") == "api"
+        else ("ready" if model_ready else "starting")
+    )
     return {
         "status": status,
         "service_started": True,
@@ -310,6 +379,59 @@ def generate(payload: dict) -> dict:
         "output_path": output_path,
         "download_url": record["download_url"],
     }
+
+
+def _create_result_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    job_payload = dict(payload)
+    quality = str(job_payload.pop("quality", "custom"))
+    params_payload = job_payload.pop("params", {}) or {}
+    job_payload.update(params_payload)
+    if "negative_prompt" not in job_payload:
+        job_payload["negative_prompt"] = ""
+    if quality == "draft":
+        job_payload.setdefault("num_inference_steps", 20)
+        job_payload.setdefault("width", 448)
+        job_payload.setdefault("height", 224)
+    elif quality == "standard":
+        job_payload.setdefault("num_inference_steps", 50)
+        job_payload.setdefault("width", 896)
+        job_payload.setdefault("height", 448)
+    generated = generate(job_payload)
+    result_id = result_id_for_root_job(generated["job_id"])
+    result = build_result_summary(result_id, get_job_backend().list_jobs())
+    if result is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Created result could not be loaded",
+        )
+    expected_selected_version_id = version_id_for_job(generated["job_id"])
+    # A freshly created result should project the queued root job as the selected
+    # version so the workbench never receives a result shell without its only
+    # version wired up.
+    if result.get("selected_version_id") != expected_selected_version_id:
+        raise HTTPException(
+            status_code=500,
+            detail="Created result did not include its root version",
+        )
+    return result
+
+
+@app.get("/api/results")
+def list_results_api() -> dict[str, Any]:
+    return {"results": build_result_summaries(get_job_backend().list_jobs())}
+
+
+@app.get("/api/results/{result_id}")
+def get_result_api(result_id: str) -> dict[str, Any]:
+    result = build_result_summary(result_id, get_job_backend().list_jobs())
+    if result is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return {"result": result}
+
+
+@app.post("/api/results", status_code=202)
+def create_result_api(payload: dict) -> dict[str, Any]:
+    return {"result": _create_result_from_payload(payload)}
 
 
 @app.post("/upscale", status_code=202)
@@ -357,6 +479,46 @@ def upscale(payload: dict) -> dict:
         "source_job_id": source_job_id,
         "upscale_params": upscale_params,
     }
+
+
+@app.post("/api/results/{result_id}/versions/{version_id}/upscale", status_code=202)
+def create_upscale_version_api(result_id: str, version_id: str, payload: dict) -> dict[str, Any]:
+    source_job_id = _job_id_from_version_id(version_id)
+    result = build_result_summary(result_id, get_job_backend().list_jobs())
+    if result is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+    if not any(version["job_id"] == source_job_id for version in result["versions"]):
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    # The result/version API contract uses workbench-facing model ids like
+    # "seedvr2", but the worker runtime still dispatches by backend ids such as
+    # "seedvr2-3b". Normalize only at the API boundary so persisted versions keep
+    # the spec field name while queued jobs remain executable by the current worker.
+    requested_model = payload.get("model")
+    runtime_model = "seedvr2-3b" if requested_model == "seedvr2" else requested_model
+    upscale_payload = {
+        "source_job_id": source_job_id,
+        "model": runtime_model,
+        "scale_mode": payload.get("scale_mode", "factor"),
+        "scale": payload.get("scale"),
+        "target_width": payload.get("target_width"),
+        "target_height": payload.get("target_height"),
+        "replace_source": bool(payload.get("replace_source", False)),
+    }
+    created = upscale(upscale_payload)
+    created_job_id = created["job_id"]
+    if requested_model == "seedvr2":
+        # Result projections and the React workbench spec speak in the simplified
+        # "seedvr2" identifier, so rewrite only the persisted API-facing metadata
+        # after queueing succeeds instead of asking the frontend to know worker ids.
+        _update_job(created_job_id, upscale_params={**(created["upscale_params"] or {}), "model": "seedvr2"})
+    version = None
+    refreshed = build_result_summary(result_id, get_job_backend().list_jobs())
+    if refreshed is not None:
+        version = next((item for item in refreshed["versions"] if item["job_id"] == created_job_id), None)
+    if version is None:
+        raise HTTPException(status_code=500, detail="Created version could not be loaded")
+    return {"version": version}
 
 
 def _reconcile_overdue_cancellations_for_read() -> list[dict[str, Any]]:
@@ -420,6 +582,35 @@ async def job_events(request: Request) -> Any:
                         }
         finally:
             unsubscribe(queue)
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/events")
+async def result_events(request: Request) -> Any:
+    from sse_starlette.sse import EventSourceResponse
+
+    async def event_generator():
+        known_versions = {
+            version["version_id"]: str(version["status"])
+            for result in build_result_summaries(get_job_backend().list_jobs())
+            for version in result["versions"]
+        }
+        loop = asyncio.get_running_loop()
+        last_heartbeat = loop.time()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                await asyncio.sleep(1)
+                known_versions, events = _collect_result_store_events(known_versions)
+                for event in events:
+                    yield event
+                if not events and loop.time() - last_heartbeat >= 30:
+                    last_heartbeat = loop.time()
+                    yield _sse_event("heartbeat", {"ts": now_iso()})
+        finally:
+            return
 
     return EventSourceResponse(event_generator())
 
@@ -515,7 +706,10 @@ def cancel_job(job_id: str) -> dict[str, Any]:
     if status == "failed" and job.get("error_code") == "cancel_timeout":
         worker_id = job.get("worker_id")
         if not worker_id:
-            raise HTTPException(status_code=409, detail="Cannot retry cancellation without worker ownership")
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot retry cancellation without worker ownership",
+            )
         result = get_job_backend().retry_timed_out_cancellation(
             job_id, worker_id=worker_id
         )
@@ -569,19 +763,51 @@ def _worker_summary() -> dict[str, Any]:
         for worker in online_workers
         if int(worker.get("running_jobs") or 0) > 0
     }
-    total_capacity = sum(int(worker.get("max_concurrent_jobs") or 0) for worker in online_workers)
-    occupied_capacity = sum(int(worker.get("running_jobs") or 0) for worker in online_workers)
+    total_capacity = sum(
+        int(worker.get("max_concurrent_jobs") or 0)
+        for worker in online_workers
+    )
+    occupied_capacity = sum(
+        int(worker.get("running_jobs") or 0) for worker in online_workers
+    )
     return {
         "known_workers": len(known_workers),
         "online_workers": len(online_workers),
         "busy_workers": len(busy_ids),
         "stuck_cancelling_workers": len(cancelling_by_worker & online_ids),
-        "queued_jobs": sum(1 for job in jobs if job.get("status") in {"queued", "claimed"}),
+        "queued_jobs": sum(
+            1 for job in jobs if job.get("status") in {"queued", "claimed"}
+        ),
         "running_jobs": sum(1 for job in jobs if job.get("status") == "running"),
-        "cancelling_jobs": sum(1 for job in jobs if job.get("status") == "cancelling"),
+        "cancelling_jobs": sum(
+            1 for job in jobs if job.get("status") == "cancelling"
+        ),
         "total_capacity": total_capacity,
         "occupied_capacity": occupied_capacity,
         "effective_available_capacity": max(total_capacity - occupied_capacity, 0),
+    }
+
+
+@app.get("/api/runtime/summary")
+def runtime_summary_api() -> dict[str, Any]:
+    summary = _worker_summary()
+    online_workers = int(summary.get("online_workers") or 0)
+    busy_workers = int(summary.get("busy_workers") or 0)
+    queued_jobs = int(summary.get("queued_jobs") or 0)
+    running_jobs = int(summary.get("running_jobs") or 0)
+    cancelling_jobs = int(summary.get("cancelling_jobs") or 0)
+    total_capacity = int(summary.get("total_capacity") or 0)
+    available_capacity = int(summary.get("effective_available_capacity") or 0)
+    return {
+        "capacity": total_capacity,
+        "available_capacity": available_capacity,
+        "online_workers": online_workers,
+        "loading_workers": max(queued_jobs - available_capacity, 0),
+        "busy_workers": busy_workers,
+        "queued_jobs": queued_jobs,
+        "running_jobs": running_jobs,
+        "cancelling_jobs": cancelling_jobs,
+        "runtime_warm": online_workers > 0,
     }
 
 

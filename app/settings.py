@@ -42,6 +42,7 @@ class Settings:
     output_dir: str
     job_store_path: str
     worker_store_path: str
+    frontend_dist_dir: str
     panowan_runner_job_dir: str
     default_prompt: str
     generation_timeout_seconds: int
@@ -96,6 +97,10 @@ def load_settings() -> Settings:
         output_dir=output_dir,
         job_store_path=job_store_path(runtime_dir),
         worker_store_path=worker_store_path(runtime_dir),
+        frontend_dist_dir=os.getenv(
+            "FRONTEND_DIST_DIR",
+            os.path.join(_HOST_ROOT, "frontend", "dist"),
+        ),
         panowan_runner_job_dir=os.getenv(
             "PANOWAN_RUNNER_JOB_DIR",
             panowan_runner_dir_path(runtime_dir),

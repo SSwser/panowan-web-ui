@@ -184,5 +184,5 @@ class ScriptBoundaryTests(unittest.TestCase):
         # MODEL_ROOT is forwarded with /p so WSL converts the Windows path;
         # remaining vars are forwarded without a modifier.
         self.assertIn('docker_proxy_export_wslenv_var "MODEL_ROOT" "/p"', script)
-        self.assertIn("for name in TAG PORT APT_MIRROR PYPI_INDEX", script)
+        self.assertIn("for name in TAG PORT FRONTEND_PORT APT_MIRROR PYPI_INDEX", script)
         self.assertIn("WSLENV", script)

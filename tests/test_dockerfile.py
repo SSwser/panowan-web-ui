@@ -13,10 +13,13 @@ class DockerfileTests(unittest.TestCase):
             "runtime-base",
             "api-deps",
             "engine-panowan-deps",
+            "frontend-deps",
+            "frontend-builder",
             "api",
             "worker-panowan",
             "dev-api",
             "dev-worker-panowan",
+            "dev-frontend",
         ]:
             self.assertIn(f" AS {target}", self.dockerfile)
 
@@ -63,3 +66,13 @@ class DockerfileTests(unittest.TestCase):
         self.assertNotIn("third_party/PanoWan/pyproject.toml", self.dockerfile)
         self.assertNotIn("third_party/PanoWan/uv.lock", self.dockerfile)
         self.assertNotIn("cd /tmp/PanoWan && uv sync", self.dockerfile)
+
+    def test_dev_frontend_target_runs_vite_on_stable_port(self):
+        frontend_section = self.dockerfile.split("FROM frontend-deps AS dev-frontend", 1)[1].split(
+            "FROM", 1
+        )[0]
+        self.assertIn("EXPOSE 5173", frontend_section)
+        self.assertIn(
+            'CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]',
+            frontend_section,
+        )

@@ -26,5 +26,22 @@ services:
       - ./data/runtime:/app/runtime
     restart: "no"
 
+  frontend:
+    build:
+      target: dev-frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+      CHOKIDAR_USEPOLLING: "1"
+    volumes:
+      - ./frontend:/app/frontend
+      - frontend-node-modules:/app/frontend/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   panowan-uv-cache:
+  frontend-node-modules:

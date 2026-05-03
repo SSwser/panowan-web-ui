@@ -72,3 +72,20 @@ class DevComposeTests(unittest.TestCase):
         compose = (ROOT / "docker-compose-dev.yml").read_text(encoding="utf-8")
         self.assertIn("panowan-uv-cache:/root/.cache/uv", compose)
         self.assertIn("volumes:\n  panowan-uv-cache:", compose)
+
+    def test_dev_compose_runs_frontend_vite_service(self):
+        compose = (ROOT / "docker-compose-dev.yml").read_text(encoding="utf-8")
+        frontend_section = _service_section(compose, "frontend")
+        self.assertIn("target: dev-frontend", frontend_section)
+        self.assertIn("${FRONTEND_PORT:-5173}:5173", frontend_section)
+        self.assertIn("VITE_API_PROXY_TARGET: http://api:8000", frontend_section)
+        self.assertIn("CHOKIDAR_USEPOLLING: \"1\"", frontend_section)
+        self.assertIn("./frontend:/app/frontend", frontend_section)
+        self.assertIn("frontend-node-modules:/app/frontend/node_modules", frontend_section)
+        self.assertIn("depends_on:", frontend_section)
+        self.assertIn("condition: service_healthy", frontend_section)
+
+    def test_dev_compose_declares_frontend_node_modules_volume(self):
+        compose = (ROOT / "docker-compose-dev.yml").read_text(encoding="utf-8")
+        self.assertIn("frontend-node-modules:/app/frontend/node_modules", compose)
+        self.assertIn("volumes:\n  panowan-uv-cache:\n  frontend-node-modules:", compose)
