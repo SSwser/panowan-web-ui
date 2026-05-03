@@ -19,9 +19,9 @@ venv/
 
 build/
 dist/
-node_modules/
-frontend/node_modules/
+*/node_modules/
 *.egg-info/
+*.playwright-mcp/
 *.stackdump
 *.log
 
@@ -31,5 +31,5 @@ frontend/node_modules/
 *.mkv
 
 data/models/*
-!data/models/.gitkeep
 data/runtime/*.lock
+!data/models/.gitkeep
